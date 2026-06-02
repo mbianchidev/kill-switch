@@ -123,10 +123,8 @@ struct ProcessRow: View {
 
     var body: some View {
         HStack {
-            Image(systemName: "app.fill")
-                .font(.system(size: 14))
-                .foregroundColor(.blue.opacity(0.7))
-                .frame(width: 24)
+            processIcon
+                .frame(width: 24, height: 24)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(process.name)
@@ -173,5 +171,18 @@ struct ProcessRow: View {
             return String(format: "%.1f GB", mb / 1024)
         }
         return String(format: "%.1f MB", mb)
+    }
+
+    @ViewBuilder
+    private var processIcon: some View {
+        if let icon = process.icon {
+            Image(nsImage: icon)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+        } else {
+            Image(systemName: "app.fill")
+                .font(.system(size: 14))
+                .foregroundColor(.blue.opacity(0.7))
+        }
     }
 }

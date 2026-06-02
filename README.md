@@ -1,10 +1,13 @@
 # KillSwitch
 
-A lightweight macOS process manager utility. Lists processes belonging to user `mbianchidev`, shows PID, CPU%, and memory usage, and lets you terminate them with a single click.
+A lightweight macOS process manager utility. Lists the processes belonging to the current user, shows PID, CPU%, and memory usage, and lets you terminate them with a single click.
 
 ## Features
 
 - Real-time process list (refreshes every 3s)
+- Works for whichever user is running the app (no hardcoded username)
+- Collapses helper/child processes into their main (parent) process, aggregating CPU and memory — e.g. Spotify and its helpers appear as a single entry
+- Shows real application icons where available for easier recognition
 - Filter processes by name
 - Sort by CPU usage, memory, name, or PID
 - One-click process termination (SIGTERM, falls back to SIGKILL)
@@ -46,5 +49,6 @@ swift build -c release
 
 - Swift 5.9
 - SwiftUI
+- AppKit (`NSWorkspace`) for application icons
 - macOS process APIs (`ps` command)
 - LaunchAgent for auto-start
