@@ -2,7 +2,7 @@
 set -e
 
 INSTALL_PATH="/usr/local/bin/KillSwitch"
-PLIST_DST="$HOME/Library/LaunchAgents/com.mbianchidev.killswitch.plist"
+PLIST_DST="$HOME/Library/LaunchAgents/io.killswitch.agent.plist"
 
 echo "🔄 Updating KillSwitch..."
 
@@ -20,7 +20,7 @@ sudo cp .build/release/KillSwitch "$INSTALL_PATH"
 sudo chmod +x "$INSTALL_PATH"
 
 echo "📋 Updating LaunchAgent..."
-cp com.mbianchidev.killswitch.plist "$PLIST_DST"
+cp io.killswitch.agent.plist "$PLIST_DST"
 
 echo "▶️  Starting..."
 launchctl load "$PLIST_DST"

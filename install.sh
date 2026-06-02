@@ -6,8 +6,8 @@ swift build -c release
 
 BINARY=".build/release/KillSwitch"
 INSTALL_PATH="/usr/local/bin/KillSwitch"
-PLIST_SRC="com.mbianchidev.killswitch.plist"
-PLIST_DST="$HOME/Library/LaunchAgents/com.mbianchidev.killswitch.plist"
+PLIST_SRC="io.killswitch.agent.plist"
+PLIST_DST="$HOME/Library/LaunchAgents/io.killswitch.agent.plist"
 
 echo "📦 Installing binary to $INSTALL_PATH..."
 sudo cp "$BINARY" "$INSTALL_PATH"

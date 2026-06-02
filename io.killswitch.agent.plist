@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.mbianchidev.killswitch</string>
+    <string>io.killswitch.agent</string>
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/bin/KillSwitch</string>

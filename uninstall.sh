@@ -2,7 +2,7 @@
 set -e
 
 INSTALL_PATH="/usr/local/bin/KillSwitch"
-PLIST_DST="$HOME/Library/LaunchAgents/com.mbianchidev.killswitch.plist"
+PLIST_DST="$HOME/Library/LaunchAgents/io.killswitch.agent.plist"
 
 echo "⏹  Unloading LaunchAgent..."
 launchctl unload "$PLIST_DST" 2>/dev/null || true
