@@ -1,17 +1,20 @@
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var topConsumers = TopConsumersMonitor()
+
     var body: some View {
         TabView {
             ProcessesTab()
                 .tabItem { Label("Processes", systemImage: "list.bullet") }
             DevCleanupTab()
                 .tabItem { Label("Dev cleanup", systemImage: "trash") }
-            TopConsumersTab()
+            TopConsumersTab(monitor: topConsumers)
                 .tabItem { Label("Top consumers", systemImage: "chart.bar") }
         }
         .padding(.top, 4)
         .background(Theme.background)
+        .onAppear { topConsumers.start() }
     }
 }
 

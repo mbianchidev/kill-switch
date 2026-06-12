@@ -155,6 +155,7 @@ final class DevCleanupMonitor: ObservableObject {
         var rows: [PortProcess] = []
         for (pid, portSet) in ports {
             let command = commandByPid[pid] ?? "pid \(pid)"
+            if isSystemProcess(command) { continue }
             let isDev = devRuntime(command) != nil && isDevServer(command) && !isExcluded(command)
             for port in portSet where notablePorts.contains(port) || isDev {
                 rows.append(PortProcess(id: "\(pid)-\(port)", pid: pid, command: command, port: port))

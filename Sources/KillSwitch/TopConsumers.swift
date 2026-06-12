@@ -23,28 +23,53 @@ final class TopConsumersMonitor: ObservableObject {
     @Published var topByMemory: [ProcessEntry] = []
     @Published var trend: [TrendPoint] = []
     @Published var trendMetric: TrendMetric = .memory
-    @Published var intervalMinutes: Int = 10 {
+    @Published var intervalSeconds: Int = 600 {
         didSet { rescheduleTrend() }
     }
 
-    private var listTimer: Timer?
-    private var trendTimer: Timer?
+    /// Interval options for the trend sampler (includes 30s/1m debug intervals).
+    static let intervalOptions: [(label: String, seconds: Int)] = [
+        ("30s", 30), ("1m", 60), ("5m", 300), ("10m", 600), ("15m", 900), ("30m", 1800), ("60m", 3600)
+    ]
+
+    var intervalLabel: String {
+        Self.intervalOptions.first { $0.seconds == intervalSeconds }?.label ?? "\(intervalSeconds)s"
+    }
+
+    private var listTimer: DispatchSourceTimer?
+    private var trendTimer: DispatchSourceTimer?
+    private var activity: NSObjectProtocol?
+    private let timerQueue = DispatchQueue(label: "killswitch.topconsumers.timer", qos: .userInitiated)
+    private var started = false
     private let username = NSUserName()
     private static let windowSeconds: TimeInterval = 12 * 3600
     private let topCount = 10
 
     func start() {
+        guard !started else { return }
+        started = true
+        // Prevent App Nap so sampling keeps running when the app is unfocused or
+        // a different tab is shown.
+        if activity == nil {
+            activity = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiated, .automaticTerminationDisabled],
+                reason: "Continuously sampling top process consumers"
+            )
+        }
         refreshLists()
         appendTrendSample()
-        listTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            self?.refreshLists()
-        }
+        startListTimer()
         rescheduleTrend()
     }
 
     func stop() {
-        listTimer?.invalidate(); listTimer = nil
-        trendTimer?.invalidate(); trendTimer = nil
+        started = false
+        listTimer?.cancel(); listTimer = nil
+        trendTimer?.cancel(); trendTimer = nil
+        if let activity = activity {
+            ProcessInfo.processInfo.endActivity(activity)
+            self.activity = nil
+        }
     }
 
     func kill(pid: Int32) {
@@ -74,12 +99,23 @@ final class TopConsumersMonitor: ObservableObject {
         metric == .cpu ? topByCPU : topByMemory
     }
 
+    private func startListTimer() {
+        listTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: timerQueue)
+        timer.schedule(deadline: .now() + 5, repeating: 5)
+        timer.setEventHandler { [weak self] in self?.refreshLists() }
+        timer.resume()
+        listTimer = timer
+    }
+
     private func rescheduleTrend() {
-        trendTimer?.invalidate()
-        let interval = TimeInterval(max(1, intervalMinutes) * 60)
-        trendTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            self?.appendTrendSample()
-        }
+        trendTimer?.cancel()
+        let interval = TimeInterval(max(5, intervalSeconds))
+        let timer = DispatchSource.makeTimerSource(queue: timerQueue)
+        timer.schedule(deadline: .now() + interval, repeating: interval)
+        timer.setEventHandler { [weak self] in self?.appendTrendSample() }
+        timer.resume()
+        trendTimer = timer
     }
 
     private func refreshLists() {
@@ -124,7 +160,7 @@ final class TopConsumersMonitor: ObservableObject {
 // MARK: - View
 
 struct TopConsumersTab: View {
-    @StateObject private var monitor = TopConsumersMonitor()
+    @ObservedObject var monitor: TopConsumersMonitor
 
     var body: some View {
         VStack(spacing: 0) {
@@ -140,8 +176,6 @@ struct TopConsumersTab: View {
             }
         }
         .background(Theme.background)
-        .onAppear { monitor.start() }
-        .onDisappear { monitor.stop() }
     }
 
     private var header: some View {
@@ -171,15 +205,17 @@ struct TopConsumersTab: View {
                 .pickerStyle(.segmented)
                 .frame(width: 160)
 
-                Picker("Every", selection: $monitor.intervalMinutes) {
-                    ForEach([5, 10, 15, 30, 60], id: \.self) { Text("\($0)m").tag($0) }
+                Picker("Every", selection: $monitor.intervalSeconds) {
+                    ForEach(TopConsumersMonitor.intervalOptions, id: \.seconds) { option in
+                        Text(option.label).tag(option.seconds)
+                    }
                 }
                 .pickerStyle(.menu)
                 .frame(width: 90)
             }
 
             if monitor.filteredTrend.isEmpty {
-                Text("Collecting samples… first point captured on load, then every \(monitor.intervalMinutes) min.")
+                Text("Collecting samples… first point captured on load, then every \(monitor.intervalLabel).")
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.4))
                     .frame(height: 200)
