@@ -1,6 +1,21 @@
 import SwiftUI
 
 struct ContentView: View {
+    var body: some View {
+        TabView {
+            ProcessesTab()
+                .tabItem { Label("Processes", systemImage: "list.bullet") }
+            DevCleanupTab()
+                .tabItem { Label("Dev cleanup", systemImage: "trash") }
+            TopConsumersTab()
+                .tabItem { Label("Top consumers", systemImage: "chart.bar") }
+        }
+        .padding(.top, 4)
+        .background(Theme.background)
+    }
+}
+
+struct ProcessesTab: View {
     @StateObject private var monitor = ProcessMonitor()
     @State private var selectedPid: Int32?
 
@@ -12,27 +27,14 @@ struct ContentView: View {
             Divider()
             footerView
         }
-        .background(
-            LinearGradient(
-                colors: [
-                    Color(red: 0.15, green: 0.1, blue: 0.25),
-                    Color(red: 0.2, green: 0.12, blue: 0.3)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
-        .onAppear {
-            monitor.startMonitoring()
-        }
-        .onDisappear {
-            monitor.stopMonitoring()
-        }
+        .background(Theme.background)
+        .onAppear { monitor.startMonitoring() }
+        .onDisappear { monitor.stopMonitoring() }
     }
 
     private var headerView: some View {
         HStack(spacing: 12) {
-            Image(systemName: "arrow.left")
+            Image(systemName: "magnifyingglass")
                 .foregroundColor(.gray)
                 .font(.system(size: 14, weight: .medium))
 
@@ -94,18 +96,7 @@ struct ContentView: View {
                 .font(.system(size: 13))
                 .foregroundColor(.white.opacity(0.8))
             Spacer()
-            Text("Kill")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.white.opacity(0.6))
-            Text("⏎")
-                .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.4))
-            Text("|")
-                .foregroundColor(.white.opacity(0.2))
-            Text("Actions")
-                .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.6))
-            Text("⌘K")
+            Text("Click the ✕ to terminate (SIGTERM, then SIGKILL)")
                 .font(.system(size: 12))
                 .foregroundColor(.white.opacity(0.4))
         }
@@ -147,13 +138,7 @@ struct ProcessRow: View {
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.6))
 
-                Button(action: onKill) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(.red.opacity(0.7))
-                }
-                .buttonStyle(.plain)
-                .help("Kill process \(process.pid)")
+                KillButton(pid: process.pid, action: onKill)
             }
         }
         .padding(.horizontal, 12)
@@ -164,13 +149,6 @@ struct ProcessRow: View {
         )
         .contentShape(Rectangle())
         .onTapGesture { onSelect() }
-    }
-
-    private func formatMemory(_ mb: Double) -> String {
-        if mb >= 1024 {
-            return String(format: "%.1f GB", mb / 1024)
-        }
-        return String(format: "%.1f MB", mb)
     }
 
     @ViewBuilder
