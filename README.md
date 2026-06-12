@@ -14,6 +14,7 @@ A lightweight macOS process manager utility. Lists the processes belonging to th
 - Sort by CPU usage, memory, name, or PID
 - One-click process termination (SIGTERM, falls back to SIGKILL)
 - Native macOS notifications when a process sustains high CPU for an extended period
+- Menu bar (tray) icon — closing the window keeps the app running in the menu bar
 - Runs at login via LaunchAgent
 - Dark, translucent UI inspired by Raycast
 
@@ -44,6 +45,19 @@ The main process list described above.
 - After alerting, the per-process counter resets to avoid spam (it re-alerts after the same number of further consecutive sightings).
 - Shows currently-offending processes with their consecutive count and a kill button, plus an in-app recent-alerts history.
 - Appends to `~/Library/Logs/cpu-watchdog.log`, trimmed to the last 500 lines.
+
+## Menu bar (tray)
+
+KillSwitch lives in the macOS menu bar like Caffeine. A status item (⚡ icon) sits in
+the top menu bar with a dropdown:
+
+- **Show KillSwitch** — brings the window back to the front (restores the Dock icon).
+- **Quit KillSwitch** — fully exits the app.
+
+Closing the main window with the red close button does **not** quit the app — it hides
+the window and drops the Dock icon, leaving only the menu bar icon. Re-open it from the
+menu bar item (or by clicking the Dock icon if visible). To fully quit, use **Quit
+KillSwitch** from the menu bar.
 
 ## Requirements
 
@@ -80,7 +94,7 @@ swift build -c release
 
 - Swift 5.9
 - SwiftUI + Swift Charts (trend graph)
-- AppKit (`NSWorkspace`) for application icons
+- AppKit (`NSWorkspace`) for application icons; `NSStatusItem` for the menu bar (tray) icon
 - macOS process APIs (`ps`, `lsof`, `top`)
 - `osascript` for native macOS notifications
 - LaunchAgent for auto-start
