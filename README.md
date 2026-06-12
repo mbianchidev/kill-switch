@@ -11,6 +11,7 @@ A lightweight macOS process manager utility. Lists the processes belonging to th
 - Filter processes by name
 - Sort by CPU usage, memory, name, or PID
 - One-click process termination (SIGTERM, falls back to SIGKILL)
+- Native macOS notifications when a process sustains high CPU for an extended period
 - Runs at login via LaunchAgent
 - Dark, translucent UI inspired by Raycast
 
@@ -34,6 +35,13 @@ The main process list described above.
 - Top 10 processes by **energy impact** (macOS `top` POWER metric), aggregated per parent process, each with a kill button.
 - A **trend chart** of the current top energy consumers over a rolling 12h window, sampled every 10 minutes by default (same configurable interval as Top consumers).
 - List and chart legend are always ordered by the process consuming the most energy.
+
+### CPU Watchdog
+- Watches for processes (parent-collapsed) sustaining CPU above a threshold and fires **native macOS notifications** when one stays hot for several consecutive checks — mirroring the `cpu-watchdog.sh` / `cpu-hog-monitor.sh` shell scripts.
+- Defaults: **90%** threshold, alert after **3** consecutive checks, every **5 min** (~15 min sustained). Threshold (80/85/90/95%), interval, and consecutive-check count are all configurable.
+- After alerting, the per-process counter resets to avoid spam (it re-alerts after the same number of further consecutive sightings).
+- Shows currently-offending processes with their consecutive count and a kill button, plus an in-app recent-alerts history.
+- Appends to `~/Library/Logs/cpu-watchdog.log`, trimmed to the last 500 lines.
 
 ## Requirements
 
@@ -72,4 +80,5 @@ swift build -c release
 - SwiftUI + Swift Charts (trend graph)
 - AppKit (`NSWorkspace`) for application icons
 - macOS process APIs (`ps`, `lsof`, `top`)
+- `osascript` for native macOS notifications
 - LaunchAgent for auto-start

@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var topConsumers = TopConsumersMonitor()
     @StateObject private var energy = EnergyMonitor()
+    @StateObject private var watchdog = CPUWatchdog()
 
     var body: some View {
         TabView {
@@ -14,12 +15,15 @@ struct ContentView: View {
                 .tabItem { Label("Top consumers", systemImage: "chart.bar") }
             EnergyTab(monitor: energy)
                 .tabItem { Label("Energy", systemImage: "bolt.fill") }
+            CPUWatchdogTab(monitor: watchdog)
+                .tabItem { Label("Watchdog", systemImage: "exclamationmark.triangle") }
         }
         .padding(.top, 4)
         .background(Theme.background)
         .onAppear {
             topConsumers.start()
             energy.start()
+            watchdog.start()
         }
     }
 }

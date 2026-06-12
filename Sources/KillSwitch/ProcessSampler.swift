@@ -206,6 +206,20 @@ enum ProcessSampler {
         return kill(pid, SIGKILL) == 0
     }
 
+    // MARK: - Native notifications
+
+    /// Post a native macOS notification via `osascript` (same mechanism as the
+    /// shell watchdog scripts, which works for a non-bundled binary). Quotes are
+    /// sanitized so user-supplied process names can't break the AppleScript.
+    static func notify(title: String, subtitle: String, body: String) {
+        func clean(_ s: String) -> String {
+            s.replacingOccurrences(of: "\"", with: "'")
+             .replacingOccurrences(of: "\\", with: "/")
+        }
+        let script = "display notification \"\(clean(body))\" with title \"\(clean(title))\" subtitle \"\(clean(subtitle))\""
+        _ = runProcess("/usr/bin/osascript", ["-e", script])
+    }
+
     // MARK: - Helpers
 
     private static func runProcess(_ launchPath: String, _ arguments: [String]) -> String? {
