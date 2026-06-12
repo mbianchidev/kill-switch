@@ -51,7 +51,8 @@ class ProcessMonitor: ObservableObject {
         var result = processes
         if !filterText.isEmpty {
             result = result.filter {
-                $0.name.localizedCaseInsensitiveContains(filterText)
+                $0.name.localizedCaseInsensitiveContains(filterText) ||
+                String($0.pid).contains(filterText)
             }
         }
         switch sortBy {

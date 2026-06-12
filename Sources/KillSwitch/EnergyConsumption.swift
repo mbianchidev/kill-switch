@@ -227,7 +227,7 @@ struct EnergyTab: View {
                             .font(.system(size: 13, weight: .medium))
                             .foregroundColor(.white)
                             .lineLimit(1)
-                        Text("PID \(entry.pid)")
+                        Text("PID \(String(entry.pid))")
                             .font(.system(size: 11))
                             .foregroundColor(.white.opacity(0.4))
                         Spacer()

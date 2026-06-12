@@ -51,7 +51,7 @@ struct ProcessesTab: View {
                 .foregroundColor(.gray)
                 .font(.system(size: 14, weight: .medium))
 
-            TextField("Filter by name...", text: $monitor.filterText)
+            TextField("Filter by name or PID...", text: $monitor.filterText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 15))
                 .foregroundColor(.white)
@@ -135,7 +135,7 @@ struct ProcessRow: View {
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.white)
                     .lineLimit(1)
-                Text("PID: \(process.pid)")
+                Text("PID: \(String(process.pid))")
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.4))
             }
