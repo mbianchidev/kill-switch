@@ -28,6 +28,12 @@ The main process list described above.
 ### Top consumers
 - Top 10 processes by CPU and top 10 by memory (one line each) with a kill button.
 - A **trend chart** of the current top consumers' CPU or memory usage over a rolling 12h window, sampled every 10 minutes by default (interval configurable: 5/10/15/30/60 min).
+- Lists and chart legend are always ordered by the process consuming the most.
+
+### Energy
+- Top 10 processes by **energy impact** (macOS `top` POWER metric), aggregated per parent process, each with a kill button.
+- A **trend chart** of the current top energy consumers over a rolling 12h window, sampled every 10 minutes by default (same configurable interval as Top consumers).
+- List and chart legend are always ordered by the process consuming the most energy.
 
 ## Requirements
 
@@ -65,5 +71,5 @@ swift build -c release
 - Swift 5.9
 - SwiftUI + Swift Charts (trend graph)
 - AppKit (`NSWorkspace`) for application icons
-- macOS process APIs (`ps`, `lsof`)
+- macOS process APIs (`ps`, `lsof`, `top`)
 - LaunchAgent for auto-start

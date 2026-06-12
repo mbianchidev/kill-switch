@@ -7,14 +7,16 @@ struct ProcessEntry: Identifiable, Equatable {
     let name: String
     let cpu: Double
     let memory: Double // in MB
+    let power: Double // energy impact (macOS POWER metric), 0 when not sampled
     let icon: NSImage?
 
-    init(pid: Int32, name: String, cpu: Double, memory: Double, icon: NSImage? = nil) {
+    init(pid: Int32, name: String, cpu: Double, memory: Double, power: Double = 0, icon: NSImage? = nil) {
         self.id = pid
         self.pid = pid
         self.name = name
         self.cpu = cpu
         self.memory = memory
+        self.power = power
         self.icon = icon
     }
 
@@ -23,6 +25,7 @@ struct ProcessEntry: Identifiable, Equatable {
         lhs.name == rhs.name &&
         lhs.cpu == rhs.cpu &&
         lhs.memory == rhs.memory &&
+        lhs.power == rhs.power &&
         lhs.icon === rhs.icon
     }
 }

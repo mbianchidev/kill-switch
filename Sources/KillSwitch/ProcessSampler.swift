@@ -99,7 +99,12 @@ enum ProcessSampler {
 
     /// Fetch processes for `user`, collapsing helper/child processes into their
     /// top-most ancestor and aggregating CPU and memory into that parent.
-    static func fetchCollapsed(user: String) -> [ProcessEntry] {
+    ///
+    /// When `includePower` is true, the macOS energy-impact (POWER) metric is
+    /// additionally sampled via `top` and aggregated per parent. This adds a
+    /// short (~1s) `top -l 2` sampling delay, so callers that only need CPU /
+    /// memory should leave it disabled.
+    static func fetchCollapsed(user: String, includePower: Bool = false) -> [ProcessEntry] {
         guard let output = runProcess("/bin/ps", ["-u", user, "-o", "pid,ppid,pcpu,rss,comm", "-r"]) else {
             return []
         }
@@ -116,10 +121,34 @@ enum ProcessSampler {
             let name = String(parts[4]).components(separatedBy: "/").last ?? String(parts[4])
             raw[pid] = Raw(pid: pid, ppid: ppid, cpu: cpu, memory: rssKB / 1024.0, name: name)
         }
-        return collapse(raw)
+        let power = includePower ? powerByPid() : [:]
+        return collapse(raw, power: power)
     }
 
-    private static func collapse(_ raw: [Int32: Raw]) -> [ProcessEntry] {
+    /// Sample per-process energy impact (macOS `top` POWER column).
+    ///
+    /// `top -l 2` takes two snapshots ~1s apart; only the second carries a valid
+    /// (delta-based) POWER value, so we parse the last snapshot's rows.
+    private static func powerByPid() -> [Int32: Double] {
+        guard let output = runProcess("/usr/bin/top", ["-l", "2", "-stats", "pid,power", "-o", "power"]) else {
+            return [:]
+        }
+        let lines = output.components(separatedBy: "\n")
+        guard let headerIndex = lines.lastIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("PID") }) else {
+            return [:]
+        }
+        var map: [Int32: Double] = [:]
+        for line in lines[lines.index(after: headerIndex)...] {
+            let parts = line.split(whereSeparator: { $0.isWhitespace })
+            guard parts.count >= 2,
+                  let pid = Int32(parts[0]),
+                  let power = Double(parts[1]) else { continue }
+            map[pid] = power
+        }
+        return map
+    }
+
+    private static func collapse(_ raw: [Int32: Raw], power: [Int32: Double] = [:]) -> [ProcessEntry] {
         let icons = appIcons()
 
         func rootPid(of pid: Int32) -> Int32 {
@@ -135,10 +164,12 @@ enum ProcessSampler {
 
         var aggregatedCPU: [Int32: Double] = [:]
         var aggregatedMemory: [Int32: Double] = [:]
+        var aggregatedPower: [Int32: Double] = [:]
         for (pid, proc) in raw {
             let root = rootPid(of: pid)
             aggregatedCPU[root, default: 0] += proc.cpu
             aggregatedMemory[root, default: 0] += proc.memory
+            aggregatedPower[root, default: 0] += power[pid] ?? 0
         }
 
         var entries: [ProcessEntry] = []
@@ -150,6 +181,7 @@ enum ProcessSampler {
                     name: proc.name,
                     cpu: aggregatedCPU[root] ?? proc.cpu,
                     memory: aggregatedMemory[root] ?? proc.memory,
+                    power: aggregatedPower[root] ?? 0,
                     icon: icons[root]
                 )
             )
