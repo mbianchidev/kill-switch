@@ -45,6 +45,12 @@ The main process list described above.
 - Shows currently-offending processes with their consecutive count and a kill button, plus an in-app recent-alerts history.
 - Appends to `~/Library/Logs/cpu-watchdog.log`, trimmed to the last 500 lines.
 
+### Updates
+- Shows the running version and the latest published release, with a manual **Check for updates** button.
+- Auto-checks on launch and every 6 hours; when a newer build exists, a banner appears at the top of the window.
+- One-click **Download & install**: fetches the new binary, validates it, replaces the root-owned `/usr/local/bin/KillSwitch` (one admin prompt), reloads the LaunchAgent, and relaunches.
+- See [docs/auto-update.md](docs/auto-update.md) for the full release + update flow.
+
 ## Requirements
 
 - macOS 13+ (Ventura or later)
@@ -69,6 +75,22 @@ This will:
 ./uninstall.sh
 ```
 
+## Updating
+
+Released builds update themselves: open the **Updates** tab (or wait for the
+launch check) and click **Download & install** when a newer version is offered.
+
+Every push to `main` is automatically published as a GitHub Release
+(`vYYYY.MM.DD.<run_number>`) with the compiled binary attached, and the running
+app compares its embedded version against the latest release. See
+[docs/auto-update.md](docs/auto-update.md) for details.
+
+To update a source checkout manually instead:
+
+```bash
+./update.sh
+```
+
 ## Run without installing
 
 ```bash
@@ -82,5 +104,7 @@ swift build -c release
 - SwiftUI + Swift Charts (trend graph)
 - AppKit (`NSWorkspace`) for application icons
 - macOS process APIs (`ps`, `lsof`, `top`)
-- `osascript` for native macOS notifications
+- `osascript` for native macOS notifications and privileged self-update
+- `URLSession` (async/await) + GitHub Releases API for in-app updates
+- GitHub Actions for continuous releases on every push to `main`
 - LaunchAgent for auto-start
