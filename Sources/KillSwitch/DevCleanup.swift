@@ -40,6 +40,7 @@ final class DevCleanupMonitor: ObservableObject {
     /// Runtime binaries that indicate a dev server (matched on the executable name).
     private static let runtimes: [String] = [
         "node", "deno", "bun",
+        "npm", "npx", "pnpm", "yarn",
         "python", "python3", "python2",
         "java", "mvn",
         "cargo", "rustc",
@@ -49,14 +50,15 @@ final class DevCleanupMonitor: ObservableObject {
     /// Command-line signatures that mark a process as an actual dev server.
     private static let devIndicators: [String] = [
         "vite", "next dev", "nodemon", "webpack", "react-scripts", "ng serve",
-        "astro dev", "nuxt", "remix", "ng build --watch",
-        "npm run dev", "npm start", "yarn dev", "yarn start", "pnpm dev", "pnpm start",
+        "astro dev", "nuxt", "remix", "ng build --watch", "electron .", "electron-forge",
+        "npm run", "npm start", "npm exec", "npx", "yarn dev", "yarn start",
+        "pnpm dev", "pnpm start", "pnpm run", "bun run", "bun dev",
         "spring-boot:run", "gradlew", "quarkus:dev",
         "cargo run", "cargo watch", "cargo-watch", "trunk serve",
         "go run", "air", // air = go live-reload
         "rails server", "rails s", "puma", "rackup",
         "flask run", "uvicorn", "gunicorn", "manage.py runserver", "runserver",
-        "http.server", "deno run", "deno task", "bun run", "bun dev"
+        "http.server", "deno run", "deno task"
     ]
 
     /// Substrings that protect a process from being auto-killed. Bias toward
@@ -101,16 +103,7 @@ final class DevCleanupMonitor: ObservableObject {
             let detailed = ProcessSampler.fetchDetailed()
             let commandByPid = Dictionary(detailed.map { ($0.pid, $0.command) }, uniquingKeysWith: { a, _ in a })
             let ports = ProcessSampler.listeningPorts()
-
-            var rows: [PortProcess] = []
-            for (pid, portSet) in ports {
-                for port in portSet where Self.notablePorts.contains(port) {
-                    let command = commandByPid[pid] ?? "pid \(pid)"
-                    rows.append(PortProcess(id: "\(pid)-\(port)", pid: pid, command: command, port: port))
-                }
-            }
-            rows.sort { $0.port == $1.port ? $0.pid < $1.pid : $0.port < $1.port }
-
+            let rows = Self.portRows(commandByPid: commandByPid, ports: ports)
             DispatchQueue.main.async { self.portProcesses = rows }
         }
     }
@@ -122,15 +115,7 @@ final class DevCleanupMonitor: ObservableObject {
             let detailed = ProcessSampler.fetchDetailed()
             let commandByPid = Dictionary(detailed.map { ($0.pid, $0.command) }, uniquingKeysWith: { a, _ in a })
             let ports = ProcessSampler.listeningPorts()
-
-            var portRows: [PortProcess] = []
-            for (pid, portSet) in ports {
-                for port in portSet where Self.notablePorts.contains(port) {
-                    let command = commandByPid[pid] ?? "pid \(pid)"
-                    portRows.append(PortProcess(id: "\(pid)-\(port)", pid: pid, command: command, port: port))
-                }
-            }
-            portRows.sort { $0.port == $1.port ? $0.pid < $1.pid : $0.port < $1.port }
+            let portRows = Self.portRows(commandByPid: commandByPid, ports: ports)
 
             var candidates = 0
             var killed: [CleanedProcess] = []
@@ -161,6 +146,21 @@ final class DevCleanupMonitor: ObservableObject {
                 self.lastRun = Date()
             }
         }
+    }
+
+    /// Build the listening-ports rows: every process on a notable port, plus any
+    /// recognized dev server (incl. npm) regardless of which port it binds to.
+    private static func portRows(commandByPid: [Int32: String], ports: [Int32: Set<Int>]) -> [PortProcess] {
+        var rows: [PortProcess] = []
+        for (pid, portSet) in ports {
+            let command = commandByPid[pid] ?? "pid \(pid)"
+            let isDev = devRuntime(command) != nil && isDevServer(command) && !isExcluded(command)
+            for port in portSet where notablePorts.contains(port) || isDev {
+                rows.append(PortProcess(id: "\(pid)-\(port)", pid: pid, command: command, port: port))
+            }
+        }
+        rows.sort { $0.port == $1.port ? $0.pid < $1.pid : $0.port < $1.port }
+        return rows
     }
 
     // MARK: - Classification
@@ -252,7 +252,7 @@ struct DevCleanupTab: View {
 
     private var portsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Listening on notable dev ports (\(monitor.portProcesses.count))")
+            Text("Dev servers & notable ports (\(monitor.portProcesses.count))")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.white.opacity(0.7))
             if monitor.portProcesses.isEmpty {

@@ -182,14 +182,19 @@ enum ProcessSampler {
         task.arguments = arguments
         let pipe = Pipe()
         task.standardOutput = pipe
-        task.standardError = Pipe()
+        // Discard stderr so a chatty tool (e.g. lsof warnings) can't fill its
+        // pipe buffer and deadlock the child.
+        task.standardError = FileHandle.nullDevice
         do {
             try task.run()
-            task.waitUntilExit()
         } catch {
             return nil
         }
+        // Drain stdout *before* waiting: commands like `ps -axo args` emit far
+        // more than the ~64KB pipe buffer, so waiting first would deadlock the
+        // child once the buffer fills and nobody is reading.
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
         return String(data: data, encoding: .utf8)
     }
 }
