@@ -281,7 +281,7 @@ struct DevCleanupTab: View {
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                                 .textSelection(.enabled)
-                            Text("PID: \(proc.pid)")
+                            Text("PID: \(String(proc.pid))")
                                 .font(.system(size: 11))
                                 .foregroundColor(.white.opacity(0.4))
                         }
@@ -315,7 +315,7 @@ struct DevCleanupTab: View {
                             Text(String(format: "%.1fh", proc.ageHours))
                                 .font(.system(size: 11))
                                 .foregroundColor(.white.opacity(0.5))
-                            Text("PID \(proc.pid)")
+                            Text("PID \(String(proc.pid))")
                                 .font(.system(size: 11))
                                 .foregroundColor(.white.opacity(0.4))
                         }

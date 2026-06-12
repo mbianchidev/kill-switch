@@ -1,36 +1,26 @@
 import SwiftUI
 import Charts
 
-enum TrendMetric: String, CaseIterable {
-    case cpu = "CPU"
-    case memory = "Memory"
-}
-
-/// A single sampled data point for one process at one moment in time.
-struct TrendPoint: Identifiable {
+/// A single sampled energy-impact data point for one process at one moment.
+struct EnergyTrendPoint: Identifiable {
     let id = UUID()
     let date: Date
     let pid: Int32
     let name: String
-    let cpu: Double
-    let memory: Double
+    let power: Double
 }
 
-/// Tracks the current top CPU/memory consumers and accumulates a usage trend
-/// sampled on a configurable interval (default every 10 minutes, 12h window).
-final class TopConsumersMonitor: ObservableObject {
-    @Published var topByCPU: [ProcessEntry] = []
-    @Published var topByMemory: [ProcessEntry] = []
-    @Published var trend: [TrendPoint] = []
-    @Published var trendMetric: TrendMetric = .memory
+/// Tracks the current top energy consumers (macOS `top` POWER metric) and
+/// accumulates a usage trend sampled on a configurable interval
+/// (default every 10 minutes, 12h rolling window).
+final class EnergyMonitor: ObservableObject {
+    @Published var topByPower: [ProcessEntry] = []
+    @Published var trend: [EnergyTrendPoint] = []
     @Published var intervalSeconds: Int = 600 {
         didSet { rescheduleTrend() }
     }
 
-    /// Interval options for the trend sampler (includes 30s/1m debug intervals).
-    static let intervalOptions: [(label: String, seconds: Int)] = [
-        ("30s", 30), ("1m", 60), ("5m", 300), ("10m", 600), ("15m", 900), ("30m", 1800), ("60m", 3600)
-    ]
+    static let intervalOptions = TopConsumersMonitor.intervalOptions
 
     var intervalLabel: String {
         Self.intervalOptions.first { $0.seconds == intervalSeconds }?.label ?? "\(intervalSeconds)s"
@@ -39,7 +29,7 @@ final class TopConsumersMonitor: ObservableObject {
     private var listTimer: DispatchSourceTimer?
     private var trendTimer: DispatchSourceTimer?
     private var activity: NSObjectProtocol?
-    private let timerQueue = DispatchQueue(label: "killswitch.topconsumers.timer", qos: .userInitiated)
+    private let timerQueue = DispatchQueue(label: "killswitch.energy.timer", qos: .userInitiated)
     private var started = false
     private let username = NSUserName()
     private static let windowSeconds: TimeInterval = 12 * 3600
@@ -48,15 +38,13 @@ final class TopConsumersMonitor: ObservableObject {
     func start() {
         guard !started else { return }
         started = true
-        // Prevent App Nap so sampling keeps running when the app is unfocused or
-        // a different tab is shown.
         if activity == nil {
             activity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated, .automaticTerminationDisabled],
-                reason: "Continuously sampling top process consumers"
+                reason: "Continuously sampling top energy consumers"
             )
         }
-        refreshLists()
+        refreshList()
         appendTrendSample()
         startListTimer()
         rescheduleTrend()
@@ -75,38 +63,29 @@ final class TopConsumersMonitor: ObservableObject {
     func kill(pid: Int32) {
         ProcessSampler.terminate(pid: pid)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.refreshLists()
+            self?.refreshList()
         }
     }
 
-    /// Names of the processes currently in the top set for the selected metric,
-    /// ordered by consumption (highest first) with duplicates removed so the value
-    /// can also drive the chart legend order.
+    /// Names of the processes currently in the top set, ordered by energy impact
+    /// (highest first) with duplicates removed so it can drive the chart legend.
     var trendNames: [String] {
-        let latest = topForMetric(trendMetric).prefix(topCount).map { $0.name }
+        let latest = topByPower.prefix(topCount).map { $0.name }
         var seen: Set<String> = []
         return latest.filter { seen.insert($0).inserted }
     }
 
     /// Trend points limited to the processes currently in the top set.
-    var filteredTrend: [TrendPoint] {
+    var filteredTrend: [EnergyTrendPoint] {
         let names = Set(trendNames)
         return trend.filter { names.contains($0.name) }
-    }
-
-    func value(for point: TrendPoint) -> Double {
-        trendMetric == .cpu ? point.cpu : point.memory
-    }
-
-    private func topForMetric(_ metric: TrendMetric) -> [ProcessEntry] {
-        metric == .cpu ? topByCPU : topByMemory
     }
 
     private func startListTimer() {
         listTimer?.cancel()
         let timer = DispatchSource.makeTimerSource(queue: timerQueue)
         timer.schedule(deadline: .now() + 5, repeating: 5)
-        timer.setEventHandler { [weak self] in self?.refreshLists() }
+        timer.setEventHandler { [weak self] in self?.refreshList() }
         timer.resume()
         listTimer = timer
     }
@@ -121,36 +100,24 @@ final class TopConsumersMonitor: ObservableObject {
         trendTimer = timer
     }
 
-    private func refreshLists() {
+    private func refreshList() {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            let entries = ProcessSampler.fetchCollapsed(user: self.username)
-            let byCPU = Array(entries.sorted { $0.cpu > $1.cpu }.prefix(self.topCount))
-            let byMem = Array(entries.sorted { $0.memory > $1.memory }.prefix(self.topCount))
-            DispatchQueue.main.async {
-                self.topByCPU = byCPU
-                self.topByMemory = byMem
-            }
+            let entries = ProcessSampler.fetchCollapsed(user: self.username, includePower: true)
+            let byPower = Array(entries.sorted { $0.power > $1.power }.prefix(self.topCount))
+            DispatchQueue.main.async { self.topByPower = byPower }
         }
     }
 
     private func appendTrendSample() {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            let entries = ProcessSampler.fetchCollapsed(user: self.username)
-            let byCPU = Array(entries.sorted { $0.cpu > $1.cpu }.prefix(self.topCount))
-            let byMem = Array(entries.sorted { $0.memory > $1.memory }.prefix(self.topCount))
-
-            // Union of the current top CPU and top memory consumers.
-            var seen: Set<Int32> = []
+            let entries = ProcessSampler.fetchCollapsed(user: self.username, includePower: true)
+            let byPower = Array(entries.sorted { $0.power > $1.power }.prefix(self.topCount))
             let now = Date()
-            var points: [TrendPoint] = []
-            for entry in byCPU + byMem where seen.insert(entry.pid).inserted {
-                points.append(
-                    TrendPoint(date: now, pid: entry.pid, name: entry.name, cpu: entry.cpu, memory: entry.memory)
-                )
+            let points = byPower.map {
+                EnergyTrendPoint(date: now, pid: $0.pid, name: $0.name, power: $0.power)
             }
-
             DispatchQueue.main.async {
                 self.trend.append(contentsOf: points)
                 let cutoff = now.addingTimeInterval(-Self.windowSeconds)
@@ -162,8 +129,8 @@ final class TopConsumersMonitor: ObservableObject {
 
 // MARK: - View
 
-struct TopConsumersTab: View {
-    @ObservedObject var monitor: TopConsumersMonitor
+struct EnergyTab: View {
+    @ObservedObject var monitor: EnergyMonitor
 
     var body: some View {
         VStack(spacing: 0) {
@@ -172,8 +139,7 @@ struct TopConsumersTab: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     trendSection
-                    listSection(title: "Top 10 by CPU", entries: monitor.topByCPU, metric: .cpu)
-                    listSection(title: "Top 10 by memory", entries: monitor.topByMemory, metric: .memory)
+                    listSection
                 }
                 .padding(16)
             }
@@ -183,9 +149,9 @@ struct TopConsumersTab: View {
 
     private var header: some View {
         HStack {
-            Image(systemName: "chart.bar")
-                .foregroundColor(.cyan)
-            Text("Top consumers")
+            Image(systemName: "bolt.fill")
+                .foregroundColor(.yellow)
+            Text("Energy")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(.white)
             Spacer()
@@ -198,18 +164,12 @@ struct TopConsumersTab: View {
     private var trendSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Trend (12h window)")
+                Text("Energy impact trend (12h window)")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.white.opacity(0.7))
                 Spacer()
-                Picker("", selection: $monitor.trendMetric) {
-                    ForEach(TrendMetric.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 160)
-
                 Picker("Every", selection: $monitor.intervalSeconds) {
-                    ForEach(TopConsumersMonitor.intervalOptions, id: \.seconds) { option in
+                    ForEach(EnergyMonitor.intervalOptions, id: \.seconds) { option in
                         Text(option.label).tag(option.seconds)
                     }
                 }
@@ -226,20 +186,20 @@ struct TopConsumersTab: View {
                 Chart(monitor.filteredTrend) { point in
                     LineMark(
                         x: .value("Time", point.date),
-                        y: .value(monitor.trendMetric.rawValue, monitor.value(for: point))
+                        y: .value("Energy", point.power)
                     )
                     .foregroundStyle(by: .value("Process", point.name))
                     .interpolationMethod(.monotone)
 
                     PointMark(
                         x: .value("Time", point.date),
-                        y: .value(monitor.trendMetric.rawValue, monitor.value(for: point))
+                        y: .value("Energy", point.power)
                     )
                     .foregroundStyle(by: .value("Process", point.name))
                     .symbolSize(20)
                 }
                 .chartForegroundStyleScale(domain: monitor.trendNames)
-                .chartYAxisLabel(monitor.trendMetric == .cpu ? "CPU %" : "Memory (MB)")
+                .chartYAxisLabel("Energy impact")
                 .frame(height: 240)
                 .padding(8)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.2)))
@@ -247,17 +207,17 @@ struct TopConsumersTab: View {
         }
     }
 
-    private func listSection(title: String, entries: [ProcessEntry], metric: TrendMetric) -> some View {
+    private var listSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title)
+            Text("Top 10 by energy impact")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.white.opacity(0.7))
-            if entries.isEmpty {
+            if monitor.topByPower.isEmpty {
                 Text("No data yet.")
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.4))
             } else {
-                ForEach(Array(entries.enumerated()), id: \.element.pid) { index, entry in
+                ForEach(Array(monitor.topByPower.enumerated()), id: \.element.pid) { index, entry in
                     HStack(spacing: 12) {
                         Text("\(index + 1).")
                             .font(.system(size: 12, design: .monospaced))
@@ -271,11 +231,9 @@ struct TopConsumersTab: View {
                             .font(.system(size: 11))
                             .foregroundColor(.white.opacity(0.4))
                         Spacer()
-                        Text(metric == .cpu
-                             ? String(format: "%.1f%%", entry.cpu)
-                             : formatMemory(entry.memory))
+                        Text(String(format: "%.1f", entry.power))
                             .font(.system(size: 12, design: .monospaced))
-                            .foregroundColor(.cyan.opacity(0.9))
+                            .foregroundColor(.yellow.opacity(0.9))
                             .frame(width: 80, alignment: .trailing)
                         KillButton(pid: entry.pid) { monitor.kill(pid: entry.pid) }
                     }

@@ -2,6 +2,8 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var topConsumers = TopConsumersMonitor()
+    @StateObject private var energy = EnergyMonitor()
+    @StateObject private var watchdog = CPUWatchdog()
 
     var body: some View {
         TabView {
@@ -11,10 +13,18 @@ struct ContentView: View {
                 .tabItem { Label("Dev cleanup", systemImage: "trash") }
             TopConsumersTab(monitor: topConsumers)
                 .tabItem { Label("Top consumers", systemImage: "chart.bar") }
+            EnergyTab(monitor: energy)
+                .tabItem { Label("Energy", systemImage: "bolt.fill") }
+            CPUWatchdogTab(monitor: watchdog)
+                .tabItem { Label("Watchdog", systemImage: "exclamationmark.triangle") }
         }
         .padding(.top, 4)
         .background(Theme.background)
-        .onAppear { topConsumers.start() }
+        .onAppear {
+            topConsumers.start()
+            energy.start()
+            watchdog.start()
+        }
     }
 }
 
@@ -41,7 +51,7 @@ struct ProcessesTab: View {
                 .foregroundColor(.gray)
                 .font(.system(size: 14, weight: .medium))
 
-            TextField("Filter by name...", text: $monitor.filterText)
+            TextField("Filter by name or PID...", text: $monitor.filterText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 15))
                 .foregroundColor(.white)
@@ -125,7 +135,7 @@ struct ProcessRow: View {
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.white)
                     .lineLimit(1)
-                Text("PID: \(process.pid)")
+                Text("PID: \(String(process.pid))")
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.4))
             }
