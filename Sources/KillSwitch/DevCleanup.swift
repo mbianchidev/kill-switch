@@ -122,6 +122,7 @@ final class DevCleanupMonitor: ObservableObject {
             for proc in detailed where proc.user == self.username {
                 guard let runtime = Self.devRuntime(proc.command),
                       Self.isDevServer(proc.command),
+                      !Self.isSystemProcess(proc.command),
                       !Self.isExcluded(proc.command) else { continue }
                 candidates += 1
                 if proc.etimeSeconds > Self.ageThresholdSeconds {
@@ -168,6 +169,12 @@ final class DevCleanupMonitor: ObservableObject {
     private static func isExcluded(_ command: String) -> Bool {
         let lower = command.lowercased()
         return exclusions.contains { lower.contains($0) }
+    }
+
+    /// Never kill anything launched from /System/ (macOS system binaries).
+    private static func isSystemProcess(_ command: String) -> Bool {
+        let trimmed = command.trimmingCharacters(in: .whitespaces)
+        return trimmed.hasPrefix("/System/")
     }
 
     private static func isDevServer(_ command: String) -> Bool {
