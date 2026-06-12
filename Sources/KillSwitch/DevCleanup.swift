@@ -272,6 +272,7 @@ struct DevCleanupTab: View {
                                 .foregroundColor(.white)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
+                                .textSelection(.enabled)
                             Text("PID: \(proc.pid)")
                                 .font(.system(size: 11))
                                 .foregroundColor(.white.opacity(0.4))
@@ -315,6 +316,7 @@ struct DevCleanupTab: View {
                             .foregroundColor(.white.opacity(0.8))
                             .lineLimit(1)
                             .truncationMode(.middle)
+                            .textSelection(.enabled)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12)
