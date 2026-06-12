@@ -1,6 +1,6 @@
 # KillSwitch
 
-A lightweight macOS process manager utility. Lists the processes belonging to the current user, shows PID, CPU%, and memory usage, and lets you terminate them with a single click.
+A lightweight macOS process manager utility. Lists the processes belonging to the current user, shows PID, CPU%, and memory usage, and lets you terminate them with a single click. A tabbed UI adds developer-focused cleanup and resource monitoring.
 
 ## Features
 
@@ -13,6 +13,21 @@ A lightweight macOS process manager utility. Lists the processes belonging to th
 - One-click process termination (SIGTERM, falls back to SIGKILL)
 - Runs at login via LaunchAgent
 - Dark, translucent UI inspired by Raycast
+
+## Tabs
+
+### Processes
+The main process list described above.
+
+### Dev cleanup
+- Lists processes **listening on notable dev ports** (3000, 3001, 3003, 5173, 5174, 8000, 8080, 8888, 9000, 9090 and similar common ports such as 4200, 5000, 8081, 9091), showing PID, command, and port, each with a kill button.
+- **Auto-kills** stale dev servers (node, python, java/mvn, rust/cargo, go, ruby, deno, bun) owned by the current user that have been running for **more than 12 hours**.
+- Never touches: processes owned by other users or the system, Copilot CLI / SDK, node-based MCP servers (github, context7, work_iq, fabric, seismic, azure, kusto, revenue, …), IDEs (VS Code, Obsidian, Chrome, Slack, Teams, OrbStack) or non-dev apps (Spotify, Handy, …). Detection is conservative — when in doubt it does **not** kill.
+- Re-scans ports every 5s and re-runs cleanup every 10 min (plus a manual "Run cleanup now" button), and shows a summary of what was found and cleaned.
+
+### Top consumers
+- Top 10 processes by CPU and top 10 by memory (one line each) with a kill button.
+- A **trend chart** of the current top consumers' CPU or memory usage over a rolling 12h window, sampled every 10 minutes by default (interval configurable: 5/10/15/30/60 min).
 
 ## Requirements
 
@@ -48,7 +63,7 @@ swift build -c release
 ## Tech Stack
 
 - Swift 5.9
-- SwiftUI
+- SwiftUI + Swift Charts (trend graph)
 - AppKit (`NSWorkspace`) for application icons
-- macOS process APIs (`ps` command)
+- macOS process APIs (`ps`, `lsof`)
 - LaunchAgent for auto-start
