@@ -23,6 +23,7 @@ cp .build/release/KillSwitch "$INSTALL_PATH"
 chmod +x "$INSTALL_PATH"
 
 echo "📋 Updating LaunchAgent..."
+mkdir -p "$(dirname "$PLIST_DST")"
 sed "s|__INSTALL_PATH__|$INSTALL_PATH|g" "$PLIST_SRC" > "$PLIST_DST"
 
 echo "▶️  Starting..."

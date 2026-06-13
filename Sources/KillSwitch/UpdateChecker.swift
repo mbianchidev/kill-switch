@@ -187,7 +187,9 @@ final class UpdateChecker: ObservableObject {
             try validate(tmp)
             try await verifyChecksum(of: tmp, release: release)
             setState(.installing)
-            try installBinary(from: tmp)
+            try await Task.detached(priority: .userInitiated) { [self] in
+                try installBinary(from: tmp)
+            }.value
             log("Installed \(release.version); relaunching")
             relaunch()
         } catch {
