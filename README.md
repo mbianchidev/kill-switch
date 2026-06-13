@@ -101,8 +101,8 @@ Released builds update themselves: open the **Updates** tab (or wait for the
 launch check) and click **Download & install** when a newer version is offered.
 
 Every push to `main` is automatically published as a GitHub Release
-(`vYYYY.MM.DD.<run_number>`) with the compiled binary attached, and the running
-app compares its embedded version against the latest release. See
+(auto-incrementing semver, e.g. `v1.1.1`) with the compiled binary attached, and
+the running app compares its embedded version against the latest release. See
 [docs/auto-update.md](docs/auto-update.md) for details.
 
 To update a source checkout manually instead:

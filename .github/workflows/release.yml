@@ -24,12 +24,24 @@ jobs:
 
       - name: Compute version
         id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # CalVer + monotonic run number: vYYYY.MM.DD.<run_number>.
-          # Sortable and strictly increasing across pushes to main.
-          VERSION="v$(date -u +%Y.%m.%d).${GITHUB_RUN_NUMBER}"
+          # Semver: bump the PATCH of the latest published release on every push
+          # to main. To cut a minor/major release, publish that tag manually and
+          # the next push continues patching from it (e.g. v1.2.0 -> v1.2.1).
+          LATEST="$(gh release view --json tagName -q .tagName 2>/dev/null || true)"
+          if [ -z "$LATEST" ]; then LATEST="v0.0.0"; fi
+          CLEAN="${LATEST#v}"
+          MAJOR="$(echo "$CLEAN" | cut -d. -f1)"
+          MINOR="$(echo "$CLEAN" | cut -d. -f2)"
+          PATCH="$(echo "$CLEAN" | cut -d. -f3)"
+          MAJOR="${MAJOR:-0}"; MINOR="${MINOR:-0}"
+          # Strip any pre-release/build suffix from patch (e.g. 1-rc1 -> 1).
+          PATCH="${PATCH%%[!0-9]*}"; PATCH="${PATCH:-0}"
+          VERSION="v${MAJOR}.${MINOR}.$((PATCH + 1))"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Releasing $VERSION"
+          echo "Releasing $VERSION (previous: $LATEST)"
 
       - name: Embed version
         run: |

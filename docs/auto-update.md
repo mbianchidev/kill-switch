@@ -5,25 +5,26 @@ Release, and the running app can detect, download, and install the latest build.
 
 ## Versioning
 
-Releases use a sortable, monotonic CalVer scheme:
+Releases use auto-incrementing **semver** (`vMAJOR.MINOR.PATCH`):
 
-```
-vYYYY.MM.DD.<run_number>
-```
+- Every push to `main` bumps the **patch** of the latest published release
+  (e.g. `v1.1.0` → `v1.1.1` → `v1.1.2`).
+- To cut a **minor or major** release, publish that tag manually (e.g. create
+  `v1.2.0` on GitHub). The next push to `main` continues patching from it
+  (`v1.2.1`, `v1.2.2`, …).
+- If no release exists yet, the first auto-release is `v0.0.1`.
 
-- `YYYY.MM.DD` is the UTC release date.
-- `<run_number>` is the GitHub Actions run number, which strictly increases on
-  every workflow run, so two releases on the same day still order correctly.
-
-The same string is embedded into the binary at build time (see below), so the
-running app knows its own version and can compare it to the latest release.
-Versions are compared component-wise as integers, ignoring a leading `v`.
+The version is computed by reading the latest release via `gh release view`, so
+it's monotonic. Runs are serialized (`concurrency`) so two pushes can't compute
+the same patch. The same string is embedded into the binary at build time (see
+below). Versions are compared component-wise as integers, ignoring a leading `v`.
 
 ## Release automation
 
 `.github/workflows/release.yml` runs on push to `main` (on `macos-latest`):
 
-1. Compute the version `vYYYY.MM.DD.<run_number>`.
+1. Compute the next version by bumping the patch of the latest release
+   (`gh release view`), e.g. `v1.1.0` → `v1.1.1`.
 2. Overwrite `Sources/KillSwitch/Version.swift` with the computed version.
 3. `swift build -c release`.
 4. Package the binary (`KillSwitch`) and a `KillSwitch.tar.gz`.

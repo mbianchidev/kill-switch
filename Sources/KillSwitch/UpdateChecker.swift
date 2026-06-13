@@ -6,7 +6,7 @@ import SwiftUI
 
 /// A published GitHub release the app could update to.
 struct ReleaseInfo: Equatable {
-    let version: String   // tag_name, e.g. "v2026.06.12.42"
+    let version: String   // tag_name, e.g. "v1.1.2"
     let name: String
     let notes: String
     let binaryURL: URL    // browser_download_url of the raw "KillSwitch" asset
@@ -269,7 +269,7 @@ final class UpdateChecker: ObservableObject {
 
     // MARK: Version comparison
 
-    /// Compare dotted versions component-wise (e.g. `v2026.06.12.42`), ignoring a
+    /// Compare dotted semver strings component-wise (e.g. `v1.1.2`), ignoring a
     /// leading `v`. A `dev` build parses to 0 and is always considered older, so
     /// any published release shows as an update.
     static func isNewer(_ candidate: String, than current: String) -> Bool {
