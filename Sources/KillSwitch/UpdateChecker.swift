@@ -336,8 +336,6 @@ final class UpdateChecker: ObservableObject {
             // Relaunch via a detached shell so the new instance starts *after*
             // this process terminates (~0.3s below). Launching immediately could
             // briefly run two instances at once and reintroduce UI/agent races.
-            // The path is passed as a positional arg so no shell-metacharacter
-            // expansion can happen even with unusual characters.
             let expandedInstallPath = (installPath as NSString).expandingTildeInPath
             guard (expandedInstallPath as NSString).isAbsolutePath,
                   FileManager.default.isExecutableFile(atPath: expandedInstallPath) else {
@@ -345,7 +343,15 @@ final class UpdateChecker: ObservableObject {
             }
             let relaunchTask = Process()
             relaunchTask.executableURL = URL(fileURLWithPath: "/bin/sh")
-            relaunchTask.arguments = ["-c", "sleep 1; exec \"$1\"", "--", expandedInstallPath]
+            // The command string is a constant: the validated target path is passed
+            // out-of-band through the environment rather than as a command argument,
+            // so no user-influenced value is ever interpolated into the command.
+            // `exec` references the double-quoted variable, so no word splitting or
+            // shell-metacharacter expansion can happen even with unusual characters.
+            relaunchTask.arguments = ["-c", "sleep 1; exec \"$KILLSWITCH_RELAUNCH_TARGET\""]
+            var env = ProcessInfo.processInfo.environment
+            env["KILLSWITCH_RELAUNCH_TARGET"] = expandedInstallPath
+            relaunchTask.environment = env
             try? relaunchTask.run()
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
