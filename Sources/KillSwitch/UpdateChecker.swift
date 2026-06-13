@@ -86,7 +86,10 @@ final class UpdateChecker: ObservableObject {
         if let dict = NSDictionary(contentsOfFile: agentPlistPath),
            let args = dict["ProgramArguments"] as? [String],
            let path = args.first, !path.isEmpty {
-            return (path as NSString).expandingTildeInPath
+            let expanded = (path as NSString).expandingTildeInPath
+            if (expanded as NSString).isAbsolutePath {
+                return expanded
+            }
         }
         return FileManager.default
             .homeDirectoryForCurrentUser
@@ -497,7 +500,7 @@ struct UpdatesTab: View {
         case .downloading:
             statusLine(icon: "arrow.down.circle", color: .blue, text: "Downloading update…")
         case .installing:
-            statusLine(icon: "gearshape", color: .blue, text: "Installing (admin password required)…")
+            statusLine(icon: "gearshape", color: .blue, text: "Installing update…")
         case .failed(let message):
             statusLine(icon: "exclamationmark.triangle.fill", color: .orange, text: message)
         }
@@ -519,7 +522,7 @@ struct UpdatesTab: View {
                 Label("Download & install", systemImage: "square.and.arrow.down")
             }
             .buttonStyle(.borderedProminent)
-            Text("Installs to ~/bin/KillSwitch and relaunches. No password needed.")
+            Text("Installs to the LaunchAgent binary path (typically ~/bin/KillSwitch), then relaunches.")
                 .font(.system(size: 11))
                 .foregroundColor(.white.opacity(0.4))
         }

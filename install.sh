@@ -44,10 +44,16 @@ download_release() {
   command -v shasum >/dev/null 2>&1 || die "shasum is required to verify the download."
 
   local base="https://github.com/$REPO/releases/latest/download"
-  local tmp sha
+  local tmp="" sha=""
+  cleanup_download_release() {
+    [ -z "${tmp:-}" ] || rm -f "$tmp"
+    [ -z "${sha:-}" ] || rm -f "$sha"
+  }
+  trap cleanup_download_release RETURN
+  trap cleanup_download_release EXIT
+
   tmp="$(mktemp -t KillSwitch)" || die "Could not create a temp file."
   sha="$(mktemp -t KillSwitch.sha256)" || die "Could not create a temp file."
-  trap 'rm -f "$tmp" "$sha"' RETURN
 
   log "📥 Downloading latest KillSwitch release..."
   curl -fsSL -o "$tmp" "$base/KillSwitch" || die "Failed to download the KillSwitch binary."
@@ -63,6 +69,9 @@ download_release() {
   mkdir -p "$INSTALL_DIR"
   cp "$tmp" "$INSTALL_PATH"
   chmod +x "$INSTALL_PATH"
+  trap - RETURN
+  cleanup_download_release
+  trap - EXIT
 }
 
 install_plist() {
