@@ -55,7 +55,7 @@ The main process list described above.
 
 - Shows the running version and the latest published release, with a manual **Check for updates** button.
 - Auto-checks on launch and every 6 hours; when a newer build exists, a banner appears at the top of the window.
-- One-click **Download & install**: fetches the new binary, validates it, replaces the root-owned `/usr/local/bin/KillSwitch` (one admin prompt), reloads the LaunchAgent, and relaunches.
+- One-click **Download & install**: fetches the new binary, validates it, replaces the user-owned `~/bin/KillSwitch` (no admin prompt — the install path is in your home directory), reloads the LaunchAgent, and relaunches.
 - See [docs/auto-update.md](docs/auto-update.md) for the full release + update flow.
 
 ## Menu bar (tray)
@@ -86,7 +86,7 @@ chmod +x install.sh uninstall.sh
 
 This will:
 1. Build the release binary
-2. Copy it to `/usr/local/bin/KillSwitch`
+2. Copy it to `~/bin/KillSwitch` (no `sudo` required)
 3. Install a LaunchAgent so it starts at login
 
 ## Uninstall

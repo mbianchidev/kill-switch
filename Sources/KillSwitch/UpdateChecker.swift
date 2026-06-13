@@ -24,7 +24,6 @@ enum UpdateError: LocalizedError {
     case invalidBinary
     case checksumMismatch
     case installFailed(String)
-    case cancelled
 
     var errorDescription: String? {
         switch self {
@@ -36,7 +35,6 @@ enum UpdateError: LocalizedError {
         case .invalidBinary:      return "Downloaded file is not a valid macOS executable."
         case .checksumMismatch:   return "Downloaded binary failed checksum verification."
         case .installFailed(let m): return "Install failed: \(m)"
-        case .cancelled:          return "Update cancelled."
         }
     }
 }
@@ -55,8 +53,9 @@ enum UpdateState: Equatable {
 // MARK: - UpdateChecker
 
 /// Checks the GitHub Releases API for a newer build, and (when the user asks)
-/// downloads the new binary and installs it over the root-owned
-/// `/usr/local/bin/KillSwitch` via an authenticated AppleScript shell.
+/// downloads the new binary and installs it over the user-owned
+/// `~/bin/KillSwitch`. The install path is user-writable, so no privilege
+/// escalation (admin password) is required.
 ///
 /// Designed to be self-contained: the rest of the app only needs
 /// `UpdateChecker.shared` and `checkForUpdates()`.
@@ -71,7 +70,9 @@ final class UpdateChecker: ObservableObject {
     let currentVersion = AppVersion.current
 
     private let releasesURL = URL(string: "https://api.github.com/repos/mbianchidev/kill-switch/releases/latest")!
-    private let installPath = "/usr/local/bin/KillSwitch"
+    private let installPath = FileManager.default
+        .homeDirectoryForCurrentUser
+        .appendingPathComponent("bin/KillSwitch").path
     private let assetName = "KillSwitch"
     private let checksumAssetName = "KillSwitch.sha256"
     private let agentPlistPath = FileManager.default
@@ -186,7 +187,7 @@ final class UpdateChecker: ObservableObject {
             try validate(tmp)
             try await verifyChecksum(of: tmp, release: release)
             setState(.installing)
-            try await installPrivileged(from: tmp)
+            try installBinary(from: tmp)
             log("Installed \(release.version); relaunching")
             relaunch()
         } catch {
@@ -272,23 +273,22 @@ final class UpdateChecker: ObservableObject {
         }
     }
 
-    /// Copy the validated binary into the root-owned install path and fix perms,
-    /// prompting once for admin rights via AppleScript (mirrors `update.sh`).
-    private func installPrivileged(from src: URL) async throws {
-        let shell = "cp \(Self.shQuote(src.path)) \(Self.shQuote(installPath)) "
-            + "&& chmod 755 \(Self.shQuote(installPath))"
-        let asLiteral = shell
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        let script = "do shell script \"\(asLiteral)\" with administrator privileges"
-
-        let result = await runProcess("/usr/bin/osascript", ["-e", script])
-        guard result.ok else {
-            let message = result.output
-            if message.contains("-128") || message.lowercased().contains("cancel") {
-                throw UpdateError.cancelled
+    /// Copy the validated binary into the user-owned install path (`~/bin`) and
+    /// mark it executable. No privilege escalation is needed — the path lives in
+    /// the user's home directory, so the LaunchAgent that runs it and the updater
+    /// that writes it always agree.
+    private func installBinary(from src: URL) throws {
+        let fm = FileManager.default
+        let dir = (installPath as NSString).deletingLastPathComponent
+        do {
+            try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            if fm.fileExists(atPath: installPath) {
+                try fm.removeItem(atPath: installPath)
             }
-            throw UpdateError.installFailed(message)
+            try fm.copyItem(atPath: src.path, toPath: installPath)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: installPath)
+        } catch {
+            throw UpdateError.installFailed(error.localizedDescription)
         }
     }
 
@@ -346,37 +346,6 @@ final class UpdateChecker: ObservableObject {
     /// POSIX single-quote a string for safe shell interpolation.
     private static func shQuote(_ s: String) -> String {
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
-
-    private func runProcess(_ launchPath: String, _ arguments: [String]) async -> (ok: Bool, output: String) {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let task = Process()
-                task.launchPath = launchPath
-                task.arguments = arguments
-                let out = Pipe()
-                task.standardOutput = out
-                // Merge stderr into the same pipe so a single drain can't leave
-                // the other pipe's buffer to fill and deadlock the child.
-                task.standardError = out
-                do {
-                    try task.run()
-                } catch {
-                    continuation.resume(returning: (false, error.localizedDescription))
-                    return
-                }
-                // Drain output *before* waiting so a chatty child can't fill the
-                // pipe buffer and block on write while we wait.
-                let outData = out.fileHandleForReading.readDataToEndOfFile()
-                task.waitUntilExit()
-                let output = String(data: outData, encoding: .utf8) ?? ""
-                if task.terminationStatus == 0 {
-                    continuation.resume(returning: (true, output))
-                } else {
-                    continuation.resume(returning: (false, output.isEmpty ? "exit \(task.terminationStatus)" : output))
-                }
-            }
-        }
     }
 
     /// Best-effort logging to stdout and `~/Library/Logs/killswitch-update.log`.
