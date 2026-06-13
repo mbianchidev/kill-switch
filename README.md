@@ -77,21 +77,41 @@ KillSwitch** from the menu bar.
 - Swift 5.9+
 - Xcode Command Line Tools
 
-## Build & Install
+## Install
+
+One line — downloads the latest prebuilt release and sets it up to run at login
+(no `sudo`, no source checkout needed):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mbianchidev/kill-switch/main/install.sh | bash
+```
+
+This downloads the latest `KillSwitch` binary, verifies its SHA-256, installs it
+to `~/bin/KillSwitch`, and loads a LaunchAgent so it starts at login. Re-running
+it upgrades an existing install — handy if you're stuck on an old build (see
+[Updating](#updating)).
+
+### Build from source instead
+
+From a checkout, `install.sh` builds with Swift automatically:
 
 ```bash
 chmod +x install.sh uninstall.sh
-./install.sh
+./install.sh            # builds with Swift when run inside the repo
 ```
 
+Force a mode with `KILLSWITCH_INSTALL_MODE=source` or `KILLSWITCH_INSTALL_MODE=release`.
+
 This will:
-1. Build the release binary
+1. Build (or download) the release binary
 2. Copy it to `~/bin/KillSwitch` (no `sudo` required)
 3. Install a LaunchAgent so it starts at login
 
 ## Uninstall
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/mbianchidev/kill-switch/main/uninstall.sh | bash
+# or, from a checkout:
 ./uninstall.sh
 ```
 
@@ -99,6 +119,16 @@ This will:
 
 Released builds update themselves: open the **Updates** tab (or wait for the
 launch check) and click **Download & install** when a newer version is offered.
+The updater overwrites whatever binary the LaunchAgent launches, so the new
+version is the one that comes back after the relaunch.
+
+> **Stuck updating from a pre-1.1.2 build?** Older builds installed the update to
+> the wrong path and kept relaunching the old version (an update loop). Escape it
+> by reinstalling the latest release:
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/mbianchidev/kill-switch/main/install.sh | bash
+> ```
 
 Every push to `main` is automatically published as a GitHub Release
 (auto-incrementing semver, e.g. `v1.1.1`) with the compiled binary attached, and

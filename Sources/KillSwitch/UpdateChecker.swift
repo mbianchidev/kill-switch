@@ -70,14 +70,28 @@ final class UpdateChecker: ObservableObject {
     let currentVersion = AppVersion.current
 
     private let releasesURL = URL(string: "https://api.github.com/repos/mbianchidev/kill-switch/releases/latest")!
-    private let installPath = FileManager.default
-        .homeDirectoryForCurrentUser
-        .appendingPathComponent("bin/KillSwitch").path
     private let assetName = "KillSwitch"
     private let checksumAssetName = "KillSwitch.sha256"
     private let agentPlistPath = FileManager.default
         .homeDirectoryForCurrentUser
         .appendingPathComponent("Library/LaunchAgents/io.killswitch.agent.plist").path
+
+    /// Where the updated binary is written. We target whatever the LaunchAgent
+    /// actually launches (its first `ProgramArguments` entry), so the binary we
+    /// overwrite is exactly the one that gets relaunched. This prevents update
+    /// loops where the install path and the agent's launch path disagree (the
+    /// pre-1.1.2 bug, where the updater wrote `/usr/local/bin` but the agent ran
+    /// `~/bin`). Falls back to the user-owned `~/bin/KillSwitch`.
+    private var installPath: String {
+        if let dict = NSDictionary(contentsOfFile: agentPlistPath),
+           let args = dict["ProgramArguments"] as? [String],
+           let path = args.first, !path.isEmpty {
+            return (path as NSString).expandingTildeInPath
+        }
+        return FileManager.default
+            .homeDirectoryForCurrentUser
+            .appendingPathComponent("bin/KillSwitch").path
+    }
     private static let logURL = FileManager.default
         .homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Logs/killswitch-update.log")
@@ -505,7 +519,7 @@ struct UpdatesTab: View {
                 Label("Download & install", systemImage: "square.and.arrow.down")
             }
             .buttonStyle(.borderedProminent)
-            Text("Installs over /usr/local/bin/KillSwitch and relaunches. You'll be asked for your password.")
+            Text("Installs to ~/bin/KillSwitch and relaunches. No password needed.")
                 .font(.system(size: 11))
                 .foregroundColor(.white.opacity(0.4))
         }

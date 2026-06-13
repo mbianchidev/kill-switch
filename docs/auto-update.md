@@ -56,10 +56,13 @@ therefore treats any published release as an update.
 - **Install** — downloads the new binary, validates it is a non-trivial Mach-O
   executable, and verifies its SHA-256 against the release's `KillSwitch.sha256`
   asset (failing closed if the checksum is missing or mismatched), then copies it
-  over the user-owned `~/bin/KillSwitch`, fixes permissions, reloads the
-  LaunchAgent, and relaunches. The install path lives in the user's home
-  directory, so no admin password is required. Temp files are cleaned up and
-  failures are reported clearly.
+  over the binary the LaunchAgent actually launches — read from the agent plist's
+  `ProgramArguments` (falling back to `~/bin/KillSwitch`). Targeting the agent's
+  own launch path guarantees the relaunched binary is the one we just wrote, so
+  the install and relaunch can never disagree (the cause of the pre-1.1.2 update
+  loop). It then fixes permissions, reloads the LaunchAgent, and relaunches. The
+  install path lives in the user's home directory, so no admin password is
+  required. Temp files are cleaned up and failures are reported clearly.
 
 Update activity is logged to `~/Library/Logs/killswitch-update.log`.
 
