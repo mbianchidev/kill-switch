@@ -4,7 +4,7 @@ struct ContentView: View {
     @StateObject private var topConsumers = TopConsumersMonitor()
     @StateObject private var energy = EnergyMonitor()
     @StateObject private var watchdog = CPUWatchdog()
-    @StateObject private var updater = UpdateChecker.shared
+    @ObservedObject private var updater = UpdateChecker.shared
 
     var body: some View {
         TabView {

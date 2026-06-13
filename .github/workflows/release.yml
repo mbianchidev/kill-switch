@@ -64,6 +64,9 @@ jobs:
           mkdir -p dist
           cp .build/release/KillSwitch dist/KillSwitch
           tar -czf dist/KillSwitch.tar.gz -C .build/release KillSwitch
+          # Publish a SHA-256 so the in-app updater can verify the binary's
+          # integrity before performing a privileged install.
+          shasum -a 256 dist/KillSwitch | awk '{print $1}' > dist/KillSwitch.sha256
 
       - name: Create GitHub Release
         env:
@@ -71,6 +74,6 @@ jobs:
         run: |
           NOTES="$(git log -1 --pretty=%B)"
           gh release create "${{ steps.version.outputs.version }}" \
-            dist/KillSwitch dist/KillSwitch.tar.gz \
+            dist/KillSwitch dist/KillSwitch.tar.gz dist/KillSwitch.sha256 \
             --title "${{ steps.version.outputs.version }}" \
             --notes "$NOTES"

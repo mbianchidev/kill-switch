@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import SwiftUI
+import CryptoKit
 
 // MARK: - Models
 
@@ -10,6 +11,7 @@ struct ReleaseInfo: Equatable {
     let name: String
     let notes: String
     let binaryURL: URL    // browser_download_url of the raw "KillSwitch" asset
+    let checksumURL: URL? // browser_download_url of the "KillSwitch.sha256" asset
 }
 
 /// Errors surfaced by the update flow. All are user-presentable.
@@ -20,6 +22,7 @@ enum UpdateError: LocalizedError {
     case noAsset
     case download(String)
     case invalidBinary
+    case checksumMismatch
     case installFailed(String)
     case cancelled
 
@@ -31,6 +34,7 @@ enum UpdateError: LocalizedError {
         case .noAsset:            return "Latest release has no KillSwitch binary attached."
         case .download(let m):    return "Download failed: \(m)"
         case .invalidBinary:      return "Downloaded file is not a valid macOS executable."
+        case .checksumMismatch:   return "Downloaded binary failed checksum verification."
         case .installFailed(let m): return "Install failed: \(m)"
         case .cancelled:          return "Update cancelled."
         }
@@ -69,6 +73,7 @@ final class UpdateChecker: ObservableObject {
     private let releasesURL = URL(string: "https://api.github.com/repos/mbianchidev/kill-switch/releases/latest")!
     private let installPath = "/usr/local/bin/KillSwitch"
     private let assetName = "KillSwitch"
+    private let checksumAssetName = "KillSwitch.sha256"
     private let agentPlistPath = FileManager.default
         .homeDirectoryForCurrentUser
         .appendingPathComponent("Library/LaunchAgents/io.killswitch.agent.plist").path
@@ -162,7 +167,11 @@ final class UpdateChecker: ObservableObject {
               let url = URL(string: urlStr) else {
             throw UpdateError.noAsset
         }
-        return ReleaseInfo(version: tag, name: name, notes: notes, binaryURL: url)
+        let checksumURL = assets
+            .first(where: { ($0["name"] as? String) == checksumAssetName })
+            .flatMap { $0["browser_download_url"] as? String }
+            .flatMap { URL(string: $0) }
+        return ReleaseInfo(version: tag, name: name, notes: notes, binaryURL: url, checksumURL: checksumURL)
     }
 
     // MARK: Install
@@ -175,6 +184,7 @@ final class UpdateChecker: ObservableObject {
             let tmp = try await download(release.binaryURL)
             defer { try? FileManager.default.removeItem(at: tmp) }
             try validate(tmp)
+            try await verifyChecksum(of: tmp, release: release)
             setState(.installing)
             try await installPrivileged(from: tmp)
             log("Installed \(release.version); relaunching")
@@ -225,6 +235,40 @@ final class UpdateChecker: ObservableObject {
         let machO: Set<UInt32> = [0xFEEDFACE, 0xFEEDFACF, 0xCAFEBABE, 0xCAFEBABF]
         guard machO.contains(value) || machO.contains(value.byteSwapped) else {
             throw UpdateError.invalidBinary
+        }
+    }
+
+    /// Verify the downloaded binary against the SHA-256 published alongside the
+    /// release. This is an integrity/authenticity gate: without it a tampered
+    /// asset (or compromised release) could be installed as root. Fails closed —
+    /// a missing or mismatched checksum aborts the install.
+    private func verifyChecksum(of url: URL, release: ReleaseInfo) async throws {
+        guard let checksumURL = release.checksumURL else {
+            throw UpdateError.checksumMismatch
+        }
+        let checksumFile = try await download(checksumURL)
+        defer { try? FileManager.default.removeItem(at: checksumFile) }
+
+        guard let raw = try? String(contentsOf: checksumFile, encoding: .utf8) else {
+            throw UpdateError.checksumMismatch
+        }
+        // Accept both bare digests and `<digest>  <filename>` (shasum) formats.
+        guard let expected = raw
+            .split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" || $0 == "\r" })
+            .first
+            .map({ $0.lowercased() }),
+            expected.count == 64,
+            expected.allSatisfy({ $0.isHexDigit }) else {
+            throw UpdateError.checksumMismatch
+        }
+
+        guard let data = try? Data(contentsOf: url) else {
+            throw UpdateError.checksumMismatch
+        }
+        let actual = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        guard actual == expected else {
+            log("Checksum mismatch: expected \(expected), got \(actual)")
+            throw UpdateError.checksumMismatch
         }
     }
 
@@ -311,23 +355,25 @@ final class UpdateChecker: ObservableObject {
                 task.launchPath = launchPath
                 task.arguments = arguments
                 let out = Pipe()
-                let err = Pipe()
                 task.standardOutput = out
-                task.standardError = err
+                // Merge stderr into the same pipe so a single drain can't leave
+                // the other pipe's buffer to fill and deadlock the child.
+                task.standardError = out
                 do {
                     try task.run()
                 } catch {
                     continuation.resume(returning: (false, error.localizedDescription))
                     return
                 }
+                // Drain output *before* waiting so a chatty child can't fill the
+                // pipe buffer and block on write while we wait.
                 let outData = out.fileHandleForReading.readDataToEndOfFile()
-                let errData = err.fileHandleForReading.readDataToEndOfFile()
                 task.waitUntilExit()
+                let output = String(data: outData, encoding: .utf8) ?? ""
                 if task.terminationStatus == 0 {
-                    continuation.resume(returning: (true, String(data: outData, encoding: .utf8) ?? ""))
+                    continuation.resume(returning: (true, output))
                 } else {
-                    let stderr = String(data: errData, encoding: .utf8) ?? ""
-                    continuation.resume(returning: (false, stderr.isEmpty ? "exit \(task.terminationStatus)" : stderr))
+                    continuation.resume(returning: (false, output.isEmpty ? "exit \(task.terminationStatus)" : output))
                 }
             }
         }

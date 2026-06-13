@@ -27,9 +27,10 @@ below). Versions are compared component-wise as integers, ignoring a leading `v`
    (`gh release view`), e.g. `v1.1.0` → `v1.1.1`.
 2. Overwrite `Sources/KillSwitch/Version.swift` with the computed version.
 3. `swift build -c release`.
-4. Package the binary (`KillSwitch`) and a `KillSwitch.tar.gz`.
-5. `gh release create` publishes the release with both assets attached and the
-   latest commit message as the release notes.
+4. Package the binary (`KillSwitch`) and a `KillSwitch.tar.gz`, and write a
+   `KillSwitch.sha256` containing the binary's SHA-256 digest.
+5. `gh release create` publishes the release with all three assets attached and
+   the latest commit message as the release notes.
 
 `.github/workflows/ci.yml` is unchanged and still builds every PR and push.
 
@@ -53,7 +54,9 @@ therefore treats any published release as an update.
 - **Notify** — when a newer version exists, a banner appears at the top of the
   window and the Updates tab shows the release notes and an install button.
 - **Install** — downloads the new binary, validates it is a non-trivial Mach-O
-  executable, then copies it over the root-owned `/usr/local/bin/KillSwitch`
+  executable, and verifies its SHA-256 against the release's `KillSwitch.sha256`
+  asset (failing closed if the checksum is missing or mismatched), then copies it
+  over the root-owned `/usr/local/bin/KillSwitch`
   via `osascript … with administrator privileges` (one password prompt),
   fixes permissions, reloads the LaunchAgent, and relaunches. Temp files are
   cleaned up and failures are reported clearly.
