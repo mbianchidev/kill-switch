@@ -87,7 +87,10 @@ final class UpdateChecker: ObservableObject {
            let args = dict["ProgramArguments"] as? [String],
            let path = args.first, !path.isEmpty {
             let expanded = (path as NSString).expandingTildeInPath
-            if (expanded as NSString).isAbsolutePath {
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            if (expanded as NSString).isAbsolutePath,
+               expanded.hasPrefix(home + "/"),
+               (expanded as NSString).lastPathComponent == "KillSwitch" {
                 return expanded
             }
         }
