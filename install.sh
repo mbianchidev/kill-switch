@@ -61,7 +61,7 @@ download_release() {
 
   log "🔐 Verifying checksum..."
   local expected
-  expected="$(tr -d '[:space:]' < "$sha")"
+  expected="$(awk '{print $1}' "$sha" | tr -d '[:space:]')"
   [ -n "$expected" ] || die "Empty checksum file."
   printf '%s  %s\n' "$expected" "$tmp" | shasum -a 256 -c - >/dev/null 2>&1 \
     || die "Checksum verification failed — refusing to install."
