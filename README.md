@@ -21,30 +21,42 @@ A lightweight macOS process manager utility. Lists the processes belonging to th
 ## Tabs
 
 ### Processes
+
 The main process list described above.
 
 ### Dev cleanup
+
 - Lists processes **listening on notable dev ports** (3000, 3001, 3003, 5173, 5174, 8000, 8080, 8888, 9000, 9090 and similar common ports such as 4200, 5000, 8081, 9091), showing PID, command, and port, each with a kill button.
 - **Auto-kills** stale dev servers (node, python, java/mvn, rust/cargo, go, ruby, deno, bun) owned by the current user that have been running for **more than 12 hours**.
 - Never touches: processes owned by other users or the system, Copilot CLI / SDK, node-based MCP servers (github, context7, work_iq, fabric, seismic, azure, kusto, revenue, …), IDEs (VS Code, Obsidian, Chrome, Slack, Teams, OrbStack) or non-dev apps (Spotify, Handy, …). Detection is conservative — when in doubt it does **not** kill.
 - Re-scans ports every 5s and re-runs cleanup every 10 min (plus a manual "Run cleanup now" button), and shows a summary of what was found and cleaned.
 
 ### Top consumers
+
 - Top 10 processes by CPU and top 10 by memory (one line each) with a kill button.
 - A **trend chart** of the current top consumers' CPU or memory usage over a rolling 12h window, sampled every 10 minutes by default (interval configurable: 5/10/15/30/60 min).
 - Lists and chart legend are always ordered by the process consuming the most.
 
 ### Energy
+
 - Top 10 processes by **energy impact** (macOS `top` POWER metric), aggregated per parent process, each with a kill button.
 - A **trend chart** of the current top energy consumers over a rolling 12h window, sampled every 10 minutes by default (same configurable interval as Top consumers).
 - List and chart legend are always ordered by the process consuming the most energy.
 
 ### CPU Watchdog
+
 - Watches for processes (parent-collapsed) sustaining CPU above a threshold and fires **native macOS notifications** when one stays hot for several consecutive checks — mirroring the `cpu-watchdog.sh` / `cpu-hog-monitor.sh` shell scripts.
 - Defaults: **90%** threshold, alert after **3** consecutive checks, every **5 min** (~15 min sustained). Threshold (80/85/90/95%), interval, and consecutive-check count are all configurable.
 - After alerting, the per-process counter resets to avoid spam (it re-alerts after the same number of further consecutive sightings).
 - Shows currently-offending processes with their consecutive count and a kill button, plus an in-app recent-alerts history.
 - Appends to `~/Library/Logs/cpu-watchdog.log`, trimmed to the last 500 lines.
+
+### Updates
+
+- Shows the running version and the latest published release, with a manual **Check for updates** button.
+- Auto-checks on launch and every 6 hours; when a newer build exists, a banner appears at the top of the window.
+- One-click **Download & install**: fetches the new binary, validates it, replaces the root-owned `/usr/local/bin/KillSwitch` (one admin prompt), reloads the LaunchAgent, and relaunches.
+- See [docs/auto-update.md](docs/auto-update.md) for the full release + update flow.
 
 ## Menu bar (tray)
 
@@ -83,6 +95,22 @@ This will:
 ./uninstall.sh
 ```
 
+## Updating
+
+Released builds update themselves: open the **Updates** tab (or wait for the
+launch check) and click **Download & install** when a newer version is offered.
+
+Every push to `main` is automatically published as a GitHub Release
+(auto-incrementing semver, e.g. `v1.1.1`) with the compiled binary attached, and
+the running app compares its embedded version against the latest release. See
+[docs/auto-update.md](docs/auto-update.md) for details.
+
+To update a source checkout manually instead:
+
+```bash
+./update.sh
+```
+
 ## Run without installing
 
 ```bash
@@ -96,5 +124,7 @@ swift build -c release
 - SwiftUI + Swift Charts (trend graph)
 - AppKit (`NSWorkspace`) for application icons; `NSStatusItem` for the menu bar (tray) icon
 - macOS process APIs (`ps`, `lsof`, `top`)
-- `osascript` for native macOS notifications
+- `osascript` for native macOS notifications and privileged self-update
+- `URLSession` (async/await) + GitHub Releases API for in-app updates
+- GitHub Actions for continuous releases on every push to `main`
 - LaunchAgent for auto-start

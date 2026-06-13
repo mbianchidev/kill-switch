@@ -4,6 +4,7 @@ struct ContentView: View {
     @StateObject private var topConsumers = TopConsumersMonitor()
     @StateObject private var energy = EnergyMonitor()
     @StateObject private var watchdog = CPUWatchdog()
+    @ObservedObject private var updater = UpdateChecker.shared
 
     var body: some View {
         TabView {
@@ -17,13 +18,17 @@ struct ContentView: View {
                 .tabItem { Label("Energy", systemImage: "bolt.fill") }
             CPUWatchdogTab(monitor: watchdog)
                 .tabItem { Label("Watchdog", systemImage: "exclamationmark.triangle") }
+            UpdatesTab(updater: updater)
+                .tabItem { Label("Updates", systemImage: "arrow.triangle.2.circlepath") }
         }
         .padding(.top, 4)
         .background(Theme.background)
+        .safeAreaInset(edge: .top) { UpdateBanner(updater: updater) }
         .onAppear {
             topConsumers.start()
             energy.start()
             watchdog.start()
+            updater.startPeriodicChecks()
         }
     }
 }
