@@ -68,6 +68,7 @@ final class UpdateChecker: ObservableObject {
     @Published private(set) var latest: ReleaseInfo?
     @Published private(set) var lastChecked: Date?
     @Published private(set) var uninstallError: String?
+    @Published private(set) var uninstalling = false
     @Published var bannerDismissed = false
 
     let currentVersion = AppVersion.current
@@ -147,7 +148,8 @@ final class UpdateChecker: ObservableObject {
     /// then quit. Runs off the main thread; on failure publishes `uninstallError`
     /// and leaves the app running so the user can see what went wrong.
     func uninstall() {
-        uninstallError = nil
+        setUninstallError(nil)
+        setUninstalling(true)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             do {
@@ -156,7 +158,8 @@ final class UpdateChecker: ObservableObject {
             } catch {
                 let message = (error as? UpdateError)?.errorDescription ?? error.localizedDescription
                 self.log(message)
-                DispatchQueue.main.async { self.uninstallError = message }
+                self.setUninstallError(message)
+                self.setUninstalling(false)
             }
         }
     }
@@ -172,8 +175,12 @@ final class UpdateChecker: ObservableObject {
             let task = Process()
             task.executableURL = URL(fileURLWithPath: "/bin/launchctl")
             task.arguments = ["unload", agentPlistPath]
-            try? task.run()
-            task.waitUntilExit()
+            do {
+                try task.run()
+                task.waitUntilExit()
+            } catch {
+                log("launchctl unload failed (continuing): \(error.localizedDescription)")
+            }
         }
 
         let binary = installPath
@@ -448,6 +455,22 @@ final class UpdateChecker: ObservableObject {
         }
     }
 
+    private func setUninstallError(_ message: String?) {
+        if Thread.isMainThread {
+            uninstallError = message
+        } else {
+            DispatchQueue.main.async { self.uninstallError = message }
+        }
+    }
+
+    private func setUninstalling(_ value: Bool) {
+        if Thread.isMainThread {
+            uninstalling = value
+        } else {
+            DispatchQueue.main.async { self.uninstalling = value }
+        }
+    }
+
     /// Best-effort logging to stdout and `~/Library/Logs/killswitch-update.log`.
     /// Never throws: logging must not break the app.
     private func log(_ message: String) {
@@ -630,10 +653,10 @@ struct UpdatesTab: View {
                 statusLine(icon: "exclamationmark.triangle.fill", color: .orange, text: error)
             }
             Button(role: .destructive) { showUninstallConfirm = true } label: {
-                Label("Uninstall KillSwitch", systemImage: "trash")
+                Label(updater.uninstalling ? "Uninstalling…" : "Uninstall KillSwitch", systemImage: "trash")
             }
             .buttonStyle(.borderedProminent)
-            .disabled(isBusy)
+            .disabled(isBusy || updater.uninstalling)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
