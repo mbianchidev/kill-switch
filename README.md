@@ -56,6 +56,7 @@ The main process list described above.
 - Shows the running version and the latest published release, with a manual **Check for updates** button.
 - Auto-checks on launch and every 6 hours; when a newer build exists, a banner appears at the top of the window.
 - One-click **Download & install**: fetches the new binary, validates it, replaces the user-owned `~/bin/KillSwitch` (no admin prompt — the install path is in your home directory), reloads the LaunchAgent, and relaunches.
+- **Uninstall KillSwitch** button: removes the binary and login LaunchAgent (same as `uninstall.sh`), then quits — no terminal needed.
 - See [docs/auto-update.md](docs/auto-update.md) for the full release + update flow.
 
 ## Menu bar (tray)
@@ -108,6 +109,9 @@ This will:
 3. Install a LaunchAgent so it starts at login
 
 ## Uninstall
+
+From the app, open the **Updates** tab and click **Uninstall KillSwitch** (removes
+the binary and login LaunchAgent, then quits). Or from a terminal:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mbianchidev/kill-switch/main/uninstall.sh | bash
