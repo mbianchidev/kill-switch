@@ -89,9 +89,13 @@ final class UpdateChecker: ObservableObject {
             let expanded = (path as NSString).expandingTildeInPath
             let home = FileManager.default.homeDirectoryForCurrentUser.path
             let standardized = URL(fileURLWithPath: expanded).standardizedFileURL.path
+            // Accept whatever the agent launches, as long as it stays inside the
+            // user's home directory (the agent reloads this exact path, so the
+            // basename is intentionally not constrained — requiring a specific
+            // `KillSwitch` filename/casing would silently fall back to
+            // `~/bin/KillSwitch` and recreate the install/relaunch mismatch).
             if (standardized as NSString).isAbsolutePath,
-               standardized.hasPrefix(home + "/"),
-               (standardized as NSString).lastPathComponent == "KillSwitch" {
+               standardized.hasPrefix(home + "/") {
                 return standardized
             }
         }
@@ -329,15 +333,19 @@ final class UpdateChecker: ObservableObject {
                 "--", agentPlistPath]
             try? task.run()
         } else {
-            // Relaunch directly without invoking a shell to avoid any command parsing.
+            // Relaunch via a detached shell so the new instance starts *after*
+            // this process terminates (~0.3s below). Launching immediately could
+            // briefly run two instances at once and reintroduce UI/agent races.
+            // The path is passed as a positional arg so no shell-metacharacter
+            // expansion can happen even with unusual characters.
             let expandedInstallPath = (installPath as NSString).expandingTildeInPath
             guard (expandedInstallPath as NSString).isAbsolutePath,
                   FileManager.default.isExecutableFile(atPath: expandedInstallPath) else {
                 return
             }
             let relaunchTask = Process()
-            relaunchTask.executableURL = URL(fileURLWithPath: expandedInstallPath)
-            relaunchTask.arguments = []
+            relaunchTask.executableURL = URL(fileURLWithPath: "/bin/sh")
+            relaunchTask.arguments = ["-c", "sleep 1; exec \"$1\"", "--", expandedInstallPath]
             try? relaunchTask.run()
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
