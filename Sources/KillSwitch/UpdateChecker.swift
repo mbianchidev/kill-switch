@@ -314,16 +314,23 @@ final class UpdateChecker: ObservableObject {
     /// Reload the LaunchAgent (which relaunches a fresh instance) and quit. If no
     /// agent is installed, launch the new binary directly.
     private func relaunch() {
-        let script: String
-        if FileManager.default.fileExists(atPath: agentPlistPath) {
-            script = "sleep 1; launchctl unload \(Self.shQuote(agentPlistPath)) 2>/dev/null; "
-                + "launchctl load \(Self.shQuote(agentPlistPath)) 2>/dev/null"
-        } else {
-            script = "sleep 1; \(Self.shQuote(installPath)) >/dev/null 2>&1 &"
-        }
         let task = Process()
-        task.launchPath = "/bin/bash"
-        task.arguments = ["-c", script]
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        if FileManager.default.fileExists(atPath: agentPlistPath) {
+            // agentPlistPath is app-computed (not user-controlled). Pass it as
+            // a positional arg so no shell-metacharacter expansion can happen
+            // even if the path contains unusual characters.
+            task.arguments = ["-c",
+                "sleep 1; launchctl unload \"$1\" 2>/dev/null; launchctl load \"$1\" 2>/dev/null",
+                "--", agentPlistPath]
+        } else {
+            // installPath is read from the agent plist. Pass it as $1 so it is
+            // treated as data by the shell and never interpolated into the
+            // command string, preventing any command-injection vector.
+            task.arguments = ["-c",
+                "sleep 1; exec \"$1\" >/dev/null 2>&1",
+                "--", installPath]
+        }
         try? task.run()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             NSApp.terminate(nil)
@@ -360,11 +367,6 @@ final class UpdateChecker: ObservableObject {
         } else {
             DispatchQueue.main.async { self.state = newState }
         }
-    }
-
-    /// POSIX single-quote a string for safe shell interpolation.
-    private static func shQuote(_ s: String) -> String {
-        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     /// Best-effort logging to stdout and `~/Library/Logs/killswitch-update.log`.
