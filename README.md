@@ -26,10 +26,16 @@ The main process list described above.
 
 ### Dev cleanup
 
-- Lists processes **listening on notable dev ports** (3000, 3001, 3003, 5173, 5174, 8000, 8080, 8888, 9000, 9090 and similar common ports such as 4200, 5000, 8081, 9091), showing PID, command, and port, each with a kill button.
-- **Auto-kills** stale dev servers (node, python, java/mvn, rust/cargo, go, ruby, deno, bun) owned by the current user that have been running for **more than 12 hours**.
+- Lists processes **listening on notable dev ports** (defaults: 3000–3003, 4000, 4200, 5000/5001, 5173/5174, 5555, 6006, 8000/8001, 8080/8081, 8090, 8443, 8888, 9000/9090/9091), showing PID, command, and port, each with a kill button.
+- **Auto-kills** stale dev servers (node, python, java/mvn, rust/cargo, go, ruby, deno, bun, …) owned by the current user that have been running past the configured age (default **12 hours**).
 - Never touches: processes owned by other users or the system, Copilot CLI / SDK, node-based MCP servers (github, context7, work_iq, fabric, seismic, azure, kusto, revenue, …), IDEs (VS Code, Obsidian, Chrome, Slack, Teams, OrbStack) or non-dev apps (Spotify, Handy, …). Detection is conservative — when in doubt it does **not** kill.
-- Re-scans ports every 5s and re-runs cleanup every 10 min (plus a manual "Run cleanup now" button), and shows a summary of what was found and cleaned.
+- Re-scans ports and re-runs cleanup on configurable intervals (defaults: every 5s / 10 min), plus a manual "Run cleanup now" button, and shows a summary of what was found and cleaned.
+- **Fully configurable from the Settings card** — every detection input is exposed and editable, with changes persisted across launches:
+  - Toggle **auto-kill** on/off and pick the **kill-after age** (1/6/12/24/48/72h).
+  - Pick the **cleanup** and **port-scan** intervals.
+  - Add/remove watched **ports**, dev **runtimes**, dev-server **indicators** (command-line signatures), and **protected** substrings (never killed).
+  - **Reset to defaults** restores every value.
+
 
 ### Top consumers
 
