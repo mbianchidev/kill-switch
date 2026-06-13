@@ -346,9 +346,10 @@ final class UpdateChecker: ObservableObject {
             // The command string is a constant: the validated target path is passed
             // out-of-band through the environment rather than as a command argument,
             // so no user-influenced value is ever interpolated into the command.
-            // `exec` references the double-quoted variable, so no word splitting or
+            // `exec --` ends option parsing before the double-quoted variable, so a
+            // path is never misread as an option and no word splitting or
             // shell-metacharacter expansion can happen even with unusual characters.
-            relaunchTask.arguments = ["-c", "sleep 1; exec \"$KILLSWITCH_RELAUNCH_TARGET\""]
+            relaunchTask.arguments = ["-c", "sleep 1; exec -- \"$KILLSWITCH_RELAUNCH_TARGET\""]
             var env = ProcessInfo.processInfo.environment
             env["KILLSWITCH_RELAUNCH_TARGET"] = expandedInstallPath
             relaunchTask.environment = env
