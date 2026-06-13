@@ -70,14 +70,39 @@ final class UpdateChecker: ObservableObject {
     let currentVersion = AppVersion.current
 
     private let releasesURL = URL(string: "https://api.github.com/repos/mbianchidev/kill-switch/releases/latest")!
-    private let installPath = FileManager.default
-        .homeDirectoryForCurrentUser
-        .appendingPathComponent("bin/KillSwitch").path
     private let assetName = "KillSwitch"
     private let checksumAssetName = "KillSwitch.sha256"
     private let agentPlistPath = FileManager.default
         .homeDirectoryForCurrentUser
         .appendingPathComponent("Library/LaunchAgents/io.killswitch.agent.plist").path
+
+    /// Where the updated binary is written. We target whatever the LaunchAgent
+    /// actually launches (its first `ProgramArguments` entry), so the binary we
+    /// overwrite is exactly the one that gets relaunched. This prevents update
+    /// loops where the install path and the agent's launch path disagree (the
+    /// pre-1.1.2 bug, where the updater wrote `/usr/local/bin` but the agent ran
+    /// `~/bin`). Falls back to the user-owned `~/bin/KillSwitch`.
+    private var installPath: String {
+        if let dict = NSDictionary(contentsOfFile: agentPlistPath),
+           let args = dict["ProgramArguments"] as? [String],
+           let path = args.first, !path.isEmpty {
+            let expanded = (path as NSString).expandingTildeInPath
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            let standardized = URL(fileURLWithPath: expanded).standardizedFileURL.path
+            // Accept whatever the agent launches, as long as it stays inside the
+            // user's home directory (the agent reloads this exact path, so the
+            // basename is intentionally not constrained — requiring a specific
+            // `KillSwitch` filename/casing would silently fall back to
+            // `~/bin/KillSwitch` and recreate the install/relaunch mismatch).
+            if (standardized as NSString).isAbsolutePath,
+               standardized.hasPrefix(home + "/") {
+                return standardized
+            }
+        }
+        return FileManager.default
+            .homeDirectoryForCurrentUser
+            .appendingPathComponent("bin/KillSwitch").path
+    }
     private static let logURL = FileManager.default
         .homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Logs/killswitch-update.log")
@@ -297,17 +322,39 @@ final class UpdateChecker: ObservableObject {
     /// Reload the LaunchAgent (which relaunches a fresh instance) and quit. If no
     /// agent is installed, launch the new binary directly.
     private func relaunch() {
-        let script: String
         if FileManager.default.fileExists(atPath: agentPlistPath) {
-            script = "sleep 1; launchctl unload \(Self.shQuote(agentPlistPath)) 2>/dev/null; "
-                + "launchctl load \(Self.shQuote(agentPlistPath)) 2>/dev/null"
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/sh")
+            // agentPlistPath is app-computed (not user-controlled). Pass it as
+            // a positional arg so no shell-metacharacter expansion can happen
+            // even if the path contains unusual characters.
+            task.arguments = ["-c",
+                "sleep 1; launchctl unload \"$1\" 2>/dev/null; launchctl load \"$1\" 2>/dev/null",
+                "--", agentPlistPath]
+            try? task.run()
         } else {
-            script = "sleep 1; \(Self.shQuote(installPath)) >/dev/null 2>&1 &"
+            // Relaunch via a detached shell so the new instance starts *after*
+            // this process terminates (~0.3s below). Launching immediately could
+            // briefly run two instances at once and reintroduce UI/agent races.
+            let expandedInstallPath = (installPath as NSString).expandingTildeInPath
+            guard (expandedInstallPath as NSString).isAbsolutePath,
+                  FileManager.default.isExecutableFile(atPath: expandedInstallPath) else {
+                return
+            }
+            let relaunchTask = Process()
+            relaunchTask.executableURL = URL(fileURLWithPath: "/bin/sh")
+            // The command string is a constant: the validated target path is passed
+            // out-of-band through the environment rather than as a command argument,
+            // so no user-influenced value is ever interpolated into the command.
+            // `exec --` ends option parsing before the double-quoted variable, so a
+            // path is never misread as an option and no word splitting or
+            // shell-metacharacter expansion can happen even with unusual characters.
+            relaunchTask.arguments = ["-c", "sleep 1; exec -- \"$KILLSWITCH_RELAUNCH_TARGET\""]
+            var env = ProcessInfo.processInfo.environment
+            env["KILLSWITCH_RELAUNCH_TARGET"] = expandedInstallPath
+            relaunchTask.environment = env
+            try? relaunchTask.run()
         }
-        let task = Process()
-        task.launchPath = "/bin/bash"
-        task.arguments = ["-c", script]
-        try? task.run()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             NSApp.terminate(nil)
         }
@@ -343,11 +390,6 @@ final class UpdateChecker: ObservableObject {
         } else {
             DispatchQueue.main.async { self.state = newState }
         }
-    }
-
-    /// POSIX single-quote a string for safe shell interpolation.
-    private static func shQuote(_ s: String) -> String {
-        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     /// Best-effort logging to stdout and `~/Library/Logs/killswitch-update.log`.
@@ -483,7 +525,7 @@ struct UpdatesTab: View {
         case .downloading:
             statusLine(icon: "arrow.down.circle", color: .blue, text: "Downloading update…")
         case .installing:
-            statusLine(icon: "gearshape", color: .blue, text: "Installing (admin password required)…")
+            statusLine(icon: "gearshape", color: .blue, text: "Installing update…")
         case .failed(let message):
             statusLine(icon: "exclamationmark.triangle.fill", color: .orange, text: message)
         }
@@ -505,7 +547,7 @@ struct UpdatesTab: View {
                 Label("Download & install", systemImage: "square.and.arrow.down")
             }
             .buttonStyle(.borderedProminent)
-            Text("Installs over /usr/local/bin/KillSwitch and relaunches. You'll be asked for your password.")
+            Text("Installs to the LaunchAgent binary path (typically ~/bin/KillSwitch), then relaunches.")
                 .font(.system(size: 11))
                 .foregroundColor(.white.opacity(0.4))
         }
