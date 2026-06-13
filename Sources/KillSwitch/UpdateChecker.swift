@@ -88,10 +88,11 @@ final class UpdateChecker: ObservableObject {
            let path = args.first, !path.isEmpty {
             let expanded = (path as NSString).expandingTildeInPath
             let home = FileManager.default.homeDirectoryForCurrentUser.path
-            if (expanded as NSString).isAbsolutePath,
-               expanded.hasPrefix(home + "/"),
-               (expanded as NSString).lastPathComponent == "KillSwitch" {
-                return expanded
+            let standardized = URL(fileURLWithPath: expanded).standardizedFileURL.path
+            if (standardized as NSString).isAbsolutePath,
+               standardized.hasPrefix(home + "/"),
+               (standardized as NSString).lastPathComponent == "KillSwitch" {
+                return standardized
             }
         }
         return FileManager.default

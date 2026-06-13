@@ -23,7 +23,7 @@ die() { echo "❌ $1" >&2; exit 1; }
 choose_mode() {
   if [ -n "${KILLSWITCH_INSTALL_MODE:-}" ]; then
     echo "$KILLSWITCH_INSTALL_MODE"
-  elif [ -f "Package.swift" ] && command -v swift >/dev/null 2>&1; then
+  elif [ -f "Package.swift" ] && [ -d "Sources/KillSwitch" ] && command -v swift >/dev/null 2>&1; then
     echo "source"
   else
     echo "release"
