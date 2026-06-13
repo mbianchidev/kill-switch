@@ -122,14 +122,6 @@ launch check) and click **Download & install** when a newer version is offered.
 The updater overwrites whatever binary the LaunchAgent launches, so the new
 version is the one that comes back after the relaunch.
 
-> **Stuck updating from a pre-1.1.2 build?** Older builds installed the update to
-> the wrong path and kept relaunching the old version (an update loop). Escape it
-> by reinstalling the latest release:
->
-> ```bash
-> curl -fsSL https://raw.githubusercontent.com/mbianchidev/kill-switch/main/install.sh | bash
-> ```
-
 Every push to `main` is automatically published as a GitHub Release
 (auto-incrementing semver, e.g. `v1.1.1`) with the compiled binary attached, and
 the running app compares its embedded version against the latest release. See
