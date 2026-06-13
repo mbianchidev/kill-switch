@@ -345,16 +345,26 @@ private enum Defaults {
     static func set(_ value: [String], _ key: Key) { UserDefaults.standard.set(value, forKey: key.rawValue) }
 
     static func bool(_ key: Key, default fallback: Bool) -> Bool {
-        UserDefaults.standard.object(forKey: key.rawValue) as? Bool ?? fallback
+        guard UserDefaults.standard.object(forKey: key.rawValue) != nil else { return fallback }
+        return UserDefaults.standard.bool(forKey: key.rawValue)
     }
     static func int(_ key: Key, default fallback: Int) -> Int {
-        UserDefaults.standard.object(forKey: key.rawValue) as? Int ?? fallback
+        guard UserDefaults.standard.object(forKey: key.rawValue) != nil else { return fallback }
+        return UserDefaults.standard.integer(forKey: key.rawValue)
     }
     static func ints(_ key: Key, default fallback: [Int]) -> [Int] {
-        (UserDefaults.standard.array(forKey: key.rawValue) as? [Int]).flatMap { $0.isEmpty ? nil : $0 } ?? fallback
+        guard let values = UserDefaults.standard.array(forKey: key.rawValue) else { return fallback }
+        let converted = values.compactMap { value -> Int? in
+            if let int = value as? Int { return int }
+            if let number = value as? NSNumber { return number.intValue }
+            return nil
+        }
+        return converted.count == values.count ? converted : fallback
     }
     static func strings(_ key: Key, default fallback: [String]) -> [String] {
-        (UserDefaults.standard.array(forKey: key.rawValue) as? [String]).flatMap { $0.isEmpty ? nil : $0 } ?? fallback
+        guard let values = UserDefaults.standard.array(forKey: key.rawValue) else { return fallback }
+        let converted = values.compactMap { $0 as? String }
+        return converted.count == values.count ? converted : fallback
     }
 }
 
