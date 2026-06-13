@@ -334,12 +334,10 @@ final class UpdateChecker: ObservableObject {
                   FileManager.default.isExecutableFile(atPath: expandedInstallPath) else {
                 return
             }
-            DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 1.0) {
-                let relaunchTask = Process()
-                relaunchTask.executableURL = URL(fileURLWithPath: expandedInstallPath)
-                relaunchTask.arguments = []
-                try? relaunchTask.run()
-            }
+            let relaunchTask = Process()
+            relaunchTask.executableURL = URL(fileURLWithPath: expandedInstallPath)
+            relaunchTask.arguments = []
+            try? relaunchTask.run()
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             NSApp.terminate(nil)
