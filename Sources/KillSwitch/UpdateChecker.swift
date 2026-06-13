@@ -314,24 +314,30 @@ final class UpdateChecker: ObservableObject {
     /// Reload the LaunchAgent (which relaunches a fresh instance) and quit. If no
     /// agent is installed, launch the new binary directly.
     private func relaunch() {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/sh")
         if FileManager.default.fileExists(atPath: agentPlistPath) {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/sh")
             // agentPlistPath is app-computed (not user-controlled). Pass it as
             // a positional arg so no shell-metacharacter expansion can happen
             // even if the path contains unusual characters.
             task.arguments = ["-c",
                 "sleep 1; launchctl unload \"$1\" 2>/dev/null; launchctl load \"$1\" 2>/dev/null",
                 "--", agentPlistPath]
+            try? task.run()
         } else {
-            // installPath is read from the agent plist. Pass it as $1 so it is
-            // treated as data by the shell and never interpolated into the
-            // command string, preventing any command-injection vector.
-            task.arguments = ["-c",
-                "sleep 1; exec \"$1\" >/dev/null 2>&1",
-                "--", installPath]
+            // Relaunch directly without invoking a shell to avoid any command parsing.
+            let expandedInstallPath = (installPath as NSString).expandingTildeInPath
+            guard (expandedInstallPath as NSString).isAbsolutePath,
+                  FileManager.default.isExecutableFile(atPath: expandedInstallPath) else {
+                return
+            }
+            DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 1.0) {
+                let relaunchTask = Process()
+                relaunchTask.executableURL = URL(fileURLWithPath: expandedInstallPath)
+                relaunchTask.arguments = []
+                try? relaunchTask.run()
+            }
         }
-        try? task.run()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             NSApp.terminate(nil)
         }
