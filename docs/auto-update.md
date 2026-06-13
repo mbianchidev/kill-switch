@@ -56,10 +56,10 @@ therefore treats any published release as an update.
 - **Install** — downloads the new binary, validates it is a non-trivial Mach-O
   executable, and verifies its SHA-256 against the release's `KillSwitch.sha256`
   asset (failing closed if the checksum is missing or mismatched), then copies it
-  over the root-owned `/usr/local/bin/KillSwitch`
-  via `osascript … with administrator privileges` (one password prompt),
-  fixes permissions, reloads the LaunchAgent, and relaunches. Temp files are
-  cleaned up and failures are reported clearly.
+  over the user-owned `~/bin/KillSwitch`, fixes permissions, reloads the
+  LaunchAgent, and relaunches. The install path lives in the user's home
+  directory, so no admin password is required. Temp files are cleaned up and
+  failures are reported clearly.
 
 Update activity is logged to `~/Library/Logs/killswitch-update.log`.
 

@@ -1,7 +1,9 @@
 #!/bin/bash
 set -e
 
-INSTALL_PATH="/usr/local/bin/KillSwitch"
+INSTALL_DIR="$HOME/bin"
+INSTALL_PATH="$INSTALL_DIR/KillSwitch"
+PLIST_SRC="io.killswitch.agent.plist"
 PLIST_DST="$HOME/Library/LaunchAgents/io.killswitch.agent.plist"
 
 echo "🔄 Updating KillSwitch..."
@@ -16,11 +18,13 @@ echo "⏹  Stopping running instance..."
 launchctl unload "$PLIST_DST" 2>/dev/null || true
 
 echo "📦 Installing binary..."
-sudo cp .build/release/KillSwitch "$INSTALL_PATH"
-sudo chmod +x "$INSTALL_PATH"
+mkdir -p "$INSTALL_DIR"
+cp .build/release/KillSwitch "$INSTALL_PATH"
+chmod +x "$INSTALL_PATH"
 
 echo "📋 Updating LaunchAgent..."
-cp io.killswitch.agent.plist "$PLIST_DST"
+mkdir -p "$(dirname "$PLIST_DST")"
+sed "s|__INSTALL_PATH__|$INSTALL_PATH|g" "$PLIST_SRC" > "$PLIST_DST"
 
 echo "▶️  Starting..."
 launchctl load "$PLIST_DST"

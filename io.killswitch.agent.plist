@@ -6,7 +6,7 @@
     <string>io.killswitch.agent</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/KillSwitch</string>
+        <string>__INSTALL_PATH__</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
