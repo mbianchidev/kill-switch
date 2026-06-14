@@ -60,7 +60,8 @@ The main process list described above.
 ### Updates
 
 - Shows the running version and the latest published release, with a manual **Check for updates** button.
-- Auto-checks on launch and every 6 hours; when a newer build exists, a banner appears at the top of the window.
+- Auto-checks on launch and on a configurable interval (**default every 1 hour**, selectable 15m–24h); when a newer build exists, a banner appears at the top of the window.
+- **Update automatically** toggle: when enabled, new releases are downloaded and installed as soon as they're found, so you're always on the latest version with no action required.
 - One-click **Download & install**: fetches the new binary, validates it, replaces the user-owned `~/bin/KillSwitch` (no admin prompt — the install path is in your home directory), reloads the LaunchAgent, and relaunches.
 - **Uninstall KillSwitch** button: removes the binary and login LaunchAgent (same as `uninstall.sh`), then quits — no terminal needed.
 - See [docs/auto-update.md](docs/auto-update.md) for the full release + update flow.
