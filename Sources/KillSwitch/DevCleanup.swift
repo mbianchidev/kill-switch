@@ -130,15 +130,41 @@ final class DevCleanupMonitor: ObservableObject {
     private var cleanupTimer: Timer?
     private let username = NSUserName()
 
+    /// Serial queue so a port scan and a cleanup pass never run concurrently.
+    private let workQueue = DispatchQueue(label: "DevCleanupMonitor.work", qos: .userInitiated)
+    /// In-flight guards (touched only on the main thread) so user-configurable
+    /// intervals and the manual buttons can't queue up overlapping passes.
+    private var isRefreshing = false
+    private var isCleaning = false
+
     init() {
         autoKillEnabled = Defaults.bool(.autoKill, default: true)
         ageThresholdHours = Defaults.int(.ageHours, default: Self.defaultAgeThresholdHours)
         portScanIntervalSeconds = Defaults.int(.portInterval, default: Self.defaultPortScanSeconds)
         cleanupIntervalSeconds = Defaults.int(.cleanupInterval, default: Self.defaultCleanupSeconds)
-        ports = Defaults.ints(.ports, default: Self.defaultPorts)
-        runtimes = Defaults.strings(.runtimes, default: Self.defaultRuntimes)
-        devIndicators = Defaults.strings(.indicators, default: Self.defaultIndicators)
-        exclusions = Defaults.strings(.exclusions, default: Self.defaultExclusions)
+        ports = Self.normalizedPorts(Defaults.ints(.ports, default: Self.defaultPorts))
+        runtimes = Self.normalizedEntries(Defaults.strings(.runtimes, default: Self.defaultRuntimes))
+        devIndicators = Self.normalizedEntries(Defaults.strings(.indicators, default: Self.defaultIndicators))
+        exclusions = Self.normalizedEntries(Defaults.strings(.exclusions, default: Self.defaultExclusions))
+    }
+
+    /// De-duplicate and sort ports so persisted lists yield unique, stable IDs.
+    static func normalizedPorts(_ ports: [Int]) -> [Int] {
+        Array(Set(ports)).sorted()
+    }
+
+    /// Trim, lowercase, and de-duplicate string entries (preserving first-seen order)
+    /// so persisted lists match the lowercased values detection expects and produce
+    /// unique SwiftUI IDs.
+    static func normalizedEntries(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for value in values {
+            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalized.isEmpty, seen.insert(normalized).inserted else { continue }
+            result.append(normalized)
+        }
+        return result
     }
 
     /// Restore every configurable value to its built-in default.
@@ -208,11 +234,13 @@ final class DevCleanupMonitor: ObservableObject {
 
     /// Refresh only the listening-ports list (no killing).
     func refreshPorts() {
+        guard !isRefreshing else { return }
+        isRefreshing = true
         let ports = self.ports
         let runtimes = self.runtimes
         let indicators = self.devIndicators
         let exclusions = self.exclusions
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        workQueue.async { [weak self] in
             guard let self = self else { return }
             let detailed = ProcessSampler.fetchDetailed()
             let commandByPid = Dictionary(detailed.map { ($0.pid, $0.command) }, uniquingKeysWith: { a, _ in a })
@@ -221,19 +249,24 @@ final class DevCleanupMonitor: ObservableObject {
                 commandByPid: commandByPid, ports: listening,
                 notablePorts: Set(ports), runtimes: runtimes, indicators: indicators, exclusions: exclusions
             )
-            DispatchQueue.main.async { self.portProcesses = rows }
+            DispatchQueue.main.async {
+                self.portProcesses = rows
+                self.isRefreshing = false
+            }
         }
     }
 
     /// Refresh ports and (when enabled) auto-kill long-running dev servers.
     func runCleanup() {
+        guard !isCleaning else { return }
+        isCleaning = true
         let ports = self.ports
         let runtimes = self.runtimes
         let indicators = self.devIndicators
         let exclusions = self.exclusions
         let autoKill = self.autoKillEnabled
         let ageThreshold = self.ageThresholdSeconds
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        workQueue.async { [weak self] in
             guard let self = self else { return }
             let detailed = ProcessSampler.fetchDetailed()
             let commandByPid = Dictionary(detailed.map { ($0.pid, $0.command) }, uniquingKeysWith: { a, _ in a })
@@ -271,6 +304,7 @@ final class DevCleanupMonitor: ObservableObject {
                 self.candidateCount = candidates
                 self.cleaned = killed
                 self.lastRun = Date()
+                self.isCleaning = false
             }
         }
     }
