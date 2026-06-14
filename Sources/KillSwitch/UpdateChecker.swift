@@ -24,6 +24,7 @@ enum UpdateError: LocalizedError {
     case invalidBinary
     case checksumMismatch
     case installFailed(String)
+    case uninstallFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -35,6 +36,7 @@ enum UpdateError: LocalizedError {
         case .invalidBinary:      return "Downloaded file is not a valid macOS executable."
         case .checksumMismatch:   return "Downloaded binary failed checksum verification."
         case .installFailed(let m): return "Install failed: \(m)"
+        case .uninstallFailed(let m): return "Uninstall failed: \(m)"
         }
     }
 }
@@ -65,6 +67,8 @@ final class UpdateChecker: ObservableObject {
     @Published private(set) var state: UpdateState = .idle
     @Published private(set) var latest: ReleaseInfo?
     @Published private(set) var lastChecked: Date?
+    @Published private(set) var uninstallError: String?
+    @Published private(set) var uninstalling = false
     @Published var bannerDismissed = false
 
     let currentVersion = AppVersion.current
@@ -138,6 +142,65 @@ final class UpdateChecker: ObservableObject {
     /// update is currently available.
     func install() {
         Task { await downloadAndInstall() }
+    }
+
+    /// Remove the installed binary and login LaunchAgent (mirrors `uninstall.sh`),
+    /// then quit. Runs off the main thread; on failure publishes `uninstallError`
+    /// and leaves the app running so the user can see what went wrong.
+    func uninstall() {
+        setUninstallError(nil)
+        setUninstalling(true)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            do {
+                try self.performUninstall()
+                DispatchQueue.main.async { NSApp.terminate(nil) }
+            } catch {
+                let message = (error as? UpdateError)?.errorDescription ?? error.localizedDescription
+                self.log(message)
+                self.setUninstallError(message)
+                self.setUninstalling(false)
+            }
+        }
+    }
+
+    /// Unload the LaunchAgent and delete the binary + plist. Best-effort on the
+    /// agent unload (the app may not have been installed at login), but file
+    /// removal failures are surfaced so the user isn't told it worked when it
+    /// didn't.
+    private func performUninstall() throws {
+        let fm = FileManager.default
+
+        if fm.fileExists(atPath: agentPlistPath) {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            task.arguments = ["unload", agentPlistPath]
+            do {
+                try task.run()
+                task.waitUntilExit()
+            } catch {
+                log("launchctl unload failed (continuing): \(error.localizedDescription)")
+            }
+        }
+
+        let binary = installPath
+        if fm.fileExists(atPath: binary) {
+            do {
+                try fm.removeItem(atPath: binary)
+            } catch {
+                throw UpdateError.uninstallFailed("could not remove \(binary): \(error.localizedDescription)")
+            }
+        }
+
+        if fm.fileExists(atPath: agentPlistPath) {
+            do {
+                try fm.removeItem(atPath: agentPlistPath)
+            } catch {
+                throw UpdateError.uninstallFailed("could not remove \(agentPlistPath): \(error.localizedDescription)")
+            }
+        }
+
+        log("Uninstalled: removed \(binary) and LaunchAgent")
     }
 
     // MARK: Check
@@ -392,6 +455,22 @@ final class UpdateChecker: ObservableObject {
         }
     }
 
+    private func setUninstallError(_ message: String?) {
+        if Thread.isMainThread {
+            uninstallError = message
+        } else {
+            DispatchQueue.main.async { self.uninstallError = message }
+        }
+    }
+
+    private func setUninstalling(_ value: Bool) {
+        if Thread.isMainThread {
+            uninstalling = value
+        } else {
+            DispatchQueue.main.async { self.uninstalling = value }
+        }
+    }
+
     /// Best-effort logging to stdout and `~/Library/Logs/killswitch-update.log`.
     /// Never throws: logging must not break the app.
     private func log(_ message: String) {
@@ -454,6 +533,7 @@ struct UpdateBanner: View {
 
 struct UpdatesTab: View {
     @ObservedObject var updater: UpdateChecker
+    @State private var showUninstallConfirm = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -463,6 +543,7 @@ struct UpdatesTab: View {
                 VStack(alignment: .leading, spacing: 16) {
                     versionSection
                     statusSection
+                    uninstallSection
                 }
                 .padding(16)
             }
@@ -554,6 +635,38 @@ struct UpdatesTab: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.green.opacity(0.12)))
+    }
+
+    private var uninstallSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "trash").foregroundColor(.red)
+                Text("Uninstall")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.85))
+                Spacer()
+            }
+            Text("Removes the KillSwitch binary and the login LaunchAgent, then quits. Reinstall any time with the install script.")
+                .font(.system(size: 11))
+                .foregroundColor(.white.opacity(0.4))
+            if let error = updater.uninstallError {
+                statusLine(icon: "exclamationmark.triangle.fill", color: .orange, text: error)
+            }
+            Button(role: .destructive) { showUninstallConfirm = true } label: {
+                Label(updater.uninstalling ? "Uninstalling…" : "Uninstall KillSwitch", systemImage: "trash")
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isBusy || updater.uninstalling)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.red.opacity(0.10)))
+        .alert("Uninstall KillSwitch?", isPresented: $showUninstallConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Uninstall", role: .destructive) { updater.uninstall() }
+        } message: {
+            Text("This removes the KillSwitch binary and the login LaunchAgent, then quits the app.")
+        }
     }
 
     private func statusLine(icon: String, color: Color, text: String) -> some View {
