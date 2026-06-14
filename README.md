@@ -160,4 +160,6 @@ swift build -c release
 - `osascript` for native macOS notifications and privileged self-update
 - `URLSession` (async/await) + GitHub Releases API for in-app updates
 - GitHub Actions for continuous releases on every push to `main`
+- CodeQL static analysis (advanced setup, manual Swift build) — see
+  [docs/ci-security.md](docs/ci-security.md)
 - LaunchAgent for auto-start
