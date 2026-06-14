@@ -524,7 +524,7 @@ struct DevCleanupTab: View {
                 Spacer()
                 addField(placeholder: "add port", text: $portText, width: 72) { commitPort() }
             }
-            chipFlow(monitor.ports, label: { ":\($0)" }) { monitor.removePort($0) }
+            chipFlow(monitor.ports, label: { ":\(String($0))" }) { monitor.removePort($0) }
         }
     }
 
@@ -635,7 +635,7 @@ struct DevCleanupTab: View {
             } else {
                 ForEach(monitor.portProcesses) { proc in
                     HStack(spacing: 12) {
-                        Text(":\(proc.port)")
+                        Text(":\(String(proc.port))")
                             .font(.system(size: 13, weight: .bold, design: .monospaced))
                             .foregroundColor(.green.opacity(0.8))
                             .frame(width: 64, alignment: .leading)
