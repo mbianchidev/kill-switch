@@ -37,7 +37,7 @@ jobs:
             runner: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
       # Cache resolved SwiftPM dependencies. The build output (.build) is
       # intentionally NOT cached: CodeQL only extracts code it observes being
@@ -54,10 +54,10 @@ jobs:
             swiftpm-${{ runner.os }}-
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@c35d1b164463ee62a100735382aaaa525c5d3496 # codeql-bundle-v2.25.6
+        uses: github/codeql-action/init@1a818fd5f97ed0ee9a823421bd5b171add01227f # v4.36.2
         with:
           languages: ${{ matrix.language }}
-          build-mode: ${{ matrix.build-mode }}
+          build-mode: ${{ matrix['build-mode'] }}
 
       # Manual build mode: a plain debug `swift build` is far cheaper than the
       # CodeQL autobuilder, which probes build systems and over-builds (~13 min
@@ -65,10 +65,10 @@ jobs:
       # compile to build the database; a release build adds optimization time
       # with no analysis benefit, so debug is used.
       - name: Build Swift
-        if: matrix.build-mode == 'manual'
+        if: matrix['build-mode'] == 'manual'
         run: swift build
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@c35d1b164463ee62a100735382aaaa525c5d3496 # codeql-bundle-v2.25.6
+        uses: github/codeql-action/analyze@1a818fd5f97ed0ee9a823421bd5b171add01227f # v4.36.2
         with:
           category: "/language:${{ matrix.language }}"
