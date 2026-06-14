@@ -49,10 +49,15 @@ therefore treats any published release as an update.
 - **Check** — queries
   `https://api.github.com/repos/mbianchidev/kill-switch/releases/latest`,
   parses the latest tag and the `KillSwitch` asset URL, and compares versions.
-  Runs on launch and every 6 hours; a manual trigger lives in the **Updates**
-  tab. Network/JSON errors are caught and surfaced, never crashing the app.
+  Runs on launch and then on a user-configurable interval (**default every
+  hour**, selectable 15m–24h and persisted to `UserDefaults`); a manual trigger
+  lives in the **Updates** tab. Network/JSON errors are caught and surfaced,
+  never crashing the app.
 - **Notify** — when a newer version exists, a banner appears at the top of the
   window and the Updates tab shows the release notes and an install button.
+- **Auto-update** — an opt-in **Update automatically** toggle (persisted) makes
+  the app install an available release the moment it's detected, so the user
+  always lands on the latest version with no action required.
 - **Install** — downloads the new binary, validates it is a non-trivial Mach-O
   executable, and verifies its SHA-256 against the release's `KillSwitch.sha256`
   asset (failing closed if the checksum is missing or mismatched), then copies it

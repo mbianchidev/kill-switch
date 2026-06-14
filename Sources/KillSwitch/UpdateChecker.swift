@@ -71,7 +71,35 @@ final class UpdateChecker: ObservableObject {
     @Published private(set) var uninstalling = false
     @Published var bannerDismissed = false
 
+    /// When on, an available update is downloaded and installed automatically,
+    /// so the user always ends up on the latest version with no action required.
+    @Published var autoUpdateEnabled: Bool {
+        didSet {
+            UpdateDefaults.set(autoUpdateEnabled, .autoUpdate)
+            if autoUpdateEnabled { maybeAutoInstall() }
+        }
+    }
+
+    /// How often (seconds) the app polls GitHub for a newer release.
+    @Published var checkIntervalSeconds: Int {
+        didSet {
+            UpdateDefaults.set(checkIntervalSeconds, .checkInterval)
+            reschedulePeriodicChecks()
+        }
+    }
+
     let currentVersion = AppVersion.current
+
+    /// Picker options for the automatic-check cadence.
+    static let checkIntervalOptions: [(label: String, seconds: Int)] = [
+        ("15m", 15 * 60), ("30m", 30 * 60), ("1h", 60 * 60),
+        ("3h", 3 * 60 * 60), ("6h", 6 * 60 * 60), ("12h", 12 * 60 * 60), ("24h", 24 * 60 * 60)
+    ]
+    static let defaultCheckIntervalSeconds = 60 * 60
+
+    var checkIntervalLabel: String {
+        Self.checkIntervalOptions.first { $0.seconds == checkIntervalSeconds }?.label ?? "\(checkIntervalSeconds)s"
+    }
 
     private let releasesURL = URL(string: "https://api.github.com/repos/mbianchidev/kill-switch/releases/latest")!
     private let assetName = "KillSwitch"
@@ -112,13 +140,22 @@ final class UpdateChecker: ObservableObject {
         .appendingPathComponent("Library/Logs/killswitch-update.log")
 
     private var periodicTimer: Timer?
+    private var periodicChecksStarted = false
 
     var availableRelease: ReleaseInfo? {
         if case .available(let r) = state { return r }
         return nil
     }
 
-    private init() {}
+    private init() {
+        autoUpdateEnabled = UpdateDefaults.bool(.autoUpdate, default: false)
+        let storedInterval = UpdateDefaults.int(.checkInterval, default: Self.defaultCheckIntervalSeconds)
+        // Guard against missing/corrupt/out-of-range stored values: only accept
+        // one of the picker options, otherwise fall back to the default.
+        checkIntervalSeconds = Self.checkIntervalOptions.contains { $0.seconds == storedInterval }
+            ? storedInterval
+            : Self.defaultCheckIntervalSeconds
+    }
 
     // MARK: Public entry points
 
@@ -127,9 +164,21 @@ final class UpdateChecker: ObservableObject {
         Task { await check() }
     }
 
-    /// Begin checking on launch and every 6 hours thereafter.
-    func startPeriodicChecks(interval: TimeInterval = 6 * 60 * 60) {
+    /// Begin checking on launch and then on the configured interval (default
+    /// every hour). Changing `checkIntervalSeconds` reschedules automatically.
+    func startPeriodicChecks() {
+        periodicChecksStarted = true
         checkForUpdates()
+        reschedulePeriodicChecks()
+    }
+
+    private func reschedulePeriodicChecks() {
+        guard periodicChecksStarted else { return }
+        // Clamp to the same 15m–24h range the picker allows, so a corrupted or
+        // hand-edited UserDefaults value can't schedule very frequent polling.
+        let minInterval = Self.checkIntervalOptions.map(\.seconds).min() ?? Self.defaultCheckIntervalSeconds
+        let maxInterval = Self.checkIntervalOptions.map(\.seconds).max() ?? Self.defaultCheckIntervalSeconds
+        let interval = TimeInterval(min(max(checkIntervalSeconds, minInterval), maxInterval))
         DispatchQueue.main.async {
             self.periodicTimer?.invalidate()
             self.periodicTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
@@ -142,6 +191,14 @@ final class UpdateChecker: ObservableObject {
     /// update is currently available.
     func install() {
         Task { await downloadAndInstall() }
+    }
+
+    /// Kick off an automatic install when the user opted in and an update is
+    /// ready. No-op while a download/install is already running.
+    private func maybeAutoInstall() {
+        guard autoUpdateEnabled, case .available = state else { return }
+        log("Auto-update enabled; installing latest release")
+        install()
     }
 
     /// Remove the installed binary and login LaunchAgent (mirrors `uninstall.sh`),
@@ -225,11 +282,16 @@ final class UpdateChecker: ObservableObject {
                 throw UpdateError.network("GitHub API returned \(http.statusCode)")
             }
             let release = try parse(data)
+            // A download/install may have started while we were awaiting the
+            // network response; don't clobber that in-flight state.
+            if case .downloading = state { return }
+            if case .installing = state { return }
             lastChecked = Date()
             latest = release
             if Self.isNewer(release.version, than: currentVersion) {
                 log("Update available: \(release.version) (current \(currentVersion))")
                 setState(.available(release))
+                maybeAutoInstall()
             } else {
                 log("Up to date (current \(currentVersion), latest \(release.version))")
                 setState(.upToDate)
@@ -491,6 +553,26 @@ final class UpdateChecker: ObservableObject {
     }
 }
 
+/// Typed wrapper over `UserDefaults` for the update preferences.
+private enum UpdateDefaults {
+    enum Key: String {
+        case autoUpdate = "updates.autoUpdate"
+        case checkInterval = "updates.checkInterval"
+    }
+
+    static func set(_ value: Bool, _ key: Key) { UserDefaults.standard.set(value, forKey: key.rawValue) }
+    static func set(_ value: Int, _ key: Key) { UserDefaults.standard.set(value, forKey: key.rawValue) }
+
+    static func bool(_ key: Key, default fallback: Bool) -> Bool {
+        guard UserDefaults.standard.object(forKey: key.rawValue) != nil else { return fallback }
+        return UserDefaults.standard.bool(forKey: key.rawValue)
+    }
+    static func int(_ key: Key, default fallback: Int) -> Int {
+        guard UserDefaults.standard.object(forKey: key.rawValue) != nil else { return fallback }
+        return UserDefaults.standard.integer(forKey: key.rawValue)
+    }
+}
+
 // MARK: - Banner
 
 /// Slim banner shown at the top of the window when a newer release exists.
@@ -542,6 +624,7 @@ struct UpdatesTab: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     versionSection
+                    preferencesSection
                     statusSection
                     uninstallSection
                 }
@@ -585,6 +668,42 @@ struct UpdatesTab: View {
                 Text("Running an unreleased local build — any published release will show as an update.")
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.4))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.2)))
+    }
+
+    private var preferencesSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Preferences")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white.opacity(0.7))
+
+            Toggle(isOn: $updater.autoUpdateEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Update automatically")
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.85))
+                    Text("Download & install new releases as soon as they're found — no action required.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.4))
+                }
+            }
+            .toggleStyle(.switch)
+            .tint(.green)
+
+            HStack(spacing: 8) {
+                Text("Check for updates every")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.6))
+                Picker("", selection: $updater.checkIntervalSeconds) {
+                    ForEach(UpdateChecker.checkIntervalOptions, id: \.seconds) { Text($0.label).tag($0.seconds) }
+                }
+                .pickerStyle(.menu)
+                .frame(width: 80)
+                Spacer()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

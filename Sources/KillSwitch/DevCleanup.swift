@@ -614,17 +614,13 @@ struct DevCleanupTab: View {
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.35))
             } else {
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 64, maximum: 220), spacing: 6, alignment: .leading)],
-                    alignment: .leading, spacing: 6
-                ) {
+                FlowLayout(spacing: 6) {
                     ForEach(items, id: \.self) { item in
                         HStack(spacing: 4) {
                             Text(label(item))
                                 .font(.system(size: 11, design: .monospaced))
                                 .foregroundColor(.white.opacity(0.85))
                                 .lineLimit(1)
-                                .truncationMode(.middle)
                             Button { onRemove(item) } label: {
                                 Image(systemName: "xmark")
                                     .font(.system(size: 8, weight: .bold))
@@ -635,6 +631,7 @@ struct DevCleanupTab: View {
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(Capsule().fill(Color.white.opacity(0.08)))
+                        .fixedSize()
                     }
                 }
             }
