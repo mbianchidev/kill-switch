@@ -149,7 +149,12 @@ final class UpdateChecker: ObservableObject {
 
     private init() {
         autoUpdateEnabled = UpdateDefaults.bool(.autoUpdate, default: false)
-        checkIntervalSeconds = UpdateDefaults.int(.checkInterval, default: Self.defaultCheckIntervalSeconds)
+        let storedInterval = UpdateDefaults.int(.checkInterval, default: Self.defaultCheckIntervalSeconds)
+        // Guard against missing/corrupt/out-of-range stored values: only accept
+        // one of the picker options, otherwise fall back to the default.
+        checkIntervalSeconds = Self.checkIntervalOptions.contains { $0.seconds == storedInterval }
+            ? storedInterval
+            : Self.defaultCheckIntervalSeconds
     }
 
     // MARK: Public entry points
@@ -169,7 +174,11 @@ final class UpdateChecker: ObservableObject {
 
     private func reschedulePeriodicChecks() {
         guard periodicChecksStarted else { return }
-        let interval = TimeInterval(max(60, checkIntervalSeconds))
+        // Clamp to the same 15m–24h range the picker allows, so a corrupted or
+        // hand-edited UserDefaults value can't schedule very frequent polling.
+        let minInterval = Self.checkIntervalOptions.map(\.seconds).min() ?? Self.defaultCheckIntervalSeconds
+        let maxInterval = Self.checkIntervalOptions.map(\.seconds).max() ?? Self.defaultCheckIntervalSeconds
+        let interval = TimeInterval(min(max(checkIntervalSeconds, minInterval), maxInterval))
         DispatchQueue.main.async {
             self.periodicTimer?.invalidate()
             self.periodicTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
@@ -273,6 +282,10 @@ final class UpdateChecker: ObservableObject {
                 throw UpdateError.network("GitHub API returned \(http.statusCode)")
             }
             let release = try parse(data)
+            // A download/install may have started while we were awaiting the
+            // network response; don't clobber that in-flight state.
+            if case .downloading = state { return }
+            if case .installing = state { return }
             lastChecked = Date()
             latest = release
             if Self.isNewer(release.version, than: currentVersion) {
