@@ -2,7 +2,7 @@
 
 A lightweight macOS process manager utility. Lists the processes belonging to the current user, shows PID, CPU%, and memory usage, and lets you terminate them with a single click. A tabbed UI adds developer-focused cleanup and resource monitoring.
 
-<img width="899" height="547" alt="image" src="https://github.com/user-attachments/assets/449692e5-053c-48b3-ad71-1e62a4ab5944" />
+<img width="1710" height="1066" alt="image" src="https://github.com/user-attachments/assets/61c0ab7c-2466-4eda-84f8-586993b2d79d" />
 
 ## Features
 
