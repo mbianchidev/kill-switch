@@ -15,6 +15,7 @@ A lightweight macOS process manager utility. Lists the processes belonging to th
 - One-click process termination (SIGTERM, falls back to SIGKILL)
 - Native macOS notifications when a process sustains high CPU for an extended period
 - Menu bar (tray) icon — closing the window keeps the app running in the menu bar
+- Keeps the Mac and display awake indefinitely or for a selected duration
 - Runs at login via LaunchAgent
 - Dark, translucent UI inspired by Raycast
 
@@ -71,6 +72,9 @@ The main process list described above.
 KillSwitch lives in the macOS menu bar like Caffeine. A status item (⚡ icon) sits in
 the top menu bar with a dropdown:
 
+- **Keep Mac Awake** — prevents idle system and display sleep indefinitely, for
+  5/10/15/30 minutes, or for 1/2/5 hours. The active duration is checkmarked;
+  choose **Deactivate** to restore normal sleep behavior.
 - **Show KillSwitch** — brings the window back to the front (restores the Dock icon).
 - **Quit KillSwitch** — fully exits the app.
 
