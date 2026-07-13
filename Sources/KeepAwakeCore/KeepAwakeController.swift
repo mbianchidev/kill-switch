@@ -30,6 +30,18 @@ public enum KeepAwakeDuration: Int, CaseIterable, Sendable {
     }
 }
 
+public enum KeepAwakeMode: String, CaseIterable, Sendable {
+    case systemAndDisplay
+    case systemOnly
+
+    public var label: String {
+        switch self {
+        case .systemAndDisplay: "Keep display on"
+        case .systemOnly: "Allow display to sleep"
+        }
+    }
+}
+
 public struct KeepAwakeError: LocalizedError, Equatable {
     public let operation: String
     public let code: Int32
@@ -102,6 +114,7 @@ public final class KeepAwakeController {
 
     public var onStateChange: ((KeepAwakeDuration?) -> Void)?
     public private(set) var activeDuration: KeepAwakeDuration?
+    public private(set) var activeMode: KeepAwakeMode?
 
     private let driver: PowerAssertionDriver
     private let schedule: Schedule
@@ -119,7 +132,7 @@ public final class KeepAwakeController {
         self.schedule = schedule
     }
 
-    public func activate(for duration: KeepAwakeDuration) throws {
+    public func activate(for duration: KeepAwakeDuration, mode: KeepAwakeMode) throws {
         deactivate()
 
         let reason = "KillSwitch is keeping this Mac awake" as CFString
@@ -130,10 +143,12 @@ public final class KeepAwakeController {
                 kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
                 reason
             ))
-            acquired.append(try driver.acquire(
-                kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
-                reason
-            ))
+            if mode == .systemAndDisplay {
+                acquired.append(try driver.acquire(
+                    kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
+                    reason
+                ))
+            }
         } catch {
             release(acquired)
             throw error
@@ -141,6 +156,7 @@ public final class KeepAwakeController {
 
         assertionIDs = acquired
         activeDuration = duration
+        activeMode = mode
         generation += 1
         let activationGeneration = generation
 
@@ -151,7 +167,9 @@ public final class KeepAwakeController {
             }
         }
 
-        logger.info("Keep awake activated for \(duration.label, privacy: .public)")
+        logger.info(
+            "Keep awake activated for \(duration.label, privacy: .public) in \(mode.label, privacy: .public) mode"
+        )
         onStateChange?(duration)
     }
 
@@ -164,6 +182,7 @@ public final class KeepAwakeController {
         release(assertionIDs)
         assertionIDs.removeAll()
         activeDuration = nil
+        activeMode = nil
 
         if wasActive {
             logger.info("Keep awake deactivated")

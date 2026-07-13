@@ -24,15 +24,19 @@ struct KillSwitchApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem?
     private weak var mainWindow: NSWindow?
-    private let keepAwakeController = KeepAwakeController()
+    private let keepAwakeManager = KeepAwakeManager.shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        keepAwakeController.onStateChange = { [weak self] _ in
+        keepAwakeManager.onStateChange = { [weak self] _ in
             self?.updateStatusItem()
         }
         setupStatusItem()
+        if !keepAwakeManager.activatePreferredOnLaunch(),
+           let message = keepAwakeManager.errorMessage {
+            showKeepAwakeError(message)
+        }
         DispatchQueue.main.async { [weak self] in
             self?.captureMainWindow()
         }
@@ -70,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func makeKeepAwakeMenu() -> NSMenu {
         let menu = NSMenu()
 
-        if keepAwakeController.activeDuration != nil {
+        if keepAwakeManager.activeDuration != nil {
             menu.addItem(menuItem(title: "Deactivate", action: #selector(deactivateKeepAwake)))
             menu.addItem(.separator())
         }
@@ -78,7 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for duration in KeepAwakeDuration.allCases {
             let item = menuItem(title: duration.label, action: #selector(activateKeepAwake(_:)))
             item.representedObject = NSNumber(value: duration.rawValue)
-            item.state = keepAwakeController.activeDuration == duration ? .on : .off
+            item.state = keepAwakeManager.activeDuration == duration ? .on : .off
             menu.addItem(item)
         }
 
@@ -100,26 +104,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let rawValue = (sender.representedObject as? NSNumber)?.intValue,
             let duration = KeepAwakeDuration(rawValue: rawValue)
         else {
-            showKeepAwakeError(KeepAwakeError(operation: "duration selection", code: -1))
+            showKeepAwakeError("The selected keep-awake duration is invalid.")
             return
         }
 
-        do {
-            try keepAwakeController.activate(for: duration)
-        } catch {
-            showKeepAwakeError(error)
+        if !keepAwakeManager.activate(for: duration),
+           let message = keepAwakeManager.errorMessage {
+            showKeepAwakeError(message)
         }
     }
 
     @objc private func deactivateKeepAwake() {
-        keepAwakeController.deactivate()
+        keepAwakeManager.deactivate()
     }
 
-    private func showKeepAwakeError(_ error: Error) {
+    private func showKeepAwakeError(_ message: String) {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Keep Mac Awake could not start"
-        alert.informativeText = error.localizedDescription
+        alert.informativeText = message
         alert.runModal()
     }
 
@@ -152,7 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        keepAwakeController.deactivate()
+        keepAwakeManager.deactivate()
     }
 
     // MARK: NSWindowDelegate
