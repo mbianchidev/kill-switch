@@ -90,7 +90,7 @@ struct KeepAwakeTab: View {
                     Text("Duration")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(.white.opacity(0.45))
-                    Picker("", selection: $manager.preferredDuration) {
+Picker("Duration", selection: $manager.preferredDuration) {
                         ForEach(KeepAwakeDuration.allCases, id: \.self) { duration in
                             Text(duration.label).tag(duration)
                         }
