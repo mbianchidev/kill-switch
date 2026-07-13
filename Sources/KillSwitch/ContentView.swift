@@ -87,7 +87,13 @@ struct ProcessesTab: View {
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.4))
                 Spacer()
+                Label(freeMemoryText, systemImage: "memorychip")
+                    .help("Free, inactive, and speculative memory available to applications")
+                Label(freeCPUText, systemImage: "cpu")
+                    .help("Equivalent idle logical CPU cores out of \(monitor.systemResources.totalCPUCount)")
             }
+            .font(.system(size: 12))
+            .foregroundColor(.white.opacity(0.6))
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
 
@@ -105,6 +111,19 @@ struct ProcessesTab: View {
                 .padding(.horizontal, 8)
             }
         }
+    }
+
+    private var freeMemoryText: String {
+        guard let memory = monitor.systemResources.freeMemoryMB else { return "Free RAM —" }
+        return "Free RAM \(formatMemory(memory))"
+    }
+
+    private var freeCPUText: String {
+        let total = monitor.systemResources.totalCPUCount
+        guard let free = monitor.systemResources.freeCPUCount else {
+            return "Free CPUs — / \(total)"
+        }
+        return String(format: "Free CPUs %.1f / %d", free, total)
     }
 
     private var footerView: some View {
