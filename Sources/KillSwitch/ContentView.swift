@@ -18,6 +18,8 @@ struct ContentView: View {
                 .tabItem { Label("Energy", systemImage: "bolt.fill") }
             CPUWatchdogTab(monitor: watchdog)
                 .tabItem { Label("Watchdog", systemImage: "exclamationmark.triangle") }
+            KeepAwakeTab()
+                .tabItem { Label("Keep awake", systemImage: "cup.and.saucer.fill") }
             UpdatesTab(updater: updater)
                 .tabItem { Label("Updates", systemImage: "arrow.triangle.2.circlepath") }
         }

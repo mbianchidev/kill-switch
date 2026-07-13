@@ -16,6 +16,7 @@ A lightweight macOS process manager utility. Lists the processes belonging to th
 - Native macOS notifications when a process sustains high CPU for an extended period
 - Menu bar (tray) icon — closing the window keeps the app running in the menu bar
 - Keeps the Mac and display awake indefinitely or for a selected duration
+- Advanced keep-awake settings for default duration, display sleep, and launch activation
 - Runs at login via LaunchAgent
 - Dark, translucent UI inspired by Raycast
 
@@ -58,6 +59,13 @@ The main process list described above.
 - Shows currently-offending processes with their consecutive count and a kill button, plus an in-app recent-alerts history.
 - Appends to `~/Library/Logs/cpu-watchdog.log`, trimmed to the last 500 lines.
 
+### Keep awake
+
+- Start or stop a keep-awake session from the main window and see its active duration and mode.
+- Choose the default duration used by the tab and optional launch activation.
+- Keep the display on, or allow it to sleep while the Mac stays awake for background work.
+- Optionally activate keep-awake automatically when KillSwitch launches. Preferences persist across launches.
+
 ### Updates
 
 - Shows the running version and the latest published release, with a manual **Check for updates** button.
@@ -74,7 +82,8 @@ the top menu bar with a dropdown:
 
 - **Keep Mac Awake** — prevents idle system and display sleep indefinitely, for
   5/10/15/30 minutes, or for 1/2/5 hours. The active duration is checkmarked;
-  choose **Deactivate** to restore normal sleep behavior.
+  choose **Deactivate** to restore normal sleep behavior. Menu sessions honor the
+  display behavior configured in the **Keep awake** tab.
 - **Show KillSwitch** — brings the window back to the front (restores the Dock icon).
 - **Quit KillSwitch** — fully exits the app.
 
