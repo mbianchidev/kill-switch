@@ -12,6 +12,7 @@ A lightweight macOS process manager utility. Lists the processes belonging to th
 - Shows real application icons where available for easier recognition
 - Filter processes by name
 - Sort by CPU usage, memory, name, or PID
+- Shows live free RAM and equivalent idle CPU cores in the Processes tab
 - One-click process termination (SIGTERM, falls back to SIGKILL)
 - Native macOS notifications when a process sustains high CPU for an extended period
 - Menu bar (tray) icon — closing the window keeps the app running in the menu bar
@@ -24,7 +25,8 @@ A lightweight macOS process manager utility. Lists the processes belonging to th
 
 ### Processes
 
-The main process list described above.
+The main process list described above, with live system-wide free RAM and idle CPU
+capacity refreshed alongside the process data.
 
 ### Dev cleanup
 
