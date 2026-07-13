@@ -63,23 +63,26 @@ private final class SystemResourceSampler {
     private let logger = Logger(subsystem: "com.killswitch.app", category: "system-resources")
     private var previousCPUTicks: CPUTicks?
     private var loggedCPUFailure = false
+    private var loggedHostPortReleaseFailure = false
     private var loggedMemoryFailure = false
 
     init() {
-        previousCPUTicks = Self.captureCPUTicks().ticks
+        previousCPUTicks = withHostPort { captureCPUTicks(host: $0).ticks }
     }
 
     func sample() -> SystemResourceSnapshot {
-        SystemResourceSnapshot(
-            freeMemoryMB: freeMemoryMB(),
-            freeCPUCount: freeCPUCount(),
-            totalCPUCount: totalCPUCount
-        )
+        withHostPort { host in
+            SystemResourceSnapshot(
+                freeMemoryMB: freeMemoryMB(host: host),
+                freeCPUCount: freeCPUCount(host: host),
+                totalCPUCount: totalCPUCount
+            )
+        }
     }
 
-    private func freeMemoryMB() -> Double? {
+    private func freeMemoryMB(host: host_t) -> Double? {
         var pageSize: vm_size_t = 0
-        let pageSizeResult = host_page_size(mach_host_self(), &pageSize)
+        let pageSizeResult = host_page_size(host, &pageSize)
         guard pageSizeResult == KERN_SUCCESS else {
             logMemoryFailure(pageSizeResult)
             return nil
@@ -87,11 +90,11 @@ private final class SystemResourceSampler {
 
         var statistics = vm_statistics64()
         var count = mach_msg_type_number_t(
-            MemoryLayout<vm_statistics64_data_t>.stride / MemoryLayout<integer_t>.stride
+            MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size
         )
         let result = withUnsafeMutablePointer(to: &statistics) { pointer in
             pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+                host_statistics64(host, HOST_VM_INFO64, $0, &count)
             }
         }
         guard result == KERN_SUCCESS else {
@@ -107,8 +110,8 @@ private final class SystemResourceSampler {
         return Double(availableBytes) / 1_048_576
     }
 
-    private func freeCPUCount() -> Double? {
-        let capture = Self.captureCPUTicks()
+    private func freeCPUCount(host: host_t) -> Double? {
+        let capture = captureCPUTicks(host: host)
         guard let current = capture.ticks else {
             logCPUFailure(capture.result)
             return nil
@@ -129,14 +132,14 @@ private final class SystemResourceSampler {
         return min(Double(totalCPUCount), max(0, idleRatio * Double(totalCPUCount)))
     }
 
-    private static func captureCPUTicks() -> (ticks: CPUTicks?, result: kern_return_t) {
+    private func captureCPUTicks(host: host_t) -> (ticks: CPUTicks?, result: kern_return_t) {
         var load = host_cpu_load_info()
         var count = mach_msg_type_number_t(
-            MemoryLayout<host_cpu_load_info_data_t>.stride / MemoryLayout<integer_t>.stride
+            MemoryLayout<host_cpu_load_info_data_t>.size / MemoryLayout<integer_t>.size
         )
         let result = withUnsafeMutablePointer(to: &load) { pointer in
             pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &count)
+                host_statistics(host, HOST_CPU_LOAD_INFO, $0, &count)
             }
         }
         guard result == KERN_SUCCESS else { return (nil, result) }
@@ -150,6 +153,18 @@ private final class SystemResourceSampler {
             ),
             result
         )
+    }
+
+    private func withHostPort<T>(_ body: (host_t) -> T) -> T {
+        let host = mach_host_self()
+        defer {
+            let result = mach_port_deallocate(mach_task_self_, host)
+            if result != KERN_SUCCESS && !loggedHostPortReleaseFailure {
+                loggedHostPortReleaseFailure = true
+                logger.error("Host port release failed with kern_return_t \(result)")
+            }
+        }
+        return body(host)
     }
 
     private func tickDelta(_ current: UInt32, _ previous: UInt32) -> UInt64 {
