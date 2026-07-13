@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import KeepAwakeCore
 
 @main
 struct KillSwitchApp: App {
@@ -19,13 +20,18 @@ struct KillSwitchApp: App {
 /// Closing the main window hides it and drops the app to `.accessory` so it
 /// lives only in the menu bar (like Caffeine). Re-showing restores the window
 /// and the `.regular` (Dock) policy. The app only fully quits via the menu.
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem?
     private weak var mainWindow: NSWindow?
+    private let keepAwakeController = KeepAwakeController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        keepAwakeController.onStateChange = { [weak self] _ in
+            self?.updateStatusItem()
+        }
         setupStatusItem()
         DispatchQueue.main.async { [weak self] in
             self?.captureMainWindow()
@@ -36,7 +42,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        if let button = item.button {
+        statusItem = item
+        updateStatusItem()
+    }
+
+    private func updateStatusItem() {
+        guard let statusItem else { return }
+
+        if let button = statusItem.button {
             let image = NSImage(systemSymbolName: "bolt.slash", accessibilityDescription: "KillSwitch")
             image?.isTemplate = true
             button.image = image
@@ -44,14 +57,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Show KillSwitch", action: #selector(showMainWindow), keyEquivalent: ""))
+        let keepAwakeItem = NSMenuItem(title: "Keep Mac Awake", action: nil, keyEquivalent: "")
+        keepAwakeItem.submenu = makeKeepAwakeMenu()
+        menu.addItem(keepAwakeItem)
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit KillSwitch", action: #selector(quit), keyEquivalent: "q"))
-        for entry in menu.items where entry.action != nil {
-            entry.target = self
+        menu.addItem(menuItem(title: "Show KillSwitch", action: #selector(showMainWindow)))
+        menu.addItem(.separator())
+        menu.addItem(menuItem(title: "Quit KillSwitch", action: #selector(quit), keyEquivalent: "q"))
+        statusItem.menu = menu
+    }
+
+    private func makeKeepAwakeMenu() -> NSMenu {
+        let menu = NSMenu()
+
+        if keepAwakeController.activeDuration != nil {
+            menu.addItem(menuItem(title: "Deactivate", action: #selector(deactivateKeepAwake)))
+            menu.addItem(.separator())
         }
-        item.menu = menu
-        statusItem = item
+
+        for duration in KeepAwakeDuration.allCases {
+            let item = menuItem(title: duration.label, action: #selector(activateKeepAwake(_:)))
+            item.representedObject = NSNumber(value: duration.rawValue)
+            item.state = keepAwakeController.activeDuration == duration ? .on : .off
+            menu.addItem(item)
+        }
+
+        return menu
+    }
+
+    private func menuItem(
+        title: String,
+        action: Selector,
+        keyEquivalent: String = ""
+    ) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
+        item.target = self
+        return item
+    }
+
+    @objc private func activateKeepAwake(_ sender: NSMenuItem) {
+        guard
+            let rawValue = (sender.representedObject as? NSNumber)?.intValue,
+            let duration = KeepAwakeDuration(rawValue: rawValue)
+        else {
+            showKeepAwakeError(KeepAwakeError(operation: "duration selection", code: -1))
+            return
+        }
+
+        do {
+            try keepAwakeController.activate(for: duration)
+        } catch {
+            showKeepAwakeError(error)
+        }
+    }
+
+    @objc private func deactivateKeepAwake() {
+        keepAwakeController.deactivate()
+    }
+
+    private func showKeepAwakeError(_ error: Error) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Keep Mac Awake could not start"
+        alert.informativeText = error.localizedDescription
+        alert.runModal()
     }
 
     // MARK: Window handling
@@ -80,6 +149,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        keepAwakeController.deactivate()
     }
 
     // MARK: NSWindowDelegate
