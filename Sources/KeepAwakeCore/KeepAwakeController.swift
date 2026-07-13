@@ -185,7 +185,7 @@ public final class KeepAwakeController {
         action: @escaping @MainActor () -> Void
     ) -> KeepAwakeCancellation {
         let workItem = DispatchWorkItem {
-            MainActor.assumeIsolated {
+            Task { @MainActor in
                 action()
             }
         }

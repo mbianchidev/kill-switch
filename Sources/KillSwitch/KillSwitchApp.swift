@@ -48,15 +48,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func updateStatusItem() {
         guard let statusItem else { return }
-        let isKeepingAwake = keepAwakeController.activeDuration != nil
 
         if let button = statusItem.button {
-            let symbol = isKeepingAwake ? "cup.and.saucer.fill" : "bolt.slash"
-            let description = isKeepingAwake ? "KillSwitch, keeping Mac awake" : "KillSwitch"
-            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)
+            let image = NSImage(systemSymbolName: "bolt.slash", accessibilityDescription: "KillSwitch")
             image?.isTemplate = true
             button.image = image
-            button.toolTip = description
+            button.toolTip = "KillSwitch"
         }
 
         let menu = NSMenu()
@@ -121,7 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func showKeepAwakeError(_ error: Error) {
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Keep Awake could not start"
+        alert.messageText = "Keep Mac Awake could not start"
         alert.informativeText = error.localizedDescription
         alert.runModal()
     }
