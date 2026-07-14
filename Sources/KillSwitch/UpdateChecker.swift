@@ -457,12 +457,20 @@ final class UpdateChecker: ObservableObject {
             try fm.createDirectory(atPath: cliDirectory, withIntermediateDirectories: true)
             try removeCLIPathIfPresent(fileManager: fm)
             try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            var isDirectory: ObjCBool = false
+            if fm.fileExists(atPath: installPath, isDirectory: &isDirectory), isDirectory.boolValue {
+                throw UpdateError.installFailed(
+                    "Refusing to replace directory at \(installPath); move it before installing KillSwitch."
+                )
+            }
             if fm.fileExists(atPath: installPath) {
                 try fm.removeItem(atPath: installPath)
             }
             try fm.copyItem(atPath: src.path, toPath: installPath)
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: installPath)
             try fm.createSymbolicLink(atPath: cliPath, withDestinationPath: installPath)
+        } catch let error as UpdateError {
+            throw error
         } catch {
             throw UpdateError.installFailed(error.localizedDescription)
         }
