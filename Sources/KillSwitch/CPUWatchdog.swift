@@ -39,7 +39,7 @@ final class CPUWatchdog: ObservableObject {
         didSet { reschedule() }
     }
 
-    static let intervalOptions = TopConsumersMonitor.intervalOptions
+    static let intervalOptions = SamplingIntervals.standard
     static let thresholdOptions: [Double] = [80, 85, 90, 95]
     static let consecutiveOptions: [Int] = [2, 3, 5, 6]
 
