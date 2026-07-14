@@ -1,8 +1,8 @@
 # KillSwitch
 
-A lightweight macOS process manager and diagnostics utility. It provides Activity Monitor-style system resources, one-click process termination, developer cleanup, CPU alerts, keep-awake controls, and native diagnostic collection.
+A macOS resource manager with automation useful for the AI era. It provides Activity Monitor-style system resources, one-click process termination, developer cleanup, CPU alerts, keep-awake controls, and native diagnostic collection.
 
-<img width="1710" height="1066" alt="image" src="https://github.com/user-attachments/assets/61c0ab7c-2466-4eda-84f8-586993b2d79d" />
+<img width="1710" height="1066" alt="image" src="docs/image.png" />
 
 ## Features
 
