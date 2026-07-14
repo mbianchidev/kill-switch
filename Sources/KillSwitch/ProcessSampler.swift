@@ -247,31 +247,25 @@ enum ProcessSampler {
     // MARK: - Helpers
 
     private static func runProcess(_ launchPath: String, _ arguments: [String]) -> String? {
-        try? runProcessThrowing(launchPath, arguments)
+        guard let result = try? CommandRunner.run(launchPath, arguments: arguments) else {
+            return nil
+        }
+        if result.succeeded || !result.standardOutput.isEmpty {
+            return result.standardOutput
+        }
+        return nil
     }
 
     private static func runProcessThrowing(_ launchPath: String, _ arguments: [String]) throws -> String {
-        let task = Process()
-        task.launchPath = launchPath
-        task.arguments = arguments
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        // Discard stderr so a chatty tool (e.g. lsof warnings) can't fill its
-        // pipe buffer and deadlock the child.
-        task.standardError = FileHandle.nullDevice
+        let result: CommandResult
         do {
-            try task.run()
+            result = try CommandRunner.run(launchPath, arguments: arguments)
         } catch {
             throw ProcessSamplerError.launchFailed(launchPath, error.localizedDescription)
         }
-        // Drain stdout *before* waiting: commands like `ps -axo args` emit far
-        // more than the ~64KB pipe buffer, so waiting first would deadlock the
-        // child once the buffer fills and nobody is reading.
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        task.waitUntilExit()
-        guard task.terminationStatus == 0 else {
-            throw ProcessSamplerError.commandFailed(launchPath, task.terminationStatus)
+        guard result.succeeded else {
+            throw ProcessSamplerError.commandFailed(launchPath, result.status)
         }
-        return String(data: data, encoding: .utf8) ?? ""
+        return result.standardOutput
     }
 }

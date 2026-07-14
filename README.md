@@ -1,19 +1,19 @@
 # KillSwitch
 
-A lightweight macOS process manager utility. Lists the processes belonging to the current user, shows PID, CPU%, and memory usage, and lets you terminate them with a single click. A tabbed UI adds developer-focused cleanup and resource monitoring.
+A lightweight macOS process manager and diagnostics utility. It provides Activity Monitor-style system resources, one-click process termination, developer cleanup, CPU alerts, keep-awake controls, and native diagnostic collection.
 
 <img width="1710" height="1066" alt="image" src="https://github.com/user-attachments/assets/61c0ab7c-2466-4eda-84f8-586993b2d79d" />
 
 ## Features
 
-- Real-time process list (refreshes every 3s)
-- Works for whichever user is running the app (no hardcoded username)
-- Collapses helper/child processes into their main (parent) process, aggregating CPU and memory — e.g. Spotify and its helpers appear as a single entry
-- Shows real application icons where available for easier recognition
-- Filter processes by name
-- Sort by CPU usage, memory, name, or PID
-- Shows live free RAM and equivalent idle CPU cores in the Processes tab
+- Activity Monitor-style CPU, memory, energy, disk, and network process views
+- Defaults to the logged-in user's processes; switch to all processes to include root and other users
+- Live five-minute graphs plus system-wide summary counters for every resource mode
+- Shows application icons and full executable names where macOS exposes them
+- Filter by process, PID, or user and sort by the active resource
 - One-click process termination (SIGTERM, falls back to SIGKILL)
+- Generates privileged 10-second spindump reports with preview, save, and reveal actions
+- Runs full macOS `sysdiagnose` from the app or with **Shift-Command-D**
 - Native macOS notifications when a process sustains high CPU for an extended period
 - Menu bar (tray) icon — closing the window keeps the app running in the menu bar
 - Keeps the Mac awake indefinitely or for a selected duration, with optional display sleep
@@ -24,10 +24,20 @@ A lightweight macOS process manager utility. Lists the processes belonging to th
 
 ## Tabs
 
-### Processes
+### Resources
 
-The main process list described above, with live system-wide free RAM and idle CPU
-capacity refreshed alongside the process data.
+One dense, live process table with five modes:
+
+- **CPU** — % CPU, CPU time, threads, idle wakeups, architecture kind, PID, and user, plus a stacked user/system CPU graph.
+- **Memory** — physical footprint, threads, ports, PID, and user, plus memory pressure, physical memory, app memory, cached files, wired memory, compression, and swap.
+- **Energy** — current energy impact, rolling power history, sleep prevention, battery charge, and power-source status.
+- **Disk** — per-process bytes read/written, system operation totals, and live read/write throughput.
+- **Network** — per-process bytes and packets sent/received, system totals, and live inbound/outbound throughput.
+
+The table samples every six seconds. **My processes** is the default scope; choose
+**All processes** to include system and other-user processes. macOS can restrict
+disk, architecture, GPU, and App Nap values for protected processes, so unavailable
+fields display an em dash instead of fabricated data.
 
 ### Dev cleanup
 
@@ -43,18 +53,6 @@ capacity refreshed alongside the process data.
     until the integration syncs them again.
 
 
-### Top consumers
-
-- Top 10 processes by CPU and top 10 by memory (one line each) with a kill button.
-- A **trend chart** of the current top consumers' CPU or memory usage over a rolling 12h window, sampled every 10 minutes by default (interval configurable: 5/10/15/30/60 min).
-- Lists and chart legend are always ordered by the process consuming the most.
-
-### Energy
-
-- Top 10 processes by **energy impact** (macOS `top` POWER metric), aggregated per parent process, each with a kill button.
-- A **trend chart** of the current top energy consumers over a rolling 12h window, sampled every 10 minutes by default (same configurable interval as Top consumers).
-- List and chart legend are always ordered by the process consuming the most energy.
-
 ### CPU Watchdog
 
 - Watches for processes (parent-collapsed) sustaining CPU above a threshold and fires **native macOS notifications** when one stays hot for several consecutive checks — mirroring the `cpu-watchdog.sh` / `cpu-hog-monitor.sh` shell scripts.
@@ -62,6 +60,14 @@ capacity refreshed alongside the process data.
 - After alerting, the per-process counter resets to avoid spam (it re-alerts after the same number of further consecutive sightings).
 - Shows currently-offending processes with their consecutive count and a kill button, plus an in-app recent-alerts history.
 - Appends to `~/Library/Logs/cpu-watchdog.log`, trimmed to the last 500 lines.
+
+### Diagnostics
+
+- **Generate Spindump** samples user and kernel call stacks for 10 seconds, previews the report in-app, and supports Save/Reveal.
+- **Run System Diagnostics** creates a full macOS `sysdiagnose` archive. Use the button, the menu-bar item, or **Shift-Command-D** while KillSwitch is active.
+- macOS also provides the global sysdiagnose chord **Control-Option-Shift-Command-Period**.
+- Reports are stored in `~/Downloads/KillSwitch Diagnostics/`; both actions request administrator authorization.
+- See [docs/system-diagnostics.md](docs/system-diagnostics.md) for data sources, permissions, and limitations.
 
 ### Keep awake
 
@@ -101,6 +107,7 @@ KillSwitch** from the menu bar.
 - macOS 13+ (Ventura or later)
 - Swift 5.9+
 - Xcode Command Line Tools
+- An administrator account for spindump and sysdiagnose collection
 
 ## Install
 
@@ -250,10 +257,10 @@ To exercise the headless mode from a source checkout, invoke the binary through 
 
 - Swift 5.9
 - A shared `DevCleanupCore` target for preferences, integration-port merging, CLI parsing, and cleanup classification
-- SwiftUI + Swift Charts (trend graph)
+- SwiftUI + Swift Charts (live resource graphs)
 - AppKit (`NSWorkspace`) for application icons; `NSStatusItem` for the menu bar (tray) icon
-- macOS process APIs (`ps`, `lsof`, `top`)
-- `osascript` for native macOS notifications and privileged self-update
+- macOS process and resource APIs (`top`, `libproc`, Mach VM statistics, IOKit, `nettop`, `netstat`, `pmset`)
+- `osascript` for native notifications, privileged diagnostics, and privileged self-update
 - `URLSession` (async/await) + GitHub Releases API for in-app updates
 - GitHub Actions for continuous releases on every push to `main`
 - CodeQL static analysis (advanced setup, manual Swift build) — see

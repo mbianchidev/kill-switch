@@ -13,15 +13,24 @@ let package = Package(
             name: "KeepAwakeCore",
             path: "Sources/KeepAwakeCore"
         ),
+        .target(
+            name: "SystemMetricsCore",
+            path: "Sources/SystemMetricsCore"
+        ),
         .executableTarget(
             name: "KillSwitch",
-            dependencies: ["DevCleanupCore", "KeepAwakeCore"],
+            dependencies: ["DevCleanupCore", "KeepAwakeCore", "SystemMetricsCore"],
             path: "Sources/KillSwitch"
         ),
         .executableTarget(
             name: "DevCleanupCoreChecks",
             dependencies: ["DevCleanupCore"],
             path: "Tests/DevCleanupCoreChecks"
+        ),
+        .executableTarget(
+            name: "SystemMetricsChecks",
+            dependencies: ["SystemMetricsCore"],
+            path: "Tests/SystemMetricsChecks"
         )
     ]
 )

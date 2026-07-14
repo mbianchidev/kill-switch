@@ -23,5 +23,8 @@ jobs:
       - name: Dev cleanup core checks
         run: swift run DevCleanupCoreChecks
 
+      - name: Test system metric parsers
+        run: swift run SystemMetricsChecks
+
       - name: Build (release)
         run: swift build -c release --product KillSwitch

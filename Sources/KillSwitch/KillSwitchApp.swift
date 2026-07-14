@@ -8,9 +8,12 @@ struct KillSwitchApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .frame(minWidth: 700, minHeight: 500)
+                .frame(minWidth: 1_000, minHeight: 650)
         }
         .windowStyle(.hiddenTitleBar)
+        .commands {
+            DiagnosticsCommands()
+        }
     }
 }
 
@@ -64,6 +67,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         keepAwakeItem.submenu = makeKeepAwakeMenu()
         menu.addItem(keepAwakeItem)
         menu.addItem(.separator())
+        menu.addItem(menuItem(title: "Generate Spindump…", action: #selector(generateSpindump)))
+        menu.addItem(
+            menuItem(
+                title: "Run System Diagnostics…",
+                action: #selector(runSystemDiagnostics),
+                keyEquivalent: "d",
+                modifiers: [.command, .shift]
+            )
+        )
+        menu.addItem(.separator())
         menu.addItem(menuItem(title: "Show KillSwitch", action: #selector(showMainWindow)))
         menu.addItem(.separator())
         menu.addItem(menuItem(title: "Quit KillSwitch", action: #selector(quit), keyEquivalent: "q"))
@@ -91,10 +104,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func menuItem(
         title: String,
         action: Selector,
-        keyEquivalent: String = ""
+        keyEquivalent: String = "",
+        modifiers: NSEvent.ModifierFlags = [.command]
     ) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
         item.target = self
+        if !keyEquivalent.isEmpty {
+            item.keyEquivalentModifierMask = modifiers
+        }
         return item
     }
 
@@ -115,6 +132,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func deactivateKeepAwake() {
         keepAwakeManager.deactivate()
+    }
+
+    @objc private func generateSpindump() {
+        showMainWindow()
+        NotificationCenter.default.post(name: .showDiagnosticsTab, object: nil)
+        DiagnosticsController.shared.generateSpindump()
+    }
+
+    @objc private func runSystemDiagnostics() {
+        showMainWindow()
+        NotificationCenter.default.post(name: .showDiagnosticsTab, object: nil)
+        DiagnosticsController.shared.runSystemDiagnostics()
     }
 
     private func showKeepAwakeError(_ message: String) {
