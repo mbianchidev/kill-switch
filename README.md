@@ -260,6 +260,7 @@ To exercise the headless mode from a source checkout, invoke the binary through 
 
 - Swift 5.9
 - A shared `DevCleanupCore` target for preferences, integration-port merging, CLI parsing, and cleanup classification
+- A shared `InstallCore` target for tested binary and symlink path safety
 - SwiftUI + Swift Charts (live resource graphs)
 - AppKit (`NSWorkspace`) for application icons; `NSStatusItem` for the menu bar (tray) icon
 - macOS process and resource APIs (`top`, `libproc`, Mach VM statistics, IOKit, `nettop`, `netstat`, `pmset`)

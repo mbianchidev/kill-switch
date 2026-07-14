@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import SwiftUI
 import CryptoKit
+import InstallCore
 
 // MARK: - Models
 
@@ -50,17 +51,6 @@ enum UpdateState: Equatable {
     case downloading
     case installing
     case failed(String)
-}
-
-private enum CLIPathError: LocalizedError {
-    case isNotSymbolicLink(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .isNotSymbolicLink(let path):
-            return "Refusing to remove non-symlink at \(path); move it before installing or uninstalling KillSwitch."
-        }
-    }
 }
 
 // MARK: - UpdateChecker
@@ -256,16 +246,12 @@ final class UpdateChecker: ObservableObject {
 
         let binary = installPath
         do {
-            try removeCLIPathIfPresent(fileManager: fm)
+            try InstallPathSafety.validateManagedSymbolicLink(at: cliPath, fileManager: fm)
+            try InstallPathSafety.validateReplaceableBinary(at: binary, fileManager: fm)
+            try InstallPathSafety.removeManagedSymbolicLinkIfPresent(at: cliPath, fileManager: fm)
+            try InstallPathSafety.removeReplaceableBinaryIfPresent(at: binary, fileManager: fm)
         } catch {
             throw UpdateError.uninstallFailed(error.localizedDescription)
-        }
-        if fm.fileExists(atPath: binary) {
-            do {
-                try fm.removeItem(atPath: binary)
-            } catch {
-                throw UpdateError.uninstallFailed("could not remove \(binary): \(error.localizedDescription)")
-            }
         }
 
         if fm.fileExists(atPath: agentPlistPath) {
@@ -452,20 +438,13 @@ final class UpdateChecker: ObservableObject {
         let fm = FileManager.default
         let dir = (installPath as NSString).deletingLastPathComponent
         do {
-            // Refuse a real directory before replacing the binary to avoid a partial update.
             let cliDirectory = (cliPath as NSString).deletingLastPathComponent
+            try InstallPathSafety.validateManagedSymbolicLink(at: cliPath, fileManager: fm)
+            try InstallPathSafety.validateReplaceableBinary(at: installPath, fileManager: fm)
             try fm.createDirectory(atPath: cliDirectory, withIntermediateDirectories: true)
-            try removeCLIPathIfPresent(fileManager: fm)
             try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
-            var isDirectory: ObjCBool = false
-            if fm.fileExists(atPath: installPath, isDirectory: &isDirectory), isDirectory.boolValue {
-                throw UpdateError.installFailed(
-                    "Refusing to replace directory at \(installPath); move it before installing KillSwitch."
-                )
-            }
-            if fm.fileExists(atPath: installPath) {
-                try fm.removeItem(atPath: installPath)
-            }
+            try InstallPathSafety.removeManagedSymbolicLinkIfPresent(at: cliPath, fileManager: fm)
+            try InstallPathSafety.removeReplaceableBinaryIfPresent(at: installPath, fileManager: fm)
             try fm.copyItem(atPath: src.path, toPath: installPath)
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: installPath)
             try fm.createSymbolicLink(atPath: cliPath, withDestinationPath: installPath)
@@ -474,16 +453,6 @@ final class UpdateChecker: ObservableObject {
         } catch {
             throw UpdateError.installFailed(error.localizedDescription)
         }
-    }
-
-    private func removeCLIPathIfPresent(fileManager: FileManager) throws {
-        let exists = fileManager.fileExists(atPath: cliPath)
-        let isSymbolicLink = (try? fileManager.destinationOfSymbolicLink(atPath: cliPath)) != nil
-        guard exists || isSymbolicLink else { return }
-        guard isSymbolicLink else {
-            throw CLIPathError.isNotSymbolicLink(cliPath)
-        }
-        try fileManager.removeItem(atPath: cliPath)
     }
 
     /// Reload the LaunchAgent (which relaunches a fresh instance) and quit. If no
