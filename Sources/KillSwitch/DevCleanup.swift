@@ -68,7 +68,7 @@ final class DevCleanupMonitor: ObservableObject {
     var ageThresholdSeconds: Int { ageThresholdHours * 3600 }
 
     /// Picker options shared with the UI.
-    static let intervalOptions = TopConsumersMonitor.intervalOptions
+    static let intervalOptions = SamplingIntervals.standard
     static let ageOptions: [Int] = [1, 6, 12, 24, 48, 72]
     static let portScanOptions: [(label: String, seconds: Int)] = [
         ("5s", 5), ("10s", 10), ("30s", 30), ("1m", 60)

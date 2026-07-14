@@ -9,10 +9,19 @@ let package = Package(
             name: "KeepAwakeCore",
             path: "Sources/KeepAwakeCore"
         ),
+        .target(
+            name: "SystemMetricsCore",
+            path: "Sources/SystemMetricsCore"
+        ),
         .executableTarget(
             name: "KillSwitch",
-            dependencies: ["KeepAwakeCore"],
+            dependencies: ["KeepAwakeCore", "SystemMetricsCore"],
             path: "Sources/KillSwitch"
+        ),
+        .executableTarget(
+            name: "SystemMetricsChecks",
+            dependencies: ["SystemMetricsCore"],
+            path: "Tests/SystemMetricsChecks"
         )
     ]
 )
