@@ -1,19 +1,6 @@
 import Foundation
 import AppKit
-
-enum ProcessSamplerError: LocalizedError {
-    case launchFailed(String, String)
-    case commandFailed(String, Int32)
-
-    var errorDescription: String? {
-        switch self {
-        case .launchFailed(let path, let message):
-            return "Could not launch \(path): \(message)"
-        case .commandFailed(let path, let status):
-            return "\(path) exited with status \(status)."
-        }
-    }
-}
+import DevCleanupCore
 
 /// Shared helpers for sampling running processes via `ps` / `lsof`.
 ///
@@ -93,7 +80,7 @@ enum ProcessSampler {
         let output: String
         do {
             output = try runProcessThrowing("/usr/sbin/lsof", ["-nP", "-iTCP", "-sTCP:LISTEN"])
-        } catch ProcessSamplerError.commandFailed(_, 1) {
+        } catch ProcessSamplerError.commandFailed(_, 1, _) {
             // lsof uses status 1 for a valid query with no matching listeners.
             return [:]
         }
@@ -269,7 +256,11 @@ enum ProcessSampler {
             throw ProcessSamplerError.launchFailed(launchPath, error.localizedDescription)
         }
         guard result.succeeded else {
-            throw ProcessSamplerError.commandFailed(launchPath, result.status)
+            throw ProcessSamplerError.commandFailed(
+                launchPath,
+                result.status,
+                result.standardError
+            )
         }
         return result.standardOutput
     }

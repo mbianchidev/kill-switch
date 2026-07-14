@@ -9,6 +9,7 @@ struct CheckRunner {
         checkParser()
         checkPreferences()
         checkLegacyMigration()
+        checkProcessErrors()
         checkCleanupService()
 
         if failures == 0 {
@@ -149,6 +150,28 @@ struct CheckRunner {
         let settings = preferences.load()
         check(!settings.autoKillEnabled, "migrates legacy auto-kill mode")
         check(settings.userPorts == [3100, 3200], "migrates legacy user ports")
+    }
+
+    private mutating func checkProcessErrors() {
+        check(
+            ProcessSamplerError.launchFailed("/bin/ps", "permission denied").localizedDescription ==
+                "Could not launch /bin/ps: permission denied",
+            "formats launch failures with one prefix"
+        )
+        check(
+            ProcessSamplerError.commandFailed(
+                "/usr/sbin/lsof",
+                2,
+                "  warning\npermission denied  \n"
+            ).localizedDescription ==
+                "/usr/sbin/lsof exited with status 2: warning permission denied",
+            "includes cleaned command stderr"
+        )
+        check(
+            ProcessSamplerError.commandFailed("/usr/sbin/lsof", 1, "").localizedDescription ==
+                "/usr/sbin/lsof exited with status 1.",
+            "formats command failures without stderr"
+        )
     }
 
     private mutating func checkCleanupService() {

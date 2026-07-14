@@ -436,18 +436,19 @@ final class UpdateChecker: ObservableObject {
     /// that writes it always agree.
     private func installBinary(from src: URL) throws {
         let fm = FileManager.default
-        let dir = (installPath as NSString).deletingLastPathComponent
+        let targetPath = installPath
+        let dir = (targetPath as NSString).deletingLastPathComponent
         do {
             let cliDirectory = (cliPath as NSString).deletingLastPathComponent
             try InstallPathSafety.validateManagedSymbolicLink(at: cliPath, fileManager: fm)
-            try InstallPathSafety.validateReplaceableBinary(at: installPath, fileManager: fm)
+            try InstallPathSafety.validateReplaceableBinary(at: targetPath, fileManager: fm)
             try fm.createDirectory(atPath: cliDirectory, withIntermediateDirectories: true)
             try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
             try InstallPathSafety.removeManagedSymbolicLinkIfPresent(at: cliPath, fileManager: fm)
-            try InstallPathSafety.removeReplaceableBinaryIfPresent(at: installPath, fileManager: fm)
-            try fm.copyItem(atPath: src.path, toPath: installPath)
-            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: installPath)
-            try fm.createSymbolicLink(atPath: cliPath, withDestinationPath: installPath)
+            try InstallPathSafety.removeReplaceableBinaryIfPresent(at: targetPath, fileManager: fm)
+            try fm.copyItem(atPath: src.path, toPath: targetPath)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: targetPath)
+            try fm.createSymbolicLink(atPath: cliPath, withDestinationPath: targetPath)
         } catch let error as UpdateError {
             throw error
         } catch {

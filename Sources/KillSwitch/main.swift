@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import SwiftUI
 
 let executableName = URL(fileURLWithPath: CommandLine.arguments[0])
     .lastPathComponent
