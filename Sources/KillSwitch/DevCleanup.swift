@@ -232,7 +232,7 @@ final class DevCleanupMonitor: ObservableObject {
     }
 
     private func currentConfiguration() -> DevCleanupConfiguration {
-        let integrationPorts = preferences.load().integrationPorts
+        let integrationPorts = preferences.loadIntegrationPorts()
         return DevCleanupConfiguration(
             autoKillEnabled: autoKillEnabled,
             ageThresholdSeconds: ageThresholdSeconds,

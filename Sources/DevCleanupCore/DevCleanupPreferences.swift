@@ -119,6 +119,13 @@ public final class DevCleanupPreferences {
         }
     }
 
+    /// Lightweight read of only the integration-ports dictionary.
+    /// Use this on hot timer paths instead of `load()` to avoid a full settings rebuild.
+    public func loadIntegrationPorts() -> [String: [Int]] {
+        defaults.synchronize()
+        return integrationPorts()
+    }
+
     public func load() -> DevCleanupSettings {
         defaults.synchronize()
         return DevCleanupSettings(

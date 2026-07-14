@@ -89,6 +89,10 @@ struct CheckRunner {
             "stores source-owned integration ports separately"
         )
         check(
+            preferences.loadIntegrationPorts() == ["porto": [41000, 41001]],
+            "loads integration ports without rebuilding all settings"
+        )
+        check(
             settings.effectivePorts == [3000, 41000, 41001],
             "merges effective ports"
         )

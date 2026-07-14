@@ -260,6 +260,11 @@ enum ProcessSampler {
         let result: CommandResult
         do {
             result = try CommandRunner.run(launchPath, arguments: arguments)
+        } catch let runnerError as CommandRunnerError {
+            switch runnerError {
+            case .launchFailed(_, let underlying):
+                throw ProcessSamplerError.launchFailed(launchPath, underlying.localizedDescription)
+            }
         } catch {
             throw ProcessSamplerError.launchFailed(launchPath, error.localizedDescription)
         }
