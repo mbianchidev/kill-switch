@@ -7,9 +7,9 @@ public enum InstallPathSafetyError: LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .occupiedDirectory(let path):
-            return "Refusing to replace directory at \(path). Move it before updating KillSwitch."
+            return "Refusing to modify directory at \(path). Move it before installing, updating, or uninstalling KillSwitch."
         case .occupiedNonSymbolicLink(let path):
-            return "Refusing to remove non-symlink at \(path). Move it before installing or uninstalling KillSwitch."
+            return "Refusing to modify non-symlink at \(path). Move it before installing, updating, or uninstalling KillSwitch."
         }
     }
 }

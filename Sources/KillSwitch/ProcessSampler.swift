@@ -80,9 +80,12 @@ enum ProcessSampler {
         let output: String
         do {
             output = try runProcessThrowing("/usr/sbin/lsof", ["-nP", "-iTCP", "-sTCP:LISTEN"])
-        } catch ProcessSamplerError.commandFailed(_, 1, _) {
-            // lsof uses status 1 for a valid query with no matching listeners.
-            return [:]
+        } catch let error as ProcessSamplerError {
+            if case .commandFailed(_, 1, _) = error, error.cleanedStandardError == nil {
+                // lsof uses status 1 with no stderr for a valid query with no matches.
+                return [:]
+            }
+            throw error
         }
         var map: [Int32: Set<Int>] = [:]
         for line in output.components(separatedBy: "\n").dropFirst() {

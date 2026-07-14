@@ -39,7 +39,7 @@ struct InstallCoreCheckRunner {
         } catch {
             check(
                 error.localizedDescription ==
-                    "Refusing to replace directory at \(path.path). Move it before updating KillSwitch.",
+                    "Refusing to modify directory at \(path.path). Move it before installing, updating, or uninstalling KillSwitch.",
                 "directory error text is clear and unwrapped"
             )
         }
@@ -96,7 +96,7 @@ struct InstallCoreCheckRunner {
         } catch {
             check(
                 error.localizedDescription ==
-                    "Refusing to remove non-symlink at \(path.path). Move it before installing or uninstalling KillSwitch.",
+                    "Refusing to modify non-symlink at \(path.path). Move it before installing, updating, or uninstalling KillSwitch.",
                 "managed-path error text is clear"
             )
         }

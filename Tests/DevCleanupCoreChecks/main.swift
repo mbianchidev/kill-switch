@@ -168,9 +168,21 @@ struct CheckRunner {
             "includes cleaned command stderr"
         )
         check(
+            ProcessSamplerError.commandFailed(
+                "/usr/sbin/lsof",
+                1,
+                "  permission denied\n"
+            ).cleanedStandardError == "permission denied",
+            "distinguishes lsof errors from empty no-match stderr"
+        )
+        check(
             ProcessSamplerError.commandFailed("/usr/sbin/lsof", 1, "").localizedDescription ==
                 "/usr/sbin/lsof exited with status 1.",
             "formats command failures without stderr"
+        )
+        check(
+            ProcessSamplerError.commandFailed("/usr/sbin/lsof", 1, " \n").cleanedStandardError == nil,
+            "treats whitespace-only command stderr as empty"
         )
     }
 
