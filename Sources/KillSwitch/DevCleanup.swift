@@ -1,21 +1,5 @@
 import SwiftUI
-
-/// A process listening on a notable development port.
-struct PortProcess: Identifiable {
-    let id: String
-    let pid: Int32
-    let command: String
-    let port: Int
-}
-
-/// A dev server that was auto-terminated by the cleanup.
-struct CleanedProcess: Identifiable {
-    let id: Int32
-    let pid: Int32
-    let command: String
-    let runtime: String
-    let ageHours: Double
-}
+import DevCleanupCore
 
 /// Lists processes on notable dev ports and auto-kills long-running dev servers
 /// owned by the current user, while protecting system/IDE/MCP/Copilot processes.
@@ -34,35 +18,41 @@ final class DevCleanupMonitor: ObservableObject {
     /// Whether long-running dev servers are auto-terminated. When off, the tab only
     /// lists ports/dev servers and leaves killing to the manual buttons.
     @Published var autoKillEnabled: Bool {
-        didSet { Defaults.set(autoKillEnabled, .autoKill) }
+        didSet { preferences.setAutoKillEnabled(autoKillEnabled) }
     }
     /// Age (in hours) a dev server must exceed before it is auto-killed.
     @Published var ageThresholdHours: Int {
-        didSet { Defaults.set(ageThresholdHours, .ageHours) }
+        didSet { preferences.setAgeThresholdHours(ageThresholdHours) }
     }
     /// How often (seconds) the listening-ports list is refreshed.
     @Published var portScanIntervalSeconds: Int {
-        didSet { Defaults.set(portScanIntervalSeconds, .portInterval); reschedule() }
+        didSet {
+            preferences.setPortScanIntervalSeconds(portScanIntervalSeconds)
+            reschedule()
+        }
     }
     /// How often (seconds) the auto-cleanup pass runs.
     @Published var cleanupIntervalSeconds: Int {
-        didSet { Defaults.set(cleanupIntervalSeconds, .cleanupInterval); reschedule() }
+        didSet {
+            preferences.setCleanupIntervalSeconds(cleanupIntervalSeconds)
+            reschedule()
+        }
     }
     /// The watched dev ports. A process listening on any of these is always listed.
     @Published var ports: [Int] {
-        didSet { Defaults.set(ports, .ports) }
+        didSet { preferences.setUserPorts(ports) }
     }
     /// Runtime binaries that indicate a dev server (matched on the executable name).
     @Published var runtimes: [String] {
-        didSet { Defaults.set(runtimes, .runtimes) }
+        didSet { preferences.setRuntimes(runtimes) }
     }
     /// Command-line signatures that mark a process as an actual dev server.
     @Published var devIndicators: [String] {
-        didSet { Defaults.set(devIndicators, .indicators) }
+        didSet { preferences.setIndicators(devIndicators) }
     }
     /// Substrings that protect a process from being auto-killed.
     @Published var exclusions: [String] {
-        didSet { Defaults.set(exclusions, .exclusions) }
+        didSet { preferences.setExclusions(exclusions) }
     }
 
     var ageThresholdSeconds: Int { ageThresholdHours * 3600 }
@@ -83,52 +73,19 @@ final class DevCleanupMonitor: ObservableObject {
 
     // MARK: - Defaults
 
-    /// The explicitly requested ports plus a few similar, common dev ports.
-    static let defaultPorts: [Int] = [
-        3000, 3001, 3002, 3003, 4000, 4200, 5000, 5001, 5173, 5174, 5555,
-        6006, 8000, 8001, 8080, 8081, 8090, 8443, 8888, 9000, 9090, 9091
-    ].sorted()
-
-    static let defaultAgeThresholdHours = 12
-    static let defaultPortScanSeconds = 5
-    static let defaultCleanupSeconds = 600
-
-    static let defaultRuntimes: [String] = [
-        "node", "deno", "bun",
-        "npm", "npx", "pnpm", "yarn",
-        "python", "python3", "python2",
-        "java", "mvn",
-        "cargo", "rustc",
-        "go", "ruby"
-    ]
-
-    static let defaultIndicators: [String] = [
-        "vite", "next dev", "nodemon", "webpack", "react-scripts", "ng serve",
-        "astro dev", "nuxt", "remix", "ng build --watch", "electron .", "electron-forge",
-        "npm run", "npm start", "npm exec", "npx", "yarn dev", "yarn start",
-        "pnpm dev", "pnpm start", "pnpm run", "bun run", "bun dev",
-        "spring-boot:run", "gradlew", "quarkus:dev",
-        "cargo run", "cargo watch", "cargo-watch", "trunk serve",
-        "go run", "air",
-        "rails server", "rails s", "puma", "rackup",
-        "flask run", "uvicorn", "gunicorn", "manage.py runserver", "runserver",
-        "http.server", "deno run", "deno task"
-    ]
-
-    /// Substrings that protect a process from being auto-killed. Bias toward
-    /// NOT killing: matching any of these skips the process entirely.
-    static let defaultExclusions: [String] = [
-        "copilot",
-        "mcp", "modelcontextprotocol", "context7", "work_iq", "work-iq", "workiq",
-        "fabric", "seismic", "azure", "kusto", "revenue", "server-github",
-        "killswitch", "visual studio code", "code helper", "electron", "obsidian",
-        "chrome", "slack", "teams", "orbstack", "spotify", "handy",
-        "language-server", "language_server", "tsserver", "lsp"
-    ]
+    static let defaultPorts = DevCleanupDefaults.ports
+    static let defaultAgeThresholdHours = DevCleanupDefaults.ageThresholdHours
+    static let defaultPortScanSeconds = DevCleanupDefaults.portScanSeconds
+    static let defaultCleanupSeconds = DevCleanupDefaults.cleanupSeconds
+    static let defaultRuntimes = DevCleanupDefaults.runtimes
+    static let defaultIndicators = DevCleanupDefaults.indicators
+    static let defaultExclusions = DevCleanupDefaults.exclusions
 
     private var portTimer: Timer?
     private var cleanupTimer: Timer?
     private let username = NSUserName()
+    private let preferences = DevCleanupPreferences()
+    private lazy var service = DevCleanupService.live(username: username)
 
     /// Serial queue so a port scan and a cleanup pass never run concurrently.
     private let workQueue = DispatchQueue(label: "DevCleanupMonitor.work", qos: .userInitiated)
@@ -138,37 +95,32 @@ final class DevCleanupMonitor: ObservableObject {
     private var isCleaning = false
 
     init() {
-        autoKillEnabled = Defaults.bool(.autoKill, default: true)
-        ageThresholdHours = Defaults.int(.ageHours, default: Self.defaultAgeThresholdHours)
-        portScanIntervalSeconds = Defaults.int(.portInterval, default: Self.defaultPortScanSeconds)
-        cleanupIntervalSeconds = Defaults.int(.cleanupInterval, default: Self.defaultCleanupSeconds)
-        ports = Self.normalizedPorts(Defaults.ints(.ports, default: Self.defaultPorts))
-        runtimes = Self.normalizedEntries(Defaults.strings(.runtimes, default: Self.defaultRuntimes))
-        devIndicators = Self.normalizedEntries(Defaults.strings(.indicators, default: Self.defaultIndicators))
-        exclusions = Self.normalizedEntries(Defaults.strings(.exclusions, default: Self.defaultExclusions))
+        let settings = preferences.load()
+        autoKillEnabled = settings.autoKillEnabled
+        ageThresholdHours = settings.ageThresholdHours
+        portScanIntervalSeconds = settings.portScanIntervalSeconds
+        cleanupIntervalSeconds = settings.cleanupIntervalSeconds
+        ports = settings.userPorts
+        runtimes = settings.runtimes
+        devIndicators = settings.indicators
+        exclusions = settings.exclusions
     }
 
     /// De-duplicate and sort ports so persisted lists yield unique, stable IDs.
     static func normalizedPorts(_ ports: [Int]) -> [Int] {
-        Array(Set(ports)).sorted()
+        DevCleanupPreferences.normalizedPorts(ports)
     }
 
     /// Trim, lowercase, and de-duplicate string entries (preserving first-seen order)
     /// so persisted lists match the lowercased values detection expects and produce
     /// unique SwiftUI IDs.
     static func normalizedEntries(_ values: [String]) -> [String] {
-        var seen = Set<String>()
-        var result: [String] = []
-        for value in values {
-            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard !normalized.isEmpty, seen.insert(normalized).inserted else { continue }
-            result.append(normalized)
-        }
-        return result
+        DevCleanupPreferences.normalizedEntries(values)
     }
 
     /// Restore every configurable value to its built-in default.
     func resetToDefaults() {
+        preferences.resetToDefaults()
         autoKillEnabled = true
         ageThresholdHours = Self.defaultAgeThresholdHours
         portScanIntervalSeconds = Self.defaultPortScanSeconds
@@ -236,22 +188,20 @@ final class DevCleanupMonitor: ObservableObject {
     func refreshPorts() {
         guard !isRefreshing else { return }
         isRefreshing = true
-        let ports = self.ports
-        let runtimes = self.runtimes
-        let indicators = self.devIndicators
-        let exclusions = self.exclusions
+        let configuration = currentConfiguration()
         workQueue.async { [weak self] in
             guard let self = self else { return }
-            let detailed = ProcessSampler.fetchDetailed()
-            let commandByPid = Dictionary(detailed.map { ($0.pid, $0.command) }, uniquingKeysWith: { a, _ in a })
-            let listening = ProcessSampler.listeningPorts()
-            let rows = Self.portRows(
-                commandByPid: commandByPid, ports: listening,
-                notablePorts: Set(ports), runtimes: runtimes, indicators: indicators, exclusions: exclusions
-            )
-            DispatchQueue.main.async {
-                self.portProcesses = rows
-                self.isRefreshing = false
+            do {
+                let result = try self.service.scan(configuration: configuration)
+                DispatchQueue.main.async {
+                    self.portProcesses = result.portProcesses
+                    self.isRefreshing = false
+                }
+            } catch {
+                fputs("KillSwitch dev-cleanup scan failed: \(error.localizedDescription)\n", stderr)
+                DispatchQueue.main.async {
+                    self.isRefreshing = false
+                }
             }
         }
     }
@@ -260,145 +210,39 @@ final class DevCleanupMonitor: ObservableObject {
     func runCleanup() {
         guard !isCleaning else { return }
         isCleaning = true
-        let ports = self.ports
-        let runtimes = self.runtimes
-        let indicators = self.devIndicators
-        let exclusions = self.exclusions
-        let autoKill = self.autoKillEnabled
-        let ageThreshold = self.ageThresholdSeconds
+        let configuration = currentConfiguration()
         workQueue.async { [weak self] in
             guard let self = self else { return }
-            let detailed = ProcessSampler.fetchDetailed()
-            let commandByPid = Dictionary(detailed.map { ($0.pid, $0.command) }, uniquingKeysWith: { a, _ in a })
-            let listening = ProcessSampler.listeningPorts()
-            let portRows = Self.portRows(
-                commandByPid: commandByPid, ports: listening,
-                notablePorts: Set(ports), runtimes: runtimes, indicators: indicators, exclusions: exclusions
-            )
-
-            var candidates = 0
-            var killed: [CleanedProcess] = []
-            for proc in detailed where proc.user == self.username {
-                guard let runtime = Self.devRuntime(proc.command, runtimes: runtimes),
-                      Self.isDevServer(proc.command, indicators: indicators),
-                      !Self.isSystemProcess(proc.command),
-                      !Self.isExcluded(proc.command, exclusions: exclusions) else { continue }
-                candidates += 1
-                if autoKill, proc.etimeSeconds > ageThreshold {
-                    if ProcessSampler.terminate(pid: proc.pid) {
-                        killed.append(
-                            CleanedProcess(
-                                id: proc.pid,
-                                pid: proc.pid,
-                                command: proc.command,
-                                runtime: runtime,
-                                ageHours: Double(proc.etimeSeconds) / 3600.0
-                            )
-                        )
-                    }
+            do {
+                let result = try self.service.cleanup(configuration: configuration)
+                DispatchQueue.main.async {
+                    self.portProcesses = result.portProcesses
+                    self.candidateCount = result.candidateCount
+                    self.cleaned = result.killed
+                    self.lastRun = Date()
+                    self.isCleaning = false
+                }
+            } catch {
+                fputs("KillSwitch dev-cleanup failed: \(error.localizedDescription)\n", stderr)
+                DispatchQueue.main.async {
+                    self.isCleaning = false
                 }
             }
-
-            DispatchQueue.main.async {
-                self.portProcesses = portRows
-                self.candidateCount = candidates
-                self.cleaned = killed
-                self.lastRun = Date()
-                self.isCleaning = false
-            }
         }
     }
 
-    /// Build the listening-ports rows: every process on a notable port, plus any
-    /// recognized dev server (incl. npm) regardless of which port it binds to.
-    private static func portRows(
-        commandByPid: [Int32: String],
-        ports: [Int32: Set<Int>],
-        notablePorts: Set<Int>,
-        runtimes: [String],
-        indicators: [String],
-        exclusions: [String]
-    ) -> [PortProcess] {
-        var rows: [PortProcess] = []
-        for (pid, portSet) in ports {
-            let command = commandByPid[pid] ?? "pid \(pid)"
-            if isSystemProcess(command) { continue }
-            let isDev = devRuntime(command, runtimes: runtimes) != nil
-                && isDevServer(command, indicators: indicators)
-                && !isExcluded(command, exclusions: exclusions)
-            for port in portSet where notablePorts.contains(port) || isDev {
-                rows.append(PortProcess(id: "\(pid)-\(port)", pid: pid, command: command, port: port))
-            }
-        }
-        rows.sort { $0.port == $1.port ? $0.pid < $1.pid : $0.port < $1.port }
-        return rows
-    }
-
-    // MARK: - Classification
-
-    private static func isExcluded(_ command: String, exclusions: [String]) -> Bool {
-        let lower = command.lowercased()
-        return exclusions.contains { lower.contains($0) }
-    }
-
-    /// Never kill anything launched from /System/ (macOS system binaries).
-    private static func isSystemProcess(_ command: String) -> Bool {
-        let trimmed = command.trimmingCharacters(in: .whitespaces)
-        return trimmed.hasPrefix("/System/")
-    }
-
-    private static func isDevServer(_ command: String, indicators: [String]) -> Bool {
-        let lower = command.lowercased()
-        return indicators.contains { lower.contains($0) }
-    }
-
-    /// Returns the runtime name if the command's executable is a known runtime.
-    private static func devRuntime(_ command: String, runtimes: [String]) -> String? {
-        guard let firstToken = command.split(whereSeparator: { $0.isWhitespace }).first else { return nil }
-        let exe = firstToken.split(separator: "/").last.map(String.init)?.lowercased() ?? ""
-        return runtimes.first { exe == $0 || exe.hasPrefix($0) }
-    }
-}
-
-/// Tiny typed wrapper over `UserDefaults` for the dev-cleanup settings.
-private enum Defaults {
-    enum Key: String {
-        case autoKill = "devcleanup.autoKill"
-        case ageHours = "devcleanup.ageHours"
-        case portInterval = "devcleanup.portInterval"
-        case cleanupInterval = "devcleanup.cleanupInterval"
-        case ports = "devcleanup.ports"
-        case runtimes = "devcleanup.runtimes"
-        case indicators = "devcleanup.indicators"
-        case exclusions = "devcleanup.exclusions"
-    }
-
-    static func set(_ value: Bool, _ key: Key) { UserDefaults.standard.set(value, forKey: key.rawValue) }
-    static func set(_ value: Int, _ key: Key) { UserDefaults.standard.set(value, forKey: key.rawValue) }
-    static func set(_ value: [Int], _ key: Key) { UserDefaults.standard.set(value, forKey: key.rawValue) }
-    static func set(_ value: [String], _ key: Key) { UserDefaults.standard.set(value, forKey: key.rawValue) }
-
-    static func bool(_ key: Key, default fallback: Bool) -> Bool {
-        guard UserDefaults.standard.object(forKey: key.rawValue) != nil else { return fallback }
-        return UserDefaults.standard.bool(forKey: key.rawValue)
-    }
-    static func int(_ key: Key, default fallback: Int) -> Int {
-        guard UserDefaults.standard.object(forKey: key.rawValue) != nil else { return fallback }
-        return UserDefaults.standard.integer(forKey: key.rawValue)
-    }
-    static func ints(_ key: Key, default fallback: [Int]) -> [Int] {
-        guard let values = UserDefaults.standard.array(forKey: key.rawValue) else { return fallback }
-        let converted = values.compactMap { value -> Int? in
-            if let int = value as? Int { return int }
-            if let number = value as? NSNumber { return number.intValue }
-            return nil
-        }
-        return converted.count == values.count ? converted : fallback
-    }
-    static func strings(_ key: Key, default fallback: [String]) -> [String] {
-        guard let values = UserDefaults.standard.array(forKey: key.rawValue) else { return fallback }
-        let converted = values.compactMap { $0 as? String }
-        return converted.count == values.count ? converted : fallback
+    private func currentConfiguration() -> DevCleanupConfiguration {
+        let integrationPorts = preferences.load().integrationPorts
+        return DevCleanupConfiguration(
+            autoKillEnabled: autoKillEnabled,
+            ageThresholdSeconds: ageThresholdSeconds,
+            effectivePorts: DevCleanupPreferences.normalizedPorts(
+                ports + integrationPorts.values.flatMap { $0 }
+            ),
+            runtimes: runtimes,
+            indicators: devIndicators,
+            exclusions: exclusions
+        )
     }
 }
 

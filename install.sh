@@ -12,6 +12,7 @@ set -euo pipefail
 REPO="mbianchidev/kill-switch"
 INSTALL_DIR="$HOME/bin"
 INSTALL_PATH="$INSTALL_DIR/KillSwitch"
+CLI_PATH="$INSTALL_DIR/killswitchctl"
 PLIST_LABEL="io.killswitch.agent"
 PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
 
@@ -33,7 +34,7 @@ choose_mode() {
 build_from_source() {
   command -v swift >/dev/null 2>&1 || die "Swift not found. Install Xcode Command Line Tools or use the release installer."
   log "🔨 Building KillSwitch from source..."
-  swift build -c release
+  swift build -c release --product KillSwitch
   mkdir -p "$INSTALL_DIR"
   cp ".build/release/KillSwitch" "$INSTALL_PATH"
   chmod +x "$INSTALL_PATH"
@@ -112,12 +113,15 @@ case "$MODE" in
 esac
 
 log "📦 Installed binary to $INSTALL_PATH ($MODE)"
+ln -sfn "$INSTALL_PATH" "$CLI_PATH"
+log "🔗 Installed CLI alias at $CLI_PATH"
 install_plist
 reload_agent
 
 echo ""
 echo "✅ KillSwitch installed and set to run at login!"
 echo "   Binary: $INSTALL_PATH"
+echo "   CLI: $CLI_PATH"
 echo "   LaunchAgent: $PLIST_DST"
 echo ""
 echo "   To uninstall: curl -fsSL https://raw.githubusercontent.com/$REPO/main/uninstall.sh | bash"

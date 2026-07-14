@@ -3,6 +3,7 @@ set -e
 
 INSTALL_DIR="$HOME/bin"
 INSTALL_PATH="$INSTALL_DIR/KillSwitch"
+CLI_PATH="$INSTALL_DIR/killswitchctl"
 PLIST_SRC="io.killswitch.agent.plist"
 PLIST_DST="$HOME/Library/LaunchAgents/io.killswitch.agent.plist"
 
@@ -12,7 +13,7 @@ echo "📥 Pulling latest..."
 git pull --rebase
 
 echo "🔨 Building..."
-swift build -c release
+swift build -c release --product KillSwitch
 
 echo "⏹  Stopping running instance..."
 launchctl unload "$PLIST_DST" 2>/dev/null || true
@@ -21,6 +22,7 @@ echo "📦 Installing binary..."
 mkdir -p "$INSTALL_DIR"
 cp .build/release/KillSwitch "$INSTALL_PATH"
 chmod +x "$INSTALL_PATH"
+ln -sfn "$INSTALL_PATH" "$CLI_PATH"
 
 echo "📋 Updating LaunchAgent..."
 mkdir -p "$(dirname "$PLIST_DST")"

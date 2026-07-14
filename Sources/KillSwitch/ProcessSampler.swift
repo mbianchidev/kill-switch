@@ -1,6 +1,20 @@
 import Foundation
 import AppKit
 
+enum ProcessSamplerError: LocalizedError {
+    case launchFailed(String, String)
+    case commandFailed(String, Int32)
+
+    var errorDescription: String? {
+        switch self {
+        case .launchFailed(let path, let message):
+            return "Could not launch \(path): \(message)"
+        case .commandFailed(let path, let status):
+            return "\(path) exited with status \(status)."
+        }
+    }
+}
+
 /// Shared helpers for sampling running processes via `ps` / `lsof`.
 ///
 /// Both the collapsed (parent-aggregated) view used by the main process list /
@@ -41,9 +55,11 @@ enum ProcessSampler {
 
     /// Fetch every process with its owner, elapsed time and full command line.
     static func fetchDetailed() -> [Detailed] {
-        guard let output = runProcess("/bin/ps", ["-axo", "pid,ppid,user,etime,args"]) else {
-            return []
-        }
+        (try? fetchDetailedThrowing()) ?? []
+    }
+
+    static func fetchDetailedThrowing() throws -> [Detailed] {
+        let output = try runProcessThrowing("/bin/ps", ["-axo", "pid,ppid,user,etime,args"])
         var result: [Detailed] = []
         for line in output.components(separatedBy: "\n").dropFirst() {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -70,7 +86,15 @@ enum ProcessSampler {
 
     /// Map of pid -> set of TCP ports the process is listening on.
     static func listeningPorts() -> [Int32: Set<Int>] {
-        guard let output = runProcess("/usr/sbin/lsof", ["-nP", "-iTCP", "-sTCP:LISTEN"]) else {
+        (try? listeningPortsThrowing()) ?? [:]
+    }
+
+    static func listeningPortsThrowing() throws -> [Int32: Set<Int>] {
+        let output: String
+        do {
+            output = try runProcessThrowing("/usr/sbin/lsof", ["-nP", "-iTCP", "-sTCP:LISTEN"])
+        } catch ProcessSamplerError.commandFailed(_, 1) {
+            // lsof uses status 1 for a valid query with no matching listeners.
             return [:]
         }
         var map: [Int32: Set<Int>] = [:]
@@ -223,6 +247,10 @@ enum ProcessSampler {
     // MARK: - Helpers
 
     private static func runProcess(_ launchPath: String, _ arguments: [String]) -> String? {
+        try? runProcessThrowing(launchPath, arguments)
+    }
+
+    private static func runProcessThrowing(_ launchPath: String, _ arguments: [String]) throws -> String {
         let task = Process()
         task.launchPath = launchPath
         task.arguments = arguments
@@ -234,13 +262,16 @@ enum ProcessSampler {
         do {
             try task.run()
         } catch {
-            return nil
+            throw ProcessSamplerError.launchFailed(launchPath, error.localizedDescription)
         }
         // Drain stdout *before* waiting: commands like `ps -axo args` emit far
         // more than the ~64KB pipe buffer, so waiting first would deadlock the
         // child once the buffer fills and nobody is reading.
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         task.waitUntilExit()
-        return String(data: data, encoding: .utf8)
+        guard task.terminationStatus == 0 else {
+            throw ProcessSamplerError.commandFailed(launchPath, task.terminationStatus)
+        }
+        return String(data: data, encoding: .utf8) ?? ""
     }
 }

@@ -19,6 +19,7 @@ A lightweight macOS process manager utility. Lists the processes belonging to th
 - Keeps the Mac awake indefinitely or for a selected duration, with optional display sleep
 - Advanced keep-awake settings for default duration, display sleep, and launch activation
 - Runs at login via LaunchAgent
+- Headless `killswitchctl` integration for syncing managed dev ports and invoking the same cleanup logic as the UI
 - Dark, translucent UI inspired by Raycast
 
 ## Tabs
@@ -110,9 +111,10 @@ curl -fsSL https://raw.githubusercontent.com/mbianchidev/kill-switch/main/instal
 ```
 
 This downloads the latest `KillSwitch` binary, verifies its SHA-256, installs it
-to `~/bin/KillSwitch`, and loads a LaunchAgent so it starts at login. Re-running
-it upgrades an existing install — handy if you're stuck on an old build (see
-[Updating](#updating)).
+to `~/bin/KillSwitch`, creates `~/bin/killswitchctl` as a symlink to that same
+binary, and loads a LaunchAgent so the GUI starts at login. Re-running it upgrades
+an existing install and refreshes the CLI symlink — handy if you're stuck on an
+old build (see [Updating](#updating)).
 
 ### Build from source instead
 
@@ -128,12 +130,82 @@ Force a mode with `KILLSWITCH_INSTALL_MODE=source` or `KILLSWITCH_INSTALL_MODE=r
 This will:
 1. Build (or download) the release binary
 2. Copy it to `~/bin/KillSwitch` (no `sudo` required)
-3. Install a LaunchAgent so it starts at login
+3. Link `~/bin/killswitchctl` to the same release binary
+4. Install a LaunchAgent so the GUI starts at login
+
+Ensure `~/bin` is on `PATH` before invoking `killswitchctl`.
+
+## Headless CLI and Porto integration
+
+The installed `killswitchctl` symlink runs the existing KillSwitch release binary
+in headless mode. Basename dispatch happens before SwiftUI starts, so CLI
+invocations never open the app window or menu bar item. Running the same binary as
+`KillSwitch` preserves the existing GUI behavior.
+
+```bash
+killswitchctl dev-cleanup status --json
+killswitchctl dev-cleanup sync-ports --source porto --ports 41000,41001 --json
+killswitchctl dev-cleanup sync-ports --source porto --ports='' --json
+killswitchctl dev-cleanup cleanup --json
+```
+
+`sync-ports` stores each integration's ports separately from the user-edited Dev
+cleanup ports. Passing an empty value (`--ports=''` or `--ports=`) clears that
+source. User ports are never overwritten; every UI scan and cleanup merges the
+latest persisted integration ports, so a running app does not need to restart.
+
+`status` and successful `sync-ports` calls return:
+
+```json
+{
+  "effectivePorts": [3000, 41000, 41001],
+  "integrationPorts": {
+    "porto": [41000, 41001]
+  },
+  "userPorts": [3000],
+  "version": "v1.2.3"
+}
+```
+
+`cleanup` uses the same classification and termination service as **Run cleanup
+now**, including the persisted auto-kill, age threshold, runtime, dev-indicator,
+and exclusion settings:
+
+```json
+{
+  "autoKillEnabled": true,
+  "candidateCount": 2,
+  "killedCount": 1,
+  "killedProcesses": [
+    {
+      "ageHours": 13.5,
+      "command": "/usr/local/bin/node vite --port 41000",
+      "pid": 12345,
+      "runtime": "node"
+    }
+  ],
+  "version": "v1.2.3"
+}
+```
+
+Invalid arguments exit `2`; runtime or persistence failures exit `1`. Errors are
+JSON on stderr:
+
+```json
+{"error":{"code":"invalid_arguments","message":"..."}}
+```
+
+Porto can treat a missing `killswitchctl` as an optional integration, run the
+official installer above, sync its current managed ports under source `porto`,
+and invoke cleanup. Cleanup remains conservative: if auto-kill is disabled, or a
+candidate has not crossed the saved age threshold, it is not terminated. Processes
+that fail the saved runtime, indicator, ownership, system, or exclusion checks are
+not candidates.
 
 ## Uninstall
 
 From the app, open the **Updates** tab and click **Uninstall KillSwitch** (removes
-the binary and login LaunchAgent, then quits). Or from a terminal:
+the binary, `killswitchctl` symlink, and login LaunchAgent, then quits). Or from a terminal:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mbianchidev/kill-switch/main/uninstall.sh | bash
@@ -145,8 +217,8 @@ curl -fsSL https://raw.githubusercontent.com/mbianchidev/kill-switch/main/uninst
 
 Released builds update themselves: open the **Updates** tab (or wait for the
 launch check) and click **Download & install** when a newer version is offered.
-The updater overwrites whatever binary the LaunchAgent launches, so the new
-version is the one that comes back after the relaunch.
+The updater overwrites whatever binary the LaunchAgent launches and refreshes the
+`~/bin/killswitchctl` symlink, so the GUI and CLI always use the same release.
 
 Every push to `main` is automatically published as a GitHub Release
 (auto-incrementing semver, e.g. `v1.1.1`) with the compiled binary attached, and
@@ -162,13 +234,17 @@ To update a source checkout manually instead:
 ## Run without installing
 
 ```bash
-swift build -c release
+swift build -c release --product KillSwitch
 .build/release/KillSwitch
 ```
+
+To exercise the headless mode from a source checkout, invoke the binary through a
+`killswitchctl` symlink; the executable basename selects CLI mode.
 
 ## Tech Stack
 
 - Swift 5.9
+- A shared `DevCleanupCore` target for preferences, integration-port merging, CLI parsing, and cleanup classification
 - SwiftUI + Swift Charts (trend graph)
 - AppKit (`NSWorkspace`) for application icons; `NSStatusItem` for the menu bar (tray) icon
 - macOS process APIs (`ps`, `lsof`, `top`)

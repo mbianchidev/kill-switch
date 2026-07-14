@@ -107,6 +107,9 @@ final class UpdateChecker: ObservableObject {
     private let agentPlistPath = FileManager.default
         .homeDirectoryForCurrentUser
         .appendingPathComponent("Library/LaunchAgents/io.killswitch.agent.plist").path
+    private let cliPath = FileManager.default
+        .homeDirectoryForCurrentUser
+        .appendingPathComponent("bin/killswitchctl").path
 
     /// Where the updated binary is written. We target whatever the LaunchAgent
     /// actually launches (its first `ProgramArguments` entry), so the binary we
@@ -241,6 +244,14 @@ final class UpdateChecker: ObservableObject {
         }
 
         let binary = installPath
+        if fm.fileExists(atPath: cliPath)
+            || (try? fm.destinationOfSymbolicLink(atPath: cliPath)) != nil {
+            do {
+                try fm.removeItem(atPath: cliPath)
+            } catch {
+                throw UpdateError.uninstallFailed("could not remove \(cliPath): \(error.localizedDescription)")
+            }
+        }
         if fm.fileExists(atPath: binary) {
             do {
                 try fm.removeItem(atPath: binary)
@@ -257,7 +268,7 @@ final class UpdateChecker: ObservableObject {
             }
         }
 
-        log("Uninstalled: removed \(binary) and LaunchAgent")
+        log("Uninstalled: removed \(binary), \(cliPath), and LaunchAgent")
     }
 
     // MARK: Check
@@ -439,6 +450,13 @@ final class UpdateChecker: ObservableObject {
             }
             try fm.copyItem(atPath: src.path, toPath: installPath)
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: installPath)
+            let cliDirectory = (cliPath as NSString).deletingLastPathComponent
+            try fm.createDirectory(atPath: cliDirectory, withIntermediateDirectories: true)
+            if fm.fileExists(atPath: cliPath)
+                || (try? fm.destinationOfSymbolicLink(atPath: cliPath)) != nil {
+                try fm.removeItem(atPath: cliPath)
+            }
+            try fm.createSymbolicLink(atPath: cliPath, withDestinationPath: installPath)
         } catch {
             throw UpdateError.installFailed(error.localizedDescription)
         }
