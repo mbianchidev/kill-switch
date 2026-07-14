@@ -452,15 +452,16 @@ final class UpdateChecker: ObservableObject {
         let fm = FileManager.default
         let dir = (installPath as NSString).deletingLastPathComponent
         do {
+            // Refuse a real directory before replacing the binary to avoid a partial update.
+            let cliDirectory = (cliPath as NSString).deletingLastPathComponent
+            try fm.createDirectory(atPath: cliDirectory, withIntermediateDirectories: true)
+            try removeCLIPathIfPresent(fileManager: fm)
             try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
             if fm.fileExists(atPath: installPath) {
                 try fm.removeItem(atPath: installPath)
             }
             try fm.copyItem(atPath: src.path, toPath: installPath)
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: installPath)
-            let cliDirectory = (cliPath as NSString).deletingLastPathComponent
-            try fm.createDirectory(atPath: cliDirectory, withIntermediateDirectories: true)
-            try removeCLIPathIfPresent(fileManager: fm)
             try fm.createSymbolicLink(atPath: cliPath, withDestinationPath: installPath)
         } catch {
             throw UpdateError.installFailed(error.localizedDescription)
