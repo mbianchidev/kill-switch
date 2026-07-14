@@ -53,12 +53,12 @@ enum UpdateState: Equatable {
 }
 
 private enum CLIPathError: LocalizedError {
-    case isDirectory(String)
+    case isNotSymbolicLink(String)
 
     var errorDescription: String? {
         switch self {
-        case .isDirectory(let path):
-            return "Refusing to remove directory at \(path); move it before installing or uninstalling KillSwitch."
+        case .isNotSymbolicLink(let path):
+            return "Refusing to remove non-symlink at \(path); move it before installing or uninstalling KillSwitch."
         }
     }
 }
@@ -469,12 +469,11 @@ final class UpdateChecker: ObservableObject {
     }
 
     private func removeCLIPathIfPresent(fileManager: FileManager) throws {
-        var isDirectory: ObjCBool = false
-        let exists = fileManager.fileExists(atPath: cliPath, isDirectory: &isDirectory)
+        let exists = fileManager.fileExists(atPath: cliPath)
         let isSymbolicLink = (try? fileManager.destinationOfSymbolicLink(atPath: cliPath)) != nil
         guard exists || isSymbolicLink else { return }
-        guard !isDirectory.boolValue || isSymbolicLink else {
-            throw CLIPathError.isDirectory(cliPath)
+        guard isSymbolicLink else {
+            throw CLIPathError.isNotSymbolicLink(cliPath)
         }
         try fileManager.removeItem(atPath: cliPath)
     }

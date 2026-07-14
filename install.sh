@@ -19,8 +19,8 @@ PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
 log() { echo "$1"; }
 die() { echo "❌ $1" >&2; exit 1; }
 
-[ ! -d "$CLI_PATH" ] || [ -L "$CLI_PATH" ] \
-  || die "Refusing to replace directory at $CLI_PATH. Move it and rerun the installer."
+[ ! -e "$CLI_PATH" ] || [ -L "$CLI_PATH" ] \
+  || die "Refusing to replace non-symlink at $CLI_PATH. Move it and rerun the installer."
 
 # Pick install mode: explicit override, else build when run inside a checkout
 # with Swift, else download the latest prebuilt release (the curl | bash path).

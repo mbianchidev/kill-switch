@@ -142,6 +142,9 @@ This will:
 4. Install a LaunchAgent so the GUI starts at login
 
 Ensure `~/bin` is on `PATH` before invoking `killswitchctl`.
+Install, update, and uninstall refuse to replace or remove that path when it is
+an existing regular file or directory; only the KillSwitch-managed symlink is
+updated or removed.
 
 ## Headless CLI and Porto integration
 
