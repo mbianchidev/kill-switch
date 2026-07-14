@@ -67,6 +67,7 @@ struct CheckRunner {
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let preferences = DevCleanupPreferences(defaults: defaults)
 
+        preferences.setAutoKillEnabled(false)
         preferences.setUserPorts([3000, 41000, 3000])
         do {
             try preferences.setIntegrationPorts(
@@ -79,6 +80,7 @@ struct CheckRunner {
         }
 
         var settings = preferences.load()
+        check(!settings.autoKillEnabled, "loads persisted auto-kill mode")
         check(settings.userPorts == [3000, 41000], "preserves normalized user ports")
         check(
             settings.integrationPorts == ["porto": [41000, 41001]],
@@ -88,6 +90,14 @@ struct CheckRunner {
             settings.effectivePorts == [3000, 41000, 41001],
             "merges effective ports"
         )
+        do {
+            let response = DevCleanupPortsResponse(version: "dev", settings: settings)
+            let data = try JSONEncoder().encode(response)
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            check(json?["autoKillEnabled"] as? Bool == false, "encodes auto-kill mode in ports response")
+        } catch {
+            fail("encodes ports response: \(error.localizedDescription)")
+        }
 
         do {
             try preferences.setIntegrationPorts(source: "porto", ports: [])

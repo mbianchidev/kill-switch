@@ -158,6 +158,7 @@ latest persisted integration ports, so a running app does not need to restart.
 
 ```json
 {
+  "autoKillEnabled": true,
   "effectivePorts": [3000, 41000, 41001],
   "integrationPorts": {
     "porto": [41000, 41001]
@@ -166,6 +167,9 @@ latest persisted integration ports, so a running app does not need to restart.
   "version": "v1.2.3"
 }
 ```
+
+`autoKillEnabled` is the saved KillSwitch Dev cleanup mode, so integrations can
+show whether a subsequent cleanup call is allowed to terminate candidates.
 
 `cleanup` uses the same classification and termination service as **Run cleanup
 now**, including the persisted auto-kill, age threshold, runtime, dev-indicator,

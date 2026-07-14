@@ -2,13 +2,6 @@ import Foundation
 import DevCleanupCore
 
 enum KillSwitchCLI {
-    private struct PortsResponse: Encodable {
-        let version: String
-        let userPorts: [Int]
-        let integrationPorts: [String: [Int]]
-        let effectivePorts: [Int]
-    }
-
     private struct KilledProcessResponse: Encodable {
         let pid: Int32
         let command: String
@@ -40,10 +33,17 @@ enum KillSwitchCLI {
 
             switch command {
             case .status:
-                try write(portsResponse(preferences.load()))
+                try write(
+                    DevCleanupPortsResponse(
+                        version: AppVersion.current,
+                        settings: preferences.load()
+                    )
+                )
             case .syncPorts(let source, let ports):
                 let settings = try preferences.setIntegrationPorts(source: source, ports: ports)
-                try write(portsResponse(settings))
+                try write(
+                    DevCleanupPortsResponse(version: AppVersion.current, settings: settings)
+                )
             case .cleanup:
                 let settings = preferences.load()
                 let result = try DevCleanupService.live().cleanup(configuration: settings.configuration)
@@ -76,15 +76,6 @@ enum KillSwitchCLI {
             writeError(code: "runtime_failure", message: error.localizedDescription)
             return 1
         }
-    }
-
-    private static func portsResponse(_ settings: DevCleanupSettings) -> PortsResponse {
-        PortsResponse(
-            version: AppVersion.current,
-            userPorts: settings.userPorts,
-            integrationPorts: settings.integrationPorts,
-            effectivePorts: settings.effectivePorts
-        )
     }
 
     private static func write<T: Encodable>(_ value: T) throws {
