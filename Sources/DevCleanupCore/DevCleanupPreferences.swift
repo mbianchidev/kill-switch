@@ -91,7 +91,7 @@ public enum DevCleanupPreferenceError: LocalizedError, Equatable {
 }
 
 public final class DevCleanupPreferences {
-    private enum Key: String {
+    private enum Key: String, CaseIterable {
         case autoKill = "devcleanup.autoKill"
         case ageHours = "devcleanup.ageHours"
         case portInterval = "devcleanup.portInterval"
@@ -105,10 +105,18 @@ public final class DevCleanupPreferences {
 
     private let defaults: UserDefaults
 
-    public init(
-        defaults: UserDefaults = UserDefaults(suiteName: DevCleanupDefaults.preferenceDomain) ?? .standard
-    ) {
+    public convenience init() {
+        self.init(
+            defaults: UserDefaults(suiteName: DevCleanupDefaults.preferenceDomain) ?? .standard,
+            legacyDefaults: .standard
+        )
+    }
+
+    public init(defaults: UserDefaults, legacyDefaults: UserDefaults? = nil) {
         self.defaults = defaults
+        if let legacyDefaults {
+            migrateLegacyValues(from: legacyDefaults)
+        }
     }
 
     public func load() -> DevCleanupSettings {
@@ -188,6 +196,7 @@ public final class DevCleanupPreferences {
         setRuntimes(DevCleanupDefaults.runtimes)
         setIndicators(DevCleanupDefaults.indicators)
         setExclusions(DevCleanupDefaults.exclusions)
+        defaults.removeObject(forKey: Key.integrationPorts.rawValue)
     }
 
     public static func normalizedPorts(_ ports: [Int]) -> [Int] {
@@ -237,6 +246,24 @@ public final class DevCleanupPreferences {
             }
         }
         return result
+    }
+
+    private func migrateLegacyValues(from legacyDefaults: UserDefaults) {
+        guard Key.allCases.allSatisfy({
+            defaults.object(forKey: $0.rawValue) == nil
+        }) else {
+            return
+        }
+
+        var migrated = false
+        for key in Key.allCases {
+            guard let value = legacyDefaults.object(forKey: key.rawValue) else { continue }
+            defaults.set(value, forKey: key.rawValue)
+            migrated = true
+        }
+        if migrated {
+            defaults.synchronize()
+        }
     }
 
     private func bool(_ key: Key, default fallback: Bool) -> Bool {

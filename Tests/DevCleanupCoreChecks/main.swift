@@ -7,6 +7,7 @@ struct CheckRunner {
     mutating func run() -> Int32 {
         checkParser()
         checkPreferences()
+        checkLegacyMigration()
         checkCleanupService()
 
         if failures == 0 {
@@ -112,6 +113,37 @@ struct CheckRunner {
         checkThrows("rejects invalid persisted integration port") {
             try preferences.setIntegrationPorts(source: "porto", ports: [65536])
         }
+
+        do {
+            try preferences.setIntegrationPorts(source: "porto", ports: [41001])
+            preferences.resetToDefaults()
+            settings = preferences.load()
+            check(settings.integrationPorts.isEmpty, "reset clears integration ports")
+            check(settings.effectivePorts == DevCleanupDefaults.ports, "reset restores effective default ports")
+        } catch {
+            fail("resets integration ports: \(error.localizedDescription)")
+        }
+    }
+
+    private mutating func checkLegacyMigration() {
+        let targetSuiteName = "DevCleanupCoreChecks.target.\(UUID().uuidString)"
+        let legacySuiteName = "DevCleanupCoreChecks.legacy.\(UUID().uuidString)"
+        let targetDefaults = UserDefaults(suiteName: targetSuiteName)!
+        let legacyDefaults = UserDefaults(suiteName: legacySuiteName)!
+        defer {
+            targetDefaults.removePersistentDomain(forName: targetSuiteName)
+            legacyDefaults.removePersistentDomain(forName: legacySuiteName)
+        }
+
+        legacyDefaults.set(false, forKey: "devcleanup.autoKill")
+        legacyDefaults.set([3200, 3100], forKey: "devcleanup.ports")
+        let preferences = DevCleanupPreferences(
+            defaults: targetDefaults,
+            legacyDefaults: legacyDefaults
+        )
+        let settings = preferences.load()
+        check(!settings.autoKillEnabled, "migrates legacy auto-kill mode")
+        check(settings.userPorts == [3100, 3200], "migrates legacy user ports")
     }
 
     private mutating func checkCleanupService() {

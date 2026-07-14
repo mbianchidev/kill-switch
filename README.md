@@ -39,7 +39,8 @@ capacity refreshed alongside the process data.
   - Toggle **auto-kill** on/off and pick the **kill-after age** (1/6/12/24/48/72h).
   - Pick the **cleanup** and **port-scan** intervals.
   - Add/remove watched **ports**, dev **runtimes**, dev-server **indicators** (command-line signatures), and **protected** substrings (never killed).
-  - **Reset to defaults** restores every value.
+  - **Reset to defaults** restores every value and clears synced integration ports
+    until the integration syncs them again.
 
 
 ### Top consumers

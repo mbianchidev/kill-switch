@@ -52,6 +52,17 @@ enum UpdateState: Equatable {
     case failed(String)
 }
 
+private enum CLIPathError: LocalizedError {
+    case isDirectory(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .isDirectory(let path):
+            return "Refusing to remove directory at \(path); move it before installing or uninstalling KillSwitch."
+        }
+    }
+}
+
 // MARK: - UpdateChecker
 
 /// Checks the GitHub Releases API for a newer build, and (when the user asks)
@@ -244,13 +255,10 @@ final class UpdateChecker: ObservableObject {
         }
 
         let binary = installPath
-        if fm.fileExists(atPath: cliPath)
-            || (try? fm.destinationOfSymbolicLink(atPath: cliPath)) != nil {
-            do {
-                try fm.removeItem(atPath: cliPath)
-            } catch {
-                throw UpdateError.uninstallFailed("could not remove \(cliPath): \(error.localizedDescription)")
-            }
+        do {
+            try removeCLIPathIfPresent(fileManager: fm)
+        } catch {
+            throw UpdateError.uninstallFailed(error.localizedDescription)
         }
         if fm.fileExists(atPath: binary) {
             do {
@@ -452,14 +460,22 @@ final class UpdateChecker: ObservableObject {
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: installPath)
             let cliDirectory = (cliPath as NSString).deletingLastPathComponent
             try fm.createDirectory(atPath: cliDirectory, withIntermediateDirectories: true)
-            if fm.fileExists(atPath: cliPath)
-                || (try? fm.destinationOfSymbolicLink(atPath: cliPath)) != nil {
-                try fm.removeItem(atPath: cliPath)
-            }
+            try removeCLIPathIfPresent(fileManager: fm)
             try fm.createSymbolicLink(atPath: cliPath, withDestinationPath: installPath)
         } catch {
             throw UpdateError.installFailed(error.localizedDescription)
         }
+    }
+
+    private func removeCLIPathIfPresent(fileManager: FileManager) throws {
+        var isDirectory: ObjCBool = false
+        let exists = fileManager.fileExists(atPath: cliPath, isDirectory: &isDirectory)
+        let isSymbolicLink = (try? fileManager.destinationOfSymbolicLink(atPath: cliPath)) != nil
+        guard exists || isSymbolicLink else { return }
+        guard !isDirectory.boolValue || isSymbolicLink else {
+            throw CLIPathError.isDirectory(cliPath)
+        }
+        try fileManager.removeItem(atPath: cliPath)
     }
 
     /// Reload the LaunchAgent (which relaunches a fresh instance) and quit. If no

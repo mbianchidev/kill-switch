@@ -7,6 +7,11 @@ CLI_PATH="$INSTALL_DIR/killswitchctl"
 PLIST_SRC="io.killswitch.agent.plist"
 PLIST_DST="$HOME/Library/LaunchAgents/io.killswitch.agent.plist"
 
+[ ! -d "$CLI_PATH" ] || [ -L "$CLI_PATH" ] || {
+  echo "❌ Refusing to replace directory at $CLI_PATH. Move it and rerun the update." >&2
+  exit 1
+}
+
 echo "🔄 Updating KillSwitch..."
 
 echo "📥 Pulling latest..."
