@@ -72,8 +72,9 @@ therefore treats any published release as an update.
 
 The updater refuses to replace a real directory at the configured KillSwitch
 binary path, and it only replaces or removes `~/bin/killswitchctl` when that path
-is a symlink. User-owned files and directories at either managed path are
-preserved with a clear error.
+is a symlink. Existing binary files and symlinks can be replaced safely; real
+directories at the binary path and all non-symlinks at the CLI path are preserved
+with a clear error.
 
 The command-line alias is intentionally not a second release artifact. The single
 `KillSwitch` binary selects headless mode only when its invocation basename is

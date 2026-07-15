@@ -19,6 +19,29 @@ PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
 log() { echo "$1"; }
 die() { echo "❌ $1" >&2; exit 1; }
 
+validate_install_path() {
+  [ ! -d "$INSTALL_PATH" ] || [ -L "$INSTALL_PATH" ] \
+    || die "Refusing to replace directory at $INSTALL_PATH. Move it and rerun the installer."
+}
+
+install_binary() {
+  local source="$1"
+  local staged
+
+  validate_install_path
+  mkdir -p "$INSTALL_DIR"
+  staged="$(mktemp "$INSTALL_DIR/.KillSwitch.XXXXXX")" \
+    || die "Could not create a staged install file in $INSTALL_DIR."
+  cp "$source" "$staged" \
+    || { rm -f "$staged"; die "Could not stage the KillSwitch binary."; }
+  chmod +x "$staged" \
+    || { rm -f "$staged"; die "Could not make the staged KillSwitch binary executable."; }
+  validate_install_path
+  mv -fh "$staged" "$INSTALL_PATH" \
+    || { rm -f "$staged"; die "Could not replace $INSTALL_PATH."; }
+}
+
+validate_install_path
 [ ! -e "$CLI_PATH" ] || [ -L "$CLI_PATH" ] \
   || die "Refusing to replace non-symlink at $CLI_PATH. Move it and rerun the installer."
 
@@ -38,9 +61,7 @@ build_from_source() {
   command -v swift >/dev/null 2>&1 || die "Swift not found. Install Xcode Command Line Tools or use the release installer."
   log "🔨 Building KillSwitch from source..."
   swift build -c release --product KillSwitch
-  mkdir -p "$INSTALL_DIR"
-  cp ".build/release/KillSwitch" "$INSTALL_PATH"
-  chmod +x "$INSTALL_PATH"
+  install_binary ".build/release/KillSwitch"
 }
 
 download_release() {
@@ -70,9 +91,7 @@ download_release() {
   printf '%s  %s\n' "$expected" "$tmp" | shasum -a 256 -c - >/dev/null 2>&1 \
     || die "Checksum verification failed — refusing to install."
 
-  mkdir -p "$INSTALL_DIR"
-  cp "$tmp" "$INSTALL_PATH"
-  chmod +x "$INSTALL_PATH"
+  install_binary "$tmp"
   trap - RETURN
   cleanup_download_release
   trap - EXIT

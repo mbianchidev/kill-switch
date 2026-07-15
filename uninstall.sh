@@ -5,6 +5,11 @@ INSTALL_PATH="$HOME/bin/KillSwitch"
 CLI_PATH="$HOME/bin/killswitchctl"
 PLIST_DST="$HOME/Library/LaunchAgents/io.killswitch.agent.plist"
 
+[ ! -d "$INSTALL_PATH" ] || [ -L "$INSTALL_PATH" ] || {
+  echo "❌ Refusing to remove directory at $INSTALL_PATH. Move it and rerun uninstall." >&2
+  exit 1
+}
+
 [ ! -e "$CLI_PATH" ] || [ -L "$CLI_PATH" ] || {
   echo "❌ Refusing to remove non-symlink at $CLI_PATH. Move it and rerun uninstall." >&2
   exit 1
