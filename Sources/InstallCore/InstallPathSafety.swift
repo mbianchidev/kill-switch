@@ -14,6 +14,11 @@ public enum InstallPathSafetyError: LocalizedError, Equatable {
     }
 }
 
+public enum ManagedSymbolicLinkRemovalResult: Equatable {
+    case absent
+    case removed
+}
+
 public enum InstallPathSafety {
     public static func validateReplaceableBinary(
         at path: String,
@@ -49,16 +54,18 @@ public enum InstallPathSafety {
         }
     }
 
+    @discardableResult
     public static func removeManagedSymbolicLinkIfPresent(
         at path: String,
         fileManager: FileManager = .default
-    ) throws {
+    ) throws -> ManagedSymbolicLinkRemovalResult {
         let kind = inspect(path, fileManager: fileManager)
         switch kind {
         case .absent:
-            return
+            return .absent
         case .symbolicLink:
             try fileManager.removeItem(atPath: path)
+            return .removed
         case .directory, .other:
             throw InstallPathSafetyError.occupiedNonSymbolicLink(path)
         }

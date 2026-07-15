@@ -17,6 +17,7 @@ struct InstallCoreCheckRunner {
             try checkSymlinkReplacement(root: root)
             try checkDanglingSymlinkReplacement(root: root)
             try checkManagedPathProtection(root: root)
+            try checkManagedSymlinkRemovalResults(root: root)
         } catch {
             fail("unexpected setup error: \(error.localizedDescription)")
         }
@@ -100,9 +101,41 @@ struct InstallCoreCheckRunner {
                 "managed-path error text is clear"
             )
         }
+
         check(
             FileManager.default.fileExists(atPath: path.path),
             "managed path preserves a regular file"
+        )
+    }
+
+    private mutating func checkManagedSymlinkRemovalResults(root: URL) throws {
+        let target = root.appendingPathComponent("managed-target")
+        let link = root.appendingPathComponent("killswitchctl-existing")
+        try Data("binary".utf8).write(to: target)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+
+        let removed = try InstallPathSafety.removeManagedSymbolicLinkIfPresent(at: link.path)
+        check(removed == .removed, "existing managed symlink reports removal")
+        check(
+            (try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) == nil,
+            "existing managed symlink is removed"
+        )
+
+        let absent = try InstallPathSafety.removeManagedSymbolicLinkIfPresent(at: link.path)
+        check(absent == .absent, "absent managed symlink reports a no-op")
+
+        let dangling = root.appendingPathComponent("killswitchctl-dangling")
+        try FileManager.default.createSymbolicLink(
+            atPath: dangling.path,
+            withDestinationPath: root.appendingPathComponent("missing-managed-target").path
+        )
+        let danglingRemoved = try InstallPathSafety.removeManagedSymbolicLinkIfPresent(
+            at: dangling.path
+        )
+        check(danglingRemoved == .removed, "dangling managed symlink reports removal")
+        check(
+            (try? FileManager.default.destinationOfSymbolicLink(atPath: dangling.path)) == nil,
+            "dangling managed symlink is removed"
         )
     }
 

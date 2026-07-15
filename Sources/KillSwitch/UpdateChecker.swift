@@ -248,7 +248,16 @@ final class UpdateChecker: ObservableObject {
         do {
             try InstallPathSafety.validateManagedSymbolicLink(at: cliPath, fileManager: fm)
             try InstallPathSafety.validateReplaceableBinary(at: binary, fileManager: fm)
-            try InstallPathSafety.removeManagedSymbolicLinkIfPresent(at: cliPath, fileManager: fm)
+            let cliRemoval = try InstallPathSafety.removeManagedSymbolicLinkIfPresent(
+                at: cliPath,
+                fileManager: fm
+            )
+            switch cliRemoval {
+            case .removed:
+                log("Removed CLI symlink: \(cliPath)")
+            case .absent:
+                log("Skipped CLI symlink removal: no symlink at \(cliPath)")
+            }
             try InstallPathSafety.removeReplaceableBinaryIfPresent(at: binary, fileManager: fm)
         } catch {
             throw UpdateError.uninstallFailed(error.localizedDescription)
@@ -262,7 +271,7 @@ final class UpdateChecker: ObservableObject {
             }
         }
 
-        log("Uninstalled: removed \(binary), \(cliPath), and LaunchAgent")
+        log("Uninstall complete")
     }
 
     // MARK: Check
