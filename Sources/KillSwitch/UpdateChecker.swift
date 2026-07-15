@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import SwiftUI
 import CryptoKit
+import InstallCore
 
 // MARK: - Models
 
@@ -107,6 +108,9 @@ final class UpdateChecker: ObservableObject {
     private let agentPlistPath = FileManager.default
         .homeDirectoryForCurrentUser
         .appendingPathComponent("Library/LaunchAgents/io.killswitch.agent.plist").path
+    private let cliPath = FileManager.default
+        .homeDirectoryForCurrentUser
+        .appendingPathComponent("bin/killswitchctl").path
 
     /// Where the updated binary is written. We target whatever the LaunchAgent
     /// actually launches (its first `ProgramArguments` entry), so the binary we
@@ -241,12 +245,22 @@ final class UpdateChecker: ObservableObject {
         }
 
         let binary = installPath
-        if fm.fileExists(atPath: binary) {
-            do {
-                try fm.removeItem(atPath: binary)
-            } catch {
-                throw UpdateError.uninstallFailed("could not remove \(binary): \(error.localizedDescription)")
+        do {
+            try InstallPathSafety.validateManagedSymbolicLink(at: cliPath, fileManager: fm)
+            try InstallPathSafety.validateReplaceableBinary(at: binary, fileManager: fm)
+            let cliRemoval = try InstallPathSafety.removeManagedSymbolicLinkIfPresent(
+                at: cliPath,
+                fileManager: fm
+            )
+            switch cliRemoval {
+            case .removed:
+                log("Removed CLI symlink: \(cliPath)")
+            case .absent:
+                log("Skipped CLI symlink removal: no symlink at \(cliPath)")
             }
+            try InstallPathSafety.removeReplaceableBinaryIfPresent(at: binary, fileManager: fm)
+        } catch {
+            throw UpdateError.uninstallFailed(error.localizedDescription)
         }
 
         if fm.fileExists(atPath: agentPlistPath) {
@@ -257,7 +271,7 @@ final class UpdateChecker: ObservableObject {
             }
         }
 
-        log("Uninstalled: removed \(binary) and LaunchAgent")
+        log("Uninstall complete")
     }
 
     // MARK: Check
@@ -431,14 +445,21 @@ final class UpdateChecker: ObservableObject {
     /// that writes it always agree.
     private func installBinary(from src: URL) throws {
         let fm = FileManager.default
-        let dir = (installPath as NSString).deletingLastPathComponent
+        let targetPath = installPath
+        let dir = (targetPath as NSString).deletingLastPathComponent
         do {
+            let cliDirectory = (cliPath as NSString).deletingLastPathComponent
+            try InstallPathSafety.validateManagedSymbolicLink(at: cliPath, fileManager: fm)
+            try InstallPathSafety.validateReplaceableBinary(at: targetPath, fileManager: fm)
+            try fm.createDirectory(atPath: cliDirectory, withIntermediateDirectories: true)
             try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
-            if fm.fileExists(atPath: installPath) {
-                try fm.removeItem(atPath: installPath)
-            }
-            try fm.copyItem(atPath: src.path, toPath: installPath)
-            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: installPath)
+            try InstallPathSafety.removeManagedSymbolicLinkIfPresent(at: cliPath, fileManager: fm)
+            try InstallPathSafety.removeReplaceableBinaryIfPresent(at: targetPath, fileManager: fm)
+            try fm.copyItem(atPath: src.path, toPath: targetPath)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: targetPath)
+            try fm.createSymbolicLink(atPath: cliPath, withDestinationPath: targetPath)
+        } catch let error as UpdateError {
+            throw error
         } catch {
             throw UpdateError.installFailed(error.localizedDescription)
         }

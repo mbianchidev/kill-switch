@@ -6,8 +6,16 @@ let package = Package(
     platforms: [.macOS(.v13)],
     targets: [
         .target(
+            name: "DevCleanupCore",
+            path: "Sources/DevCleanupCore"
+        ),
+        .target(
             name: "KeepAwakeCore",
             path: "Sources/KeepAwakeCore"
+        ),
+        .target(
+            name: "InstallCore",
+            path: "Sources/InstallCore"
         ),
         .target(
             name: "SystemMetricsCore",
@@ -15,8 +23,18 @@ let package = Package(
         ),
         .executableTarget(
             name: "KillSwitch",
-            dependencies: ["KeepAwakeCore", "SystemMetricsCore"],
+            dependencies: ["DevCleanupCore", "InstallCore", "KeepAwakeCore", "SystemMetricsCore"],
             path: "Sources/KillSwitch"
+        ),
+        .executableTarget(
+            name: "DevCleanupCoreChecks",
+            dependencies: ["DevCleanupCore"],
+            path: "Tests/DevCleanupCoreChecks"
+        ),
+        .executableTarget(
+            name: "InstallCoreChecks",
+            dependencies: ["InstallCore"],
+            path: "Tests/InstallCoreChecks"
         ),
         .executableTarget(
             name: "SystemMetricsChecks",

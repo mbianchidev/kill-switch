@@ -57,7 +57,7 @@ jobs:
           EOF
 
       - name: Build (release)
-        run: swift build -c release
+        run: swift build -c release --product KillSwitch
 
       - name: Package artifacts
         run: |

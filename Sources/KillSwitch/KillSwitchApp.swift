@@ -2,7 +2,6 @@ import SwiftUI
 import AppKit
 import KeepAwakeCore
 
-@main
 struct KillSwitchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 

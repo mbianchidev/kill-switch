@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import DevCleanupCore
 
 /// Shared helpers for sampling running processes via `ps` / `lsof`.
 ///
@@ -41,9 +42,11 @@ enum ProcessSampler {
 
     /// Fetch every process with its owner, elapsed time and full command line.
     static func fetchDetailed() -> [Detailed] {
-        guard let output = runProcess("/bin/ps", ["-axo", "pid,ppid,user,etime,args"]) else {
-            return []
-        }
+        (try? fetchDetailedThrowing()) ?? []
+    }
+
+    static func fetchDetailedThrowing() throws -> [Detailed] {
+        let output = try runProcessThrowing("/bin/ps", ["-axo", "pid,ppid,user,etime,args"])
         var result: [Detailed] = []
         for line in output.components(separatedBy: "\n").dropFirst() {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -70,8 +73,19 @@ enum ProcessSampler {
 
     /// Map of pid -> set of TCP ports the process is listening on.
     static func listeningPorts() -> [Int32: Set<Int>] {
-        guard let output = runProcess("/usr/sbin/lsof", ["-nP", "-iTCP", "-sTCP:LISTEN"]) else {
-            return [:]
+        (try? listeningPortsThrowing()) ?? [:]
+    }
+
+    static func listeningPortsThrowing() throws -> [Int32: Set<Int>] {
+        let output: String
+        do {
+            output = try runProcessThrowing("/usr/sbin/lsof", ["-nP", "-iTCP", "-sTCP:LISTEN"])
+        } catch let error as ProcessSamplerError {
+            if case .commandFailed(_, 1, _) = error, error.cleanedStandardError == nil {
+                // lsof uses status 1 with no stderr for a valid query with no matches.
+                return [:]
+            }
+            throw error
         }
         var map: [Int32: Set<Int>] = [:]
         for line in output.components(separatedBy: "\n").dropFirst() {
@@ -223,10 +237,34 @@ enum ProcessSampler {
     // MARK: - Helpers
 
     private static func runProcess(_ launchPath: String, _ arguments: [String]) -> String? {
-        guard let result = try? CommandRunner.run(launchPath, arguments: arguments) else { return nil }
+        guard let result = try? CommandRunner.run(launchPath, arguments: arguments) else {
+            return nil
+        }
         if result.succeeded || !result.standardOutput.isEmpty {
             return result.standardOutput
         }
         return nil
+    }
+
+    private static func runProcessThrowing(_ launchPath: String, _ arguments: [String]) throws -> String {
+        let result: CommandResult
+        do {
+            result = try CommandRunner.run(launchPath, arguments: arguments)
+        } catch let runnerError as CommandRunnerError {
+            switch runnerError {
+            case .launchFailed(_, let underlying):
+                throw ProcessSamplerError.launchFailed(launchPath, underlying.localizedDescription)
+            }
+        } catch {
+            throw ProcessSamplerError.launchFailed(launchPath, error.localizedDescription)
+        }
+        guard result.succeeded else {
+            throw ProcessSamplerError.commandFailed(
+                launchPath,
+                result.status,
+                result.standardError
+            )
+        }
+        return result.standardOutput
     }
 }

@@ -26,7 +26,7 @@ below). Versions are compared component-wise as integers, ignoring a leading `v`
 1. Compute the next version by bumping the patch of the latest release
    (`gh release view`), e.g. `v1.1.0` → `v1.1.1`.
 2. Overwrite `Sources/KillSwitch/Version.swift` with the computed version.
-3. `swift build -c release`.
+3. `swift build -c release --product KillSwitch`.
 4. Package the binary (`KillSwitch`) and a `KillSwitch.tar.gz`, and write a
    `KillSwitch.sha256` containing the binary's SHA-256 digest.
 5. `gh release create` publishes the release with all three assets attached and
@@ -65,9 +65,20 @@ therefore treats any published release as an update.
   `ProgramArguments` (falling back to `~/bin/KillSwitch`). Targeting the agent's
   own launch path guarantees the relaunched binary is the one we just wrote, so
   the install and relaunch can never disagree (the cause of the pre-1.1.2 update
-  loop). It then fixes permissions, reloads the LaunchAgent, and relaunches. The
-  install path lives in the user's home directory, so no admin password is
-  required. Temp files are cleaned up and failures are reported clearly.
+  loop). It then refreshes `~/bin/killswitchctl` as a symlink to that same binary,
+  fixes permissions, reloads the LaunchAgent, and relaunches. The install path
+  lives in the user's home directory, so no admin password is required. Temp
+  files are cleaned up and failures are reported clearly.
+
+The updater refuses to replace a real directory at the configured KillSwitch
+binary path, and it only replaces or removes `~/bin/killswitchctl` when that path
+is a symlink. Existing binary files and symlinks can be replaced safely; real
+directories at the binary path and all non-symlinks at the CLI path are preserved
+with a clear error.
+
+The command-line alias is intentionally not a second release artifact. The single
+`KillSwitch` binary selects headless mode only when its invocation basename is
+`killswitchctl`, keeping release packaging and checksum verification unchanged.
 
 Update activity is logged to `~/Library/Logs/killswitch-update.log`.
 

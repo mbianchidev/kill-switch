@@ -20,8 +20,14 @@ jobs:
       - name: Show Swift version
         run: swift --version
 
+      - name: Dev cleanup core checks
+        run: swift run DevCleanupCoreChecks
+
+      - name: Install path safety checks
+        run: swift run InstallCoreChecks
+
       - name: Test system metric parsers
         run: swift run SystemMetricsChecks
 
       - name: Build (release)
-        run: swift build -c release
+        run: swift build -c release --product KillSwitch
