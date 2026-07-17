@@ -223,15 +223,15 @@ enum ProcessSampler {
     // MARK: - Native notifications
 
     /// Post a native macOS notification via `osascript` (same mechanism as the
-    /// shell watchdog scripts, which works for a non-bundled binary). Quotes are
-    /// sanitized so user-supplied process names can't break the AppleScript.
+    /// shell watchdog scripts, which works for a non-bundled binary). Values use
+    /// shared AppleScript literal escaping so process names cannot alter the script.
     @discardableResult
     static func notify(title: String, subtitle: String, body: String) -> Bool {
-        func clean(_ s: String) -> String {
-            s.replacingOccurrences(of: "\"", with: "'")
-             .replacingOccurrences(of: "\\", with: "/")
-        }
-        let script = "display notification \"\(clean(body))\" with title \"\(clean(title))\" subtitle \"\(clean(subtitle))\""
+        let script = """
+        display notification \(CommandRunner.appleScriptLiteral(body)) \
+        with title \(CommandRunner.appleScriptLiteral(title)) \
+        subtitle \(CommandRunner.appleScriptLiteral(subtitle))
+        """
         guard let result = try? CommandRunner.run("/usr/bin/osascript", arguments: ["-e", script]) else {
             return false
         }
