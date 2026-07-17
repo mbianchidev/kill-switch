@@ -92,7 +92,7 @@ final class ScreenTimeMonitor: ObservableObject {
         guard timer == nil else { return }
         installWorkspaceObservers()
         activity = ProcessInfo.processInfo.beginActivity(
-            options: [.userInitiated, .automaticTerminationDisabled],
+            options: [.background, .automaticTerminationDisabled],
             reason: "Monitoring active screen time"
         )
         sampleNow()

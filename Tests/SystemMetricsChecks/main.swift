@@ -13,6 +13,9 @@ struct SystemMetricsChecks {
         checkNetworkTotalsParsing()
         checkBatteryPressureAndAssertions()
         checkByteAndDurationParsing()
+        checkPSProcessParsing()
+        checkCPUCalculations()
+        checkSamplingPolicies()
 
         if failures.isEmpty {
             print("SystemMetricsChecks: \(checkCount) checks passed")
@@ -145,6 +148,83 @@ struct SystemMetricsChecks {
             SystemMetricsParser.parseCPUTime("2-01:02:03").map { approximately($0, 176_523) } == true,
             "day CPU duration"
         )
+    }
+
+    private static func checkPSProcessParsing() {
+        let output = """
+             1 root             Ss     0.0  52:23.69  19664 /sbin/launchd
+           181 mbianchidev      RN    12.5   0:01.29   6832 npm exec @microsoft/workiq mcp
+        malformed row
+        """
+
+        let processes = SystemMetricsParser.parsePSProcesses(output)
+        check(processes.count == 2, "ps process row count")
+        check(processes[0].pid == 1, "ps PID")
+        check(processes[0].user == "root", "ps user")
+        check(!processes[0].isRunning, "ps sleeping state")
+        check(processes[1].isRunning, "ps running state")
+        check(approximately(processes[1].cpu, 12.5), "ps process CPU")
+        check(approximately(processes[1].cpuTimeSeconds, 1.29), "ps process CPU time")
+        check(processes[1].memoryBytes == 6_832 * 1_024, "ps memory bytes")
+        check(processes[1].command == "npm exec @microsoft/workiq mcp", "ps command with spaces")
+    }
+
+    private static func checkCPUCalculations() {
+        let previous = SystemCPUTicks(user: 100, nice: 50, system: 100, idle: 250)
+        let current = SystemCPUTicks(user: 300, nice: 100, system: 200, idle: 400)
+        let usage = SystemMetricsCalculator.systemCPUUsage(current: current, previous: previous)
+
+        check(approximately(usage.userPercent, 50), "system user CPU delta")
+        check(approximately(usage.systemPercent, 20), "system CPU delta")
+        check(approximately(usage.idlePercent, 30), "system idle CPU delta")
+        check(
+            SystemMetricsCalculator.processCPUPercent(
+                currentNanoseconds: 5_000_000_000,
+                previousNanoseconds: 2_000_000_000,
+                elapsedSeconds: 2
+            ).map { approximately($0, 150) } == true,
+            "multi-core process CPU delta"
+        )
+        check(
+            SystemMetricsCalculator.processCPUPercent(
+                currentNanoseconds: 1,
+                previousNanoseconds: 2,
+                elapsedSeconds: 1
+            ) == nil,
+            "process CPU counter regression"
+        )
+        check(
+            SystemMetricsCalculator.processCPUPercent(
+                currentNanoseconds: 2,
+                previousNanoseconds: 1,
+                elapsedSeconds: 0.01
+            ) == nil,
+            "process CPU minimum interval"
+        )
+    }
+
+    private static func checkSamplingPolicies() {
+        let cpu = ResourceSamplingPolicy.forMetric(.cpu)
+        check(!cpu.usesTop, "CPU avoids top")
+        check(!cpu.collectsNetwork, "CPU avoids network subprocesses")
+        check(!cpu.collectsMemoryPressure, "CPU avoids memory-pressure subprocess")
+        check(cpu.intervalSeconds == 6, "CPU refresh interval")
+
+        let memory = ResourceSamplingPolicy.forMetric(.memory)
+        check(memory.collectsMemoryPressure, "memory collects pressure")
+        check(!memory.usesTop, "memory avoids top")
+
+        let energy = ResourceSamplingPolicy.forMetric(.energy)
+        check(energy.usesTop, "energy uses top power sampling")
+        check(energy.collectsEnergyDetails, "energy collects battery and assertions")
+        check(energy.intervalSeconds == 15, "energy reduced refresh cadence")
+
+        let network = ResourceSamplingPolicy.forMetric(.network)
+        check(network.collectsNetwork, "network enables network subprocesses")
+        check(!network.usesTop, "network avoids top")
+
+        let disk = ResourceSamplingPolicy.forMetric(.disk)
+        check(!disk.usesTop && !disk.collectsNetwork, "disk uses native collection")
     }
 
     private static func check(_ condition: @autoclosure () -> Bool, _ message: String) {

@@ -27,6 +27,16 @@ public struct ParsedTopSnapshot {
     public let cpu: ParsedCPUSummary
 }
 
+public struct ParsedPSProcess {
+    public let pid: Int32
+    public let user: String
+    public let isRunning: Bool
+    public let cpu: Double
+    public let cpuTimeSeconds: Double
+    public let memoryBytes: UInt64
+    public let command: String
+}
+
 public struct ParsedNetworkProcess {
     public let receivedPackets: UInt64
     public let receivedBytes: UInt64
@@ -166,6 +176,41 @@ public enum SystemMetricsParser {
                 receivedBytes: UInt64(fields[2]) ?? 0,
                 sentPackets: UInt64(fields[3]) ?? 0,
                 sentBytes: UInt64(fields[4]) ?? 0
+            )
+        }
+
+        return result
+    }
+
+    public static func parsePSProcesses(_ output: String) -> [ParsedPSProcess] {
+        var result: [ParsedPSProcess] = []
+
+        for line in output.components(separatedBy: .newlines) {
+            let fields = line.split(
+                maxSplits: 6,
+                omittingEmptySubsequences: true,
+                whereSeparator: { $0.isWhitespace }
+            ).map(String.init)
+            guard
+                fields.count == 7,
+                let pid = Int32(fields[0]),
+                let cpu = parseDouble(fields[3]),
+                let cpuTime = parseCPUTime(fields[4]),
+                let residentKB = UInt64(fields[5])
+            else {
+                continue
+            }
+
+            result.append(
+                ParsedPSProcess(
+                    pid: pid,
+                    user: fields[1],
+                    isRunning: fields[2].first == "R",
+                    cpu: cpu,
+                    cpuTimeSeconds: cpuTime,
+                    memoryBytes: residentKB * 1_024,
+                    command: fields[6]
+                )
             )
         }
 
