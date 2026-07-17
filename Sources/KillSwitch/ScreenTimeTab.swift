@@ -261,7 +261,7 @@ struct ScreenTimeTab: View {
 
     private var nextReminderDetail: String {
         monitor.remindersEnabled
-            ? "A touch-grass reminder will fire after this much more active time."
+            ? "A \"Touch grass\" reminder will fire after this much more active time."
             : "Enable reminders below to build progress toward a break."
     }
 

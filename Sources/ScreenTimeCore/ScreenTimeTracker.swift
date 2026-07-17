@@ -83,7 +83,6 @@ public struct ScreenTimeTracker {
             )
         }
 
-        snapshot.lastSampleDate = now
         let elapsed = now.timeIntervalSince(previousSample)
         guard elapsed > 0 else {
             return ScreenTimeUpdate(
@@ -93,6 +92,7 @@ public struct ScreenTimeTracker {
                 isActive: isActive
             )
         }
+        snapshot.lastSampleDate = now
 
         if idleSeconds >= Self.breakIdleThreshold || elapsed >= Self.breakIdleThreshold {
             let didReset = snapshot.currentStretchSeconds > 0

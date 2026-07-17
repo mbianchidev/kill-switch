@@ -20,6 +20,7 @@ struct ScreenTimeCoreChecks {
         checkDayRollover()
         checkReminderBoundaries()
         checkIntervalChangeDoesNotBackfire()
+        checkOutOfOrderSamples()
         checkRestartGapAndForcedBreak()
 
         if failures.isEmpty {
@@ -243,6 +244,37 @@ struct ScreenTimeCoreChecks {
         let forced = tracker.endStretch(at: start.addingTimeInterval(5), calendar: calendar)
         check(forced.didResetStretch, "sleep or lock can force a stretch reset")
         check(tracker.snapshot.currentStretchSeconds == 0, "forced break clears the stretch")
+    }
+
+    private static func checkOutOfOrderSamples() {
+        let start = date(2026, 7, 16, 12, 0, 0)
+        var tracker = ScreenTimeTracker(
+            snapshot: ScreenTimeSnapshot(
+                dayStart: calendar.startOfDay(for: start),
+                activeSecondsToday: 60,
+                currentStretchSeconds: 60,
+                lastSampleDate: start
+            ),
+            now: start,
+            calendar: calendar
+        )
+
+        let backwards = tracker.sample(
+            at: start.addingTimeInterval(-10),
+            idleSeconds: 0,
+            reminderInterval: nil,
+            calendar: calendar
+        )
+        check(backwards.creditedSeconds == 0, "out-of-order sample is not credited")
+        check(tracker.snapshot.lastSampleDate == start, "out-of-order sample does not move the baseline backwards")
+
+        let forward = tracker.sample(
+            at: start.addingTimeInterval(10),
+            idleSeconds: 0,
+            reminderInterval: nil,
+            calendar: calendar
+        )
+        check(forward.creditedSeconds == 10, "next valid sample uses the last accepted baseline")
     }
 
     private static func date(
