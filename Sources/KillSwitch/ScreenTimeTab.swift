@@ -84,7 +84,7 @@ struct ScreenTimeTab: View {
             Circle()
                 .stroke(Color.white.opacity(0.08), lineWidth: 12)
             Circle()
-                .trim(from: 0, to: monitor.remindersEnabled ? max(0.002, monitor.reminderProgress) : 0)
+                .trim(from: 0, to: displayedReminderProgress)
                 .stroke(
                     Theme.screenTime,
                     style: StrokeStyle(lineWidth: 12, lineCap: .round)
@@ -129,6 +129,8 @@ struct ScreenTimeTab: View {
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .tint(Theme.screenTime)
+                    .accessibilityLabel("Break reminders")
+                    .accessibilityHint("Send a notification when the active stretch reaches the selected interval.")
             }
 
             Divider().overlay(Color.white.opacity(0.08))
@@ -257,6 +259,11 @@ struct ScreenTimeTab: View {
     private var nextReminderValue: String {
         guard let seconds = monitor.secondsUntilReminder else { return "Off" }
         return duration(seconds)
+    }
+
+    private var displayedReminderProgress: Double {
+        guard monitor.remindersEnabled, monitor.reminderProgress > 0 else { return 0 }
+        return max(0.002, monitor.reminderProgress)
     }
 
     private var nextReminderDetail: String {
