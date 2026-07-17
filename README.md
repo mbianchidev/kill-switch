@@ -9,6 +9,7 @@ A macOS resource manager with automation useful for the AI era. It provides Acti
 - Activity Monitor-style CPU, memory, energy, disk, and network process views
 - Defaults to the logged-in user's processes; switch to all processes to include root and other users
 - Live five-minute graphs plus system-wide summary counters for every resource mode
+- Low-overhead native CPU, memory, and disk sampling; heavyweight collectors run only for the selected metric
 - Shows application icons and full executable names where macOS exposes them
 - Filter by process, PID, or user and sort by the active resource
 - One-click process termination (SIGTERM, falls back to SIGKILL)
@@ -31,15 +32,18 @@ A macOS resource manager with automation useful for the AI era. It provides Acti
 One dense, live process table with five modes:
 
 - **CPU** — % CPU, CPU time, threads, idle wakeups, architecture kind, PID, and user, plus a stacked user/system CPU graph.
-- **Memory** — physical footprint, threads, ports, PID, and user, plus memory pressure, physical memory, app memory, cached files, wired memory, compression, and swap.
+- **Memory** — physical footprint, threads, open files, PID, and user, plus memory pressure, physical memory, app memory, cached files, wired memory, compression, and swap.
 - **Energy** — current energy impact, rolling power history, sleep prevention, battery charge, and power-source status.
 - **Disk** — per-process bytes read/written, system operation totals, and live read/write throughput.
 - **Network** — per-process bytes and packets sent/received, system totals, and live inbound/outbound throughput.
 
-The table samples every six seconds. **My processes** is the default scope; choose
-**All processes** to include system and other-user processes. macOS can restrict
-disk, architecture, GPU, and App Nap values for protected processes, so unavailable
-fields display an em dash instead of fabricated data.
+CPU, memory, disk, and network views sample every six seconds; Energy samples every
+15 seconds because macOS requires a substantially heavier power collector. Sampling
+continues while the main window is hidden so live data and history keep flowing.
+**My processes** is the default scope; choose **All processes** to include system and
+other-user processes. macOS can restrict disk, architecture, open-file, GPU, and App
+Nap values for protected processes, so unavailable fields display an em dash instead
+of fabricated data.
 
 ### Dev cleanup
 
@@ -113,7 +117,7 @@ Closing the main window with the red close button does **not** quit the app — 
 the window and drops the Dock icon, leaving only the menu bar icon. Re-open it from the
 menu bar item (or by clicking the Dock icon if visible). To fully quit, use **Quit
 KillSwitch** from the menu bar. CPU watchdog and screen-time monitoring continue while
-the window is hidden.
+the window is hidden, as does an active Resources sampler.
 
 ## Requirements
 
@@ -279,7 +283,7 @@ To exercise the headless mode from a source checkout, invoke the binary through 
 - SwiftUI + Swift Charts (live resource graphs)
 - AppKit (`NSWorkspace`) for application icons; `NSStatusItem` for the menu bar (tray) icon
 - CoreGraphics idle-input timing plus `NSWorkspace` sleep, display, and session notifications for screen-time tracking
-- macOS process and resource APIs (`top`, `libproc`, Mach VM statistics, IOKit, `nettop`, `netstat`, `pmset`)
+- Native macOS process and resource APIs (`libproc`, Mach CPU/VM statistics, IOKit), with `top`, `nettop`, `netstat`, and `pmset` activated only for metrics that require them
 - `osascript` for native notifications, privileged diagnostics, and privileged self-update
 - `URLSession` (async/await) + GitHub Releases API for in-app updates
 - GitHub Actions for continuous releases on every push to `main`

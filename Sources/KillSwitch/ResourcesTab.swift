@@ -2,7 +2,7 @@ import Charts
 import SwiftUI
 
 struct ResourcesTab: View {
-    @StateObject private var monitor = ResourceMonitor()
+    @ObservedObject var monitor: ResourceMonitor
     @State private var metric: ResourceMetric = .cpu
     @State private var sort: ResourceSort = .cpu
     @State private var searchText = ""
@@ -17,10 +17,9 @@ struct ResourcesTab: View {
             instrumentRail
         }
         .background(Theme.background)
-        .onAppear { monitor.start() }
-        .onDisappear { monitor.stop() }
         .onChange(of: metric) { newMetric in
             sort = ResourceSort.defaultOption(for: newMetric)
+            monitor.setMetric(newMetric)
         }
     }
 
@@ -144,7 +143,11 @@ struct ResourcesTab: View {
                     .tracking(1.2)
                     .foregroundColor(.white.opacity(0.5))
 
-                ResourceHistoryChart(metric: metric, history: monitor.history, pressure: monitor.memory.pressurePercent)
+                ResourceHistoryChart(
+                    metric: metric,
+                    history: monitor.history[metric] ?? [],
+                    pressure: monitor.memory.pressurePercent
+                )
                     .frame(minWidth: 320, idealWidth: 390, maxWidth: 440, minHeight: 105, maxHeight: 105)
             }
 
@@ -317,7 +320,7 @@ private struct ResourceTableHeader: View {
             case .memory:
                 ResourceTableCell("Memory", width: 100, isHeader: true)
                 ResourceTableCell("Threads", width: 76, isHeader: true)
-                ResourceTableCell("Ports", width: 72, isHeader: true)
+                ResourceTableCell("Open Files", width: 86, isHeader: true)
                 ResourceTableCell("PID", width: 72, isHeader: true)
                 ResourceTableCell("User", width: 140, alignment: .leading, isHeader: true)
             case .energy:
@@ -363,7 +366,11 @@ private struct ResourceProcessRow: View {
             case .cpu:
                 value(String(format: "%.1f", process.cpu), width: 72, color: Theme.cpuUser)
                 value(formatDuration(process.cpuTimeSeconds), width: 98)
-                value("\(process.threads)", width: 72)
+                value(
+                    process.threads.map(String.init) ?? "—",
+                    width: 72,
+                    help: unavailableHelp(process.threads)
+                )
                 value(process.idleWakeUps.map(formatNumber) ?? "—", width: 104)
                 value(process.kind ?? "—", width: 72, help: unavailableHelp(process.kind))
                 value(process.gpu.map { String(format: "%.1f", $0) } ?? "—", width: 72, help: gpuHelp)
@@ -376,8 +383,16 @@ private struct ResourceProcessRow: View {
                 value(process.user, width: 140, alignment: .leading)
             case .memory:
                 value(formatBytes(process.memoryBytes), width: 100, color: Theme.memory)
-                value("\(process.threads)", width: 76)
-                value("\(process.ports)", width: 72)
+                value(
+                    process.threads.map(String.init) ?? "—",
+                    width: 76,
+                    help: unavailableHelp(process.threads)
+                )
+                value(
+                    process.openFileCount.map(String.init) ?? "—",
+                    width: 86,
+                    help: unavailableHelp(process.openFileCount)
+                )
                 value("\(process.pid)", width: 72)
                 value(process.user, width: 140, alignment: .leading)
             case .energy:
@@ -563,15 +578,15 @@ private struct ResourceHistoryChart: View {
                 AreaMark(
                     x: .value("Time", point.date),
                     yStart: .value("Start", 0),
-                    yEnd: .value("System", point.cpuSystem)
+                    yEnd: .value("System", point.primary)
                 )
                 .foregroundStyle(Theme.cpuSystem.opacity(0.62))
                 .interpolationMethod(.monotone)
 
                 AreaMark(
                     x: .value("Time", point.date),
-                    yStart: .value("System", point.cpuSystem),
-                    yEnd: .value("User", point.cpuSystem + point.cpuUser)
+                    yStart: .value("System", point.primary),
+                    yEnd: .value("User", point.primary + (point.secondary ?? 0))
                 )
                 .foregroundStyle(Theme.cpuUser.opacity(0.62))
                 .interpolationMethod(.monotone)
@@ -581,14 +596,14 @@ private struct ResourceHistoryChart: View {
             Chart(history) { point in
                 AreaMark(
                     x: .value("Time", point.date),
-                    y: .value("Pressure", point.memoryPressure)
+                    y: .value("Pressure", point.primary)
                 )
                 .foregroundStyle(memoryColor.opacity(0.55))
                 .interpolationMethod(.monotone)
 
                 LineMark(
                     x: .value("Time", point.date),
-                    y: .value("Pressure", point.memoryPressure)
+                    y: .value("Pressure", point.primary)
                 )
                 .foregroundStyle(memoryColor)
                 .interpolationMethod(.monotone)
@@ -598,14 +613,14 @@ private struct ResourceHistoryChart: View {
             Chart(history) { point in
                 AreaMark(
                     x: .value("Time", point.date),
-                    y: .value("Energy", point.energyImpact)
+                    y: .value("Energy", point.primary)
                 )
                 .foregroundStyle(Theme.energy.opacity(0.4))
                 .interpolationMethod(.monotone)
 
                 LineMark(
                     x: .value("Time", point.date),
-                    y: .value("Energy", point.energyImpact)
+                    y: .value("Energy", point.primary)
                 )
                 .foregroundStyle(Theme.energy)
                 .interpolationMethod(.monotone)
@@ -614,14 +629,14 @@ private struct ResourceHistoryChart: View {
             Chart(history) { point in
                 LineMark(
                     x: .value("Time", point.date),
-                    y: .value("Read", point.diskReadRate)
+                    y: .value("Read", point.primary)
                 )
                 .foregroundStyle(Theme.inbound)
                 .interpolationMethod(.monotone)
 
                 LineMark(
                     x: .value("Time", point.date),
-                    y: .value("Write", point.diskWriteRate)
+                    y: .value("Write", point.secondary ?? 0)
                 )
                 .foregroundStyle(Theme.outbound)
                 .interpolationMethod(.monotone)
@@ -630,14 +645,14 @@ private struct ResourceHistoryChart: View {
             Chart(history) { point in
                 LineMark(
                     x: .value("Time", point.date),
-                    y: .value("Received", point.networkReceiveRate)
+                    y: .value("Received", point.primary)
                 )
                 .foregroundStyle(Theme.inbound)
                 .interpolationMethod(.monotone)
 
                 LineMark(
                     x: .value("Time", point.date),
-                    y: .value("Sent", point.networkSendRate)
+                    y: .value("Sent", point.secondary ?? 0)
                 )
                 .foregroundStyle(Theme.outbound)
                 .interpolationMethod(.monotone)

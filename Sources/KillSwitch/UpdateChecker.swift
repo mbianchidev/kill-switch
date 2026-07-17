@@ -188,6 +188,7 @@ final class UpdateChecker: ObservableObject {
             self.periodicTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
                 self?.checkForUpdates()
             }
+            self.periodicTimer?.tolerance = min(300, interval / 10)
         }
     }
 

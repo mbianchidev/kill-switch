@@ -88,7 +88,7 @@ final class DevCleanupMonitor: ObservableObject {
     private lazy var service = DevCleanupService.live(username: username)
 
     /// Serial queue so a port scan and a cleanup pass never run concurrently.
-    private let workQueue = DispatchQueue(label: "DevCleanupMonitor.work", qos: .userInitiated)
+    private let workQueue = DispatchQueue(label: "DevCleanupMonitor.work", qos: .utility)
     /// In-flight guards (touched only on the main thread) so user-configurable
     /// intervals and the manual buttons can't queue up overlapping passes.
     private var isRefreshing = false
@@ -172,9 +172,11 @@ final class DevCleanupMonitor: ObservableObject {
         portTimer = Timer.scheduledTimer(withTimeInterval: portInterval, repeats: true) { [weak self] _ in
             self?.refreshPorts()
         }
+        portTimer?.tolerance = min(2, portInterval / 5)
         cleanupTimer = Timer.scheduledTimer(withTimeInterval: cleanupInterval, repeats: true) { [weak self] _ in
             self?.runCleanup()
         }
+        cleanupTimer?.tolerance = min(30, cleanupInterval / 10)
     }
 
     func killPort(pid: Int32) {

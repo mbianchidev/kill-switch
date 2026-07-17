@@ -14,11 +14,12 @@ struct ContentView: View {
     @State private var selectedTab: MainTab = .resources
     @StateObject private var diagnostics = DiagnosticsController.shared
     @StateObject private var watchdog = CPUWatchdog()
+    @StateObject private var resourceMonitor = ResourceMonitor()
     @ObservedObject private var updater = UpdateChecker.shared
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            ResourcesTab()
+            ResourcesTab(monitor: resourceMonitor)
                 .tabItem { Label("Resources", systemImage: "waveform.path.ecg") }
                 .tag(MainTab.resources)
             DevCleanupTab()
@@ -46,9 +47,21 @@ struct ContentView: View {
         .onAppear {
             watchdog.start()
             updater.startPeriodicChecks()
+            updateResourceMonitoring()
+        }
+        .onChange(of: selectedTab) { _ in
+            updateResourceMonitoring()
         }
         .onReceive(NotificationCenter.default.publisher(for: .showDiagnosticsTab)) { _ in
             selectedTab = .diagnostics
+        }
+    }
+
+    private func updateResourceMonitoring() {
+        if selectedTab == .resources {
+            resourceMonitor.start()
+        } else {
+            resourceMonitor.stop()
         }
     }
 }

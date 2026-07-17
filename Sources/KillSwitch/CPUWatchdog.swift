@@ -50,7 +50,8 @@ final class CPUWatchdog: ObservableObject {
     private var counts: [Int32: Int] = [:]
     private var timer: DispatchSourceTimer?
     private var activity: NSObjectProtocol?
-    private let timerQueue = DispatchQueue(label: "killswitch.watchdog.timer", qos: .userInitiated)
+    private let timerQueue = DispatchQueue(label: "killswitch.watchdog.timer", qos: .utility)
+    private let workQueue = DispatchQueue(label: "killswitch.watchdog.work", qos: .utility)
     private var started = false
     private let username = NSUserName()
     private let maxAlerts = 50
@@ -64,7 +65,7 @@ final class CPUWatchdog: ObservableObject {
         started = true
         if activity == nil {
             activity = ProcessInfo.processInfo.beginActivity(
-                options: [.userInitiated, .automaticTerminationDisabled],
+                options: [.background, .automaticTerminationDisabled],
                 reason: "Watching for sustained high-CPU processes"
             )
         }
@@ -83,7 +84,9 @@ final class CPUWatchdog: ObservableObject {
 
     func kill(pid: Int32) {
         ProcessSampler.terminate(pid: pid)
-        counts[pid] = nil
+        workQueue.async { [weak self] in
+            self?.counts[pid] = nil
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.check()
         }
@@ -93,7 +96,8 @@ final class CPUWatchdog: ObservableObject {
     func check() {
         let threshold = self.threshold
         let consecutiveThreshold = self.consecutiveThreshold
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        let intervalSeconds = self.intervalSeconds
+        workQueue.async { [weak self] in
             guard let self = self else { return }
             let entries = ProcessSampler.fetchCollapsed(user: self.username)
                 .filter { $0.cpu >= threshold }
@@ -120,11 +124,13 @@ final class CPUWatchdog: ObservableObject {
                 )
             }
 
-            for record in fired { self.postAlert(record) }
-            self.appendLog(offenders: offenders, fired: fired, now: now)
+            for record in fired {
+                self.postAlert(record, intervalSeconds: intervalSeconds)
+            }
+            self.appendLog(offenders: offenders, fired: fired, now: now, threshold: threshold)
+            self.counts = newCounts
 
             DispatchQueue.main.async {
-                self.counts = newCounts
                 self.offenders = offenders
                 if !fired.isEmpty {
                     self.alerts.insert(contentsOf: fired.reversed(), at: 0)
@@ -141,17 +147,23 @@ final class CPUWatchdog: ObservableObject {
         timer?.cancel()
         let interval = TimeInterval(max(5, intervalSeconds))
         let t = DispatchSource.makeTimerSource(queue: timerQueue)
-        t.schedule(deadline: .now() + interval, repeating: interval)
+        t.schedule(
+            deadline: .now() + interval,
+            repeating: interval,
+            leeway: .seconds(max(1, min(30, Int(interval / 10))))
+        )
         t.setEventHandler { [weak self] in self?.check() }
         t.resume()
         timer = t
     }
 
     private func reset() {
-        counts.removeAll()
+        workQueue.async { [weak self] in
+            self?.counts.removeAll()
+        }
     }
 
-    private func postAlert(_ record: CPUAlertRecord) {
+    private func postAlert(_ record: CPUAlertRecord, intervalSeconds: Int) {
         let minutes = record.checks * max(5, intervalSeconds) / 60
         ProcessSampler.notify(
             title: "🔥 CPU Watchdog",
@@ -160,7 +172,12 @@ final class CPUWatchdog: ObservableObject {
         )
     }
 
-    private func appendLog(offenders: [CPUOffender], fired: [CPUAlertRecord], now: Date) {
+    private func appendLog(
+        offenders: [CPUOffender],
+        fired: [CPUAlertRecord],
+        now: Date,
+        threshold: Double
+    ) {
         guard !offenders.isEmpty else { return }
         let stamp = Self.stampFormatter.string(from: now)
         var lines: [String] = []
