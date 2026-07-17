@@ -227,11 +227,11 @@ enum ProcessSampler {
     /// shared AppleScript literal escaping so process names cannot alter the script.
     @discardableResult
     static func notify(title: String, subtitle: String, body: String) -> Bool {
-        let script = """
-        display notification \(CommandRunner.appleScriptLiteral(body)) \
-        with title \(CommandRunner.appleScriptLiteral(title)) \
-        subtitle \(CommandRunner.appleScriptLiteral(subtitle))
-        """
+        let script = [
+            "display notification \(CommandRunner.appleScriptLiteral(body))",
+            "with title \(CommandRunner.appleScriptLiteral(title))",
+            "subtitle \(CommandRunner.appleScriptLiteral(subtitle))"
+        ].joined(separator: " ")
         guard let result = try? CommandRunner.run("/usr/bin/osascript", arguments: ["-e", script]) else {
             return false
         }
