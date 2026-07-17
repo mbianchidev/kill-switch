@@ -21,9 +21,19 @@ let package = Package(
             name: "SystemMetricsCore",
             path: "Sources/SystemMetricsCore"
         ),
+        .target(
+            name: "ScreenTimeCore",
+            path: "Sources/ScreenTimeCore"
+        ),
         .executableTarget(
             name: "KillSwitch",
-            dependencies: ["DevCleanupCore", "InstallCore", "KeepAwakeCore", "SystemMetricsCore"],
+            dependencies: [
+                "DevCleanupCore",
+                "InstallCore",
+                "KeepAwakeCore",
+                "ScreenTimeCore",
+                "SystemMetricsCore"
+            ],
             path: "Sources/KillSwitch"
         ),
         .executableTarget(
@@ -40,6 +50,11 @@ let package = Package(
             name: "SystemMetricsChecks",
             dependencies: ["SystemMetricsCore"],
             path: "Tests/SystemMetricsChecks"
+        ),
+        .executableTarget(
+            name: "ScreenTimeCoreChecks",
+            dependencies: ["ScreenTimeCore"],
+            path: "Tests/ScreenTimeCoreChecks"
         )
     ]
 )

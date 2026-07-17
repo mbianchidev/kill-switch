@@ -27,10 +27,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem?
     private weak var mainWindow: NSWindow?
     private let keepAwakeManager = KeepAwakeManager.shared
+    private let screenTimeMonitor = ScreenTimeMonitor.shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        screenTimeMonitor.start()
         keepAwakeManager.onStateChange = { [weak self] _ in
             self?.updateStatusItem()
         }
@@ -183,6 +185,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        screenTimeMonitor.stop()
         keepAwakeManager.deactivate()
     }
 

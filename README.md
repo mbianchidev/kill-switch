@@ -1,6 +1,6 @@
 # KillSwitch
 
-A macOS resource manager with automation useful for the AI era. It provides Activity Monitor-style system resources, one-click process termination, developer cleanup, CPU alerts, keep-awake controls, and native diagnostic collection.
+A macOS resource manager with automation useful for the AI era. It provides Activity Monitor-style system resources, one-click process termination, developer cleanup, CPU alerts, active screen-time tracking, keep-awake controls, and native diagnostic collection.
 
 <img width="1710" height="1066" alt="image" src="docs/image.png" />
 
@@ -15,6 +15,8 @@ A macOS resource manager with automation useful for the AI era. It provides Acti
 - Generates privileged 10-second spindump reports with preview, save, and reveal actions
 - Runs full macOS `sysdiagnose` from the app or with **Shift-Command-D**
 - Native macOS notifications when a process sustains high CPU for an extended period
+- Tracks active screen time for the current day and continuous work stretch
+- Optional native break reminders with a configurable 1–12 hour interval
 - Menu bar (tray) icon — closing the window keeps the app running in the menu bar
 - Keeps the Mac awake indefinitely or for a selected duration, with optional display sleep
 - Advanced keep-awake settings for default duration, display sleep, and launch activation
@@ -61,6 +63,16 @@ fields display an em dash instead of fabricated data.
 - Shows currently-offending processes with their consecutive count and a kill button, plus an in-app recent-alerts history.
 - Appends to `~/Library/Logs/cpu-watchdog.log`, trimmed to the last 500 lines.
 
+### Screen time
+
+- Tracks active Mac use for the current day and the current continuous stretch.
+- Counts only while keyboard or pointer input has occurred within the last **5 minutes**.
+- Pauses counting after 5 minutes idle and ends the current stretch after **10 minutes** idle, screen lock, display sleep, system sleep, or a long monitoring gap.
+- Optionally sends a native **Touch grass** break reminder every **1–12 active hours** (default interval: **2 hours** when enabled).
+- Changing the interval schedules the next future boundary instead of immediately firing an overdue reminder.
+- Persists today's total, current stretch, settings, and last reminder across launches. Daily totals reset at local midnight without ending an active stretch.
+- Stores only aggregate durations on the Mac — no app, website, keystroke, or pointer history is collected.
+
 ### Diagnostics
 
 - **Generate Spindump** samples user and kernel call stacks for 10 seconds, previews the report in-app, and supports Save/Reveal.
@@ -100,7 +112,8 @@ the top menu bar with a dropdown:
 Closing the main window with the red close button does **not** quit the app — it hides
 the window and drops the Dock icon, leaving only the menu bar icon. Re-open it from the
 menu bar item (or by clicking the Dock icon if visible). To fully quit, use **Quit
-KillSwitch** from the menu bar.
+KillSwitch** from the menu bar. CPU watchdog and screen-time monitoring continue while
+the window is hidden.
 
 ## Requirements
 
@@ -262,8 +275,10 @@ To exercise the headless mode from a source checkout, invoke the binary through 
 - Swift 5.9
 - A shared `DevCleanupCore` target for preferences, integration-port merging, CLI parsing, and cleanup classification
 - A shared `InstallCore` target for tested binary and symlink path safety
+- A shared `ScreenTimeCore` target for tested active-time, idle-break, rollover, and reminder-boundary logic
 - SwiftUI + Swift Charts (live resource graphs)
 - AppKit (`NSWorkspace`) for application icons; `NSStatusItem` for the menu bar (tray) icon
+- CoreGraphics idle-input timing plus `NSWorkspace` sleep, display, and session notifications for screen-time tracking
 - macOS process and resource APIs (`top`, `libproc`, Mach VM statistics, IOKit, `nettop`, `netstat`, `pmset`)
 - `osascript` for native notifications, privileged diagnostics, and privileged self-update
 - `URLSession` (async/await) + GitHub Releases API for in-app updates

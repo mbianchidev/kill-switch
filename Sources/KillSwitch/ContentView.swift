@@ -4,6 +4,7 @@ private enum MainTab: Hashable {
     case resources
     case cleanup
     case watchdog
+    case screenTime
     case diagnostics
     case keepAwake
     case updates
@@ -26,6 +27,9 @@ struct ContentView: View {
             CPUWatchdogTab(monitor: watchdog)
                 .tabItem { Label("Watchdog", systemImage: "exclamationmark.triangle") }
                 .tag(MainTab.watchdog)
+            ScreenTimeTab()
+                .tabItem { Label("Screen time", systemImage: "figure.walk.motion") }
+                .tag(MainTab.screenTime)
             DiagnosticsTab(controller: diagnostics)
                 .tabItem { Label("Diagnostics", systemImage: "stethoscope") }
                 .tag(MainTab.diagnostics)
