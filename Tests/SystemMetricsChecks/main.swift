@@ -177,6 +177,10 @@ struct SystemMetricsChecks {
         check(approximately(usage.userPercent, 50), "system user CPU delta")
         check(approximately(usage.systemPercent, 20), "system CPU delta")
         check(approximately(usage.idlePercent, 30), "system idle CPU delta")
+        let initialUsage = SystemMetricsCalculator.systemCPUUsage(current: current, previous: nil)
+        check(approximately(initialUsage.userPercent, 0), "initial system user CPU")
+        check(approximately(initialUsage.systemPercent, 0), "initial system CPU")
+        check(approximately(initialUsage.idlePercent, 0), "initial system idle CPU")
         check(
             SystemMetricsCalculator.processCPUPercent(
                 currentNanoseconds: 5_000_000_000,

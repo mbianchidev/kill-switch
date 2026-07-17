@@ -88,10 +88,14 @@ public enum SystemMetricsCalculator {
         current: SystemCPUTicks,
         previous: SystemCPUTicks?
     ) -> SystemCPUUsage {
-        let user = tickDelta(current: current.user, previous: previous?.user)
-            + tickDelta(current: current.nice, previous: previous?.nice)
-        let system = tickDelta(current: current.system, previous: previous?.system)
-        let idle = tickDelta(current: current.idle, previous: previous?.idle)
+        guard let previous else {
+            return SystemCPUUsage(userPercent: 0, systemPercent: 0, idlePercent: 0)
+        }
+
+        let user = tickDelta(current: current.user, previous: previous.user)
+            + tickDelta(current: current.nice, previous: previous.nice)
+        let system = tickDelta(current: current.system, previous: previous.system)
+        let idle = tickDelta(current: current.idle, previous: previous.idle)
         let total = user + system + idle
 
         guard total > 0 else {
@@ -118,8 +122,7 @@ public enum SystemMetricsCalculator {
         return usedSeconds * 100 / elapsedSeconds
     }
 
-    private static func tickDelta(current: UInt64, previous: UInt64?) -> UInt64 {
-        guard let previous else { return current }
+    private static func tickDelta(current: UInt64, previous: UInt64) -> UInt64 {
         guard current < previous else { return current - previous }
 
         let modulus = UInt64(UInt32.max) + 1

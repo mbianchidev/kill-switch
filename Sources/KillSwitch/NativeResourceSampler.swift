@@ -193,7 +193,7 @@ final class ResourceSampler {
     private func samplePSProcesses() throws -> [ParsedPSProcess] {
         let result = try CommandRunner.run(
             "/bin/ps",
-            arguments: ["-axo", "pid=,user=,state=,pcpu=,time=,rss=,comm="],
+            arguments: ["-axo", "pid=,user=,state=,pcpu=,time=,rss=,args="],
             environment: ["LC_ALL": "C"]
         )
         guard result.succeeded else {
@@ -762,8 +762,9 @@ final class ResourceSampler {
     }
 
     private func displayName(for command: String) -> String {
-        guard command.contains("/") else { return command }
-        return URL(fileURLWithPath: command).lastPathComponent
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("/"), !trimmed.contains(" ") else { return trimmed }
+        return URL(fileURLWithPath: trimmed).lastPathComponent
     }
 
     private func string<T>(from value: inout T) -> String {
