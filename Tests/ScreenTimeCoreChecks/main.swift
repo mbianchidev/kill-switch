@@ -236,6 +236,7 @@ struct ScreenTimeCoreChecks {
         )
 
         check(restart.didResetStretch, "long restart gap clears stale reminder progress")
+        check(restart.isActive, "restart reconciliation preserves current activity status")
         check(tracker.snapshot.activeSecondsToday == 4_000, "restart gap is not counted as active")
 
         tracker = ScreenTimeTracker(snapshot: persisted, now: start, calendar: calendar)

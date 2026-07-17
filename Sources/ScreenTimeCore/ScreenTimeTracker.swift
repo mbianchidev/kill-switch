@@ -101,7 +101,7 @@ public struct ScreenTimeTracker {
                 creditedSeconds: 0,
                 didResetStretch: didReset,
                 shouldRemind: false,
-                isActive: false
+                isActive: isActive
             )
         }
 

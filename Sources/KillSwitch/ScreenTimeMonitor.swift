@@ -103,7 +103,8 @@ final class ScreenTimeMonitor: ObservableObject {
             let sampleDate = Date()
             let idleSeconds = Self.systemIdleSeconds()
             DispatchQueue.main.async {
-                self?.recordSample(at: sampleDate, idleSeconds: idleSeconds, allowReminder: true)
+                guard let self, self.timer != nil else { return }
+                self.recordSample(at: sampleDate, idleSeconds: idleSeconds, allowReminder: true)
             }
         }
         timer.resume()
@@ -136,16 +137,17 @@ final class ScreenTimeMonitor: ObservableObject {
 
     func resetCurrentStretch() {
         let now = Date()
+        let currentIdleSeconds = Self.systemIdleSeconds()
         if suspensionReasons.isEmpty {
             _ = tracker.sample(
                 at: now,
-                idleSeconds: Self.systemIdleSeconds(),
+                idleSeconds: currentIdleSeconds,
                 reminderInterval: nil,
                 calendar: calendar
             )
         }
         _ = tracker.endStretch(at: now, calendar: calendar)
-        publishSnapshot(isActive: false, idleSeconds: idleSeconds, updatedAt: now)
+        publishSnapshot(isActive: false, idleSeconds: currentIdleSeconds, updatedAt: now)
         persistSnapshot()
     }
 
