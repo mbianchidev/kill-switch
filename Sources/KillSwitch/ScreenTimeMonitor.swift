@@ -147,7 +147,11 @@ final class ScreenTimeMonitor: ObservableObject {
             )
         }
         _ = tracker.endStretch(at: now, calendar: calendar)
-        publishSnapshot(isActive: false, idleSeconds: currentIdleSeconds, updatedAt: now)
+        publishSnapshot(
+            isActive: currentIdleSeconds < ScreenTimeTracker.activeIdleThreshold,
+            idleSeconds: currentIdleSeconds,
+            updatedAt: now
+        )
         persistSnapshot()
     }
 

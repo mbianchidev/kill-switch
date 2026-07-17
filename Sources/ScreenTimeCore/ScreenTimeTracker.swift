@@ -54,7 +54,8 @@ public struct ScreenTimeTracker {
         initial.activeSecondsToday = max(0, initial.activeSecondsToday)
         initial.currentStretchSeconds = max(0, initial.currentStretchSeconds)
 
-        if !calendar.isDate(initial.dayStart, inSameDayAs: now) {
+        let canReconcileDay = initial.lastSampleDate.map { $0 <= now } ?? true
+        if canReconcileDay, !calendar.isDate(initial.dayStart, inSameDayAs: now) {
             initial.dayStart = calendar.startOfDay(for: now)
             initial.activeSecondsToday = 0
         }
@@ -69,11 +70,10 @@ public struct ScreenTimeTracker {
         reminderInterval: TimeInterval?,
         calendar: Calendar = .current
     ) -> ScreenTimeUpdate {
-        rollDayIfNeeded(at: now, calendar: calendar)
-
         let idleSeconds = max(0, idleSeconds)
         let isActive = idleSeconds < Self.activeIdleThreshold
         guard let previousSample = snapshot.lastSampleDate else {
+            rollDayIfNeeded(at: now, calendar: calendar)
             snapshot.lastSampleDate = now
             return ScreenTimeUpdate(
                 creditedSeconds: 0,
@@ -92,6 +92,7 @@ public struct ScreenTimeTracker {
                 isActive: isActive
             )
         }
+        rollDayIfNeeded(at: now, calendar: calendar)
         snapshot.lastSampleDate = now
 
         if idleSeconds >= Self.breakIdleThreshold || elapsed >= Self.breakIdleThreshold {
@@ -138,10 +139,12 @@ public struct ScreenTimeTracker {
         at now: Date,
         calendar: Calendar = .current
     ) -> ScreenTimeUpdate {
-        rollDayIfNeeded(at: now, calendar: calendar)
         let didReset = snapshot.currentStretchSeconds > 0
         snapshot.currentStretchSeconds = 0
-        snapshot.lastSampleDate = now
+        if snapshot.lastSampleDate.map({ $0 <= now }) ?? true {
+            rollDayIfNeeded(at: now, calendar: calendar)
+            snapshot.lastSampleDate = now
+        }
         return ScreenTimeUpdate(
             creditedSeconds: 0,
             didResetStretch: didReset,

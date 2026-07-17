@@ -21,6 +21,7 @@ struct ScreenTimeCoreChecks {
         checkReminderBoundaries()
         checkIntervalChangeDoesNotBackfire()
         checkOutOfOrderSamples()
+        checkBackwardDayAdjustment()
         checkRestartGapAndForcedBreak()
 
         if failures.isEmpty {
@@ -275,6 +276,41 @@ struct ScreenTimeCoreChecks {
             calendar: calendar
         )
         check(forward.creditedSeconds == 10, "next valid sample uses the last accepted baseline")
+    }
+
+    private static func checkBackwardDayAdjustment() {
+        let storedDay = date(2026, 7, 17, 0, 0, 0)
+        let storedSample = date(2026, 7, 17, 12, 0, 0)
+        let adjustedNow = date(2026, 7, 16, 23, 59, 0)
+        let snapshot = ScreenTimeSnapshot(
+            dayStart: storedDay,
+            activeSecondsToday: 300,
+            currentStretchSeconds: 120,
+            lastSampleDate: storedSample
+        )
+        var tracker = ScreenTimeTracker(
+            snapshot: snapshot,
+            now: adjustedNow,
+            calendar: calendar
+        )
+
+        check(tracker.snapshot.dayStart == storedDay, "backward launch clock keeps the stored daily bucket")
+        check(tracker.snapshot.activeSecondsToday == 300, "backward launch clock preserves daily active time")
+
+        _ = tracker.sample(
+            at: adjustedNow,
+            idleSeconds: 0,
+            reminderInterval: nil,
+            calendar: calendar
+        )
+        check(tracker.snapshot.dayStart == storedDay, "rejected prior-day sample does not roll the day backwards")
+        check(tracker.snapshot.activeSecondsToday == 300, "rejected prior-day sample preserves daily total")
+        check(tracker.snapshot.lastSampleDate == storedSample, "rejected prior-day sample preserves baseline")
+
+        _ = tracker.endStretch(at: adjustedNow, calendar: calendar)
+        check(tracker.snapshot.currentStretchSeconds == 0, "out-of-order forced break still clears the stretch")
+        check(tracker.snapshot.dayStart == storedDay, "out-of-order forced break preserves daily bucket")
+        check(tracker.snapshot.lastSampleDate == storedSample, "out-of-order forced break preserves baseline")
     }
 
     private static func date(
