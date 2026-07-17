@@ -45,7 +45,7 @@ struct ResourceProcess: Identifiable {
     let user: String
     let cpu: Double
     let cpuTimeSeconds: Double
-    let threads: Int
+    let threads: Int?
     let idleWakeUps: UInt64?
     let kind: String?
     let gpu: Double?

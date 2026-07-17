@@ -366,7 +366,11 @@ private struct ResourceProcessRow: View {
             case .cpu:
                 value(String(format: "%.1f", process.cpu), width: 72, color: Theme.cpuUser)
                 value(formatDuration(process.cpuTimeSeconds), width: 98)
-                value("\(process.threads)", width: 72)
+                value(
+                    process.threads.map(String.init) ?? "—",
+                    width: 72,
+                    help: unavailableHelp(process.threads)
+                )
                 value(process.idleWakeUps.map(formatNumber) ?? "—", width: 104)
                 value(process.kind ?? "—", width: 72, help: unavailableHelp(process.kind))
                 value(process.gpu.map { String(format: "%.1f", $0) } ?? "—", width: 72, help: gpuHelp)
@@ -379,7 +383,11 @@ private struct ResourceProcessRow: View {
                 value(process.user, width: 140, alignment: .leading)
             case .memory:
                 value(formatBytes(process.memoryBytes), width: 100, color: Theme.memory)
-                value("\(process.threads)", width: 76)
+                value(
+                    process.threads.map(String.init) ?? "—",
+                    width: 76,
+                    help: unavailableHelp(process.threads)
+                )
                 value(
                     process.openFileCount.map(String.init) ?? "—",
                     width: 86,

@@ -37,7 +37,7 @@ private struct NativeProcess {
     let user: String
     let cpu: Double?
     let cpuTimeSeconds: Double
-    let threads: Int
+    let threads: Int?
     let idleWakeUps: UInt64
     let kind: String?
     let memoryBytes: UInt64
@@ -108,7 +108,7 @@ final class ResourceSampler {
                     user: process.user,
                     cpu: native?.cpu ?? process.cpu,
                     cpuTimeSeconds: native?.cpuTimeSeconds ?? process.cpuTimeSeconds,
-                    threads: native?.threads ?? 0,
+                    threads: native?.threads,
                     idleWakeUps: native?.idleWakeUps,
                     kind: native?.kind,
                     gpu: nil,
@@ -254,7 +254,7 @@ final class ResourceSampler {
                 user: username(for: bsd.pbi_uid),
                 cpu: cpu,
                 cpuTimeSeconds: Double(totalCPU) / 1_000_000_000,
-                threads: task.map { Int($0.pti_threadnum) } ?? 0,
+                threads: task.map { Int($0.pti_threadnum) },
                 idleWakeUps: usage.ri_interrupt_wkups,
                 kind: processMetadata.kind,
                 memoryBytes: usage.ri_phys_footprint != 0
