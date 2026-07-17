@@ -29,5 +29,8 @@ jobs:
       - name: Test system metric parsers
         run: swift run SystemMetricsChecks
 
+      - name: Test screen time tracking
+        run: swift run ScreenTimeCoreChecks
+
       - name: Build (release)
         run: swift build -c release --product KillSwitch
