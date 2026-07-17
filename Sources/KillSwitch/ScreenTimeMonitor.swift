@@ -301,7 +301,11 @@ final class ScreenTimeMonitor: ObservableObject {
     }
 
     nonisolated private static func systemIdleSeconds() -> TimeInterval {
-        let anyInputEvent = CGEventType(rawValue: UInt32.max)! // kCGAnyInputEventType
+        guard let anyInputEvent = CGEventType(rawValue: UInt32.max) else {
+            Logger(subsystem: "com.killswitch.app", category: "screen-time")
+                .fault("CoreGraphics did not accept the any-input event type.")
+            return ScreenTimeTracker.breakIdleThreshold
+        }
         return CGEventSource.secondsSinceLastEventType(
             .combinedSessionState,
             eventType: anyInputEvent
