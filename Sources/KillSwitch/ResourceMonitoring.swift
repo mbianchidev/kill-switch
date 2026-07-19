@@ -113,6 +113,7 @@ struct MemoryResourceSummary {
 }
 
 struct DiskResourceSummary {
+    let capacity: DiskCapacity?
     let reads: UInt64
     let readBytes: UInt64
     let writes: UInt64
@@ -123,6 +124,7 @@ struct DiskResourceSummary {
     let writtenBytesPerSecond: Double?
 
     static let unavailable = DiskResourceSummary(
+        capacity: nil,
         reads: 0,
         readBytes: 0,
         writes: 0,

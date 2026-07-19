@@ -1,5 +1,6 @@
 import Charts
 import SwiftUI
+import SystemMetricsCore
 
 struct ResourcesTab: View {
     @ObservedObject var monitor: ResourceMonitor
@@ -206,15 +207,19 @@ struct ResourcesTab: View {
                 }
             }
         case .disk:
-            FlowLayout(spacing: 10) {
-                ResourceValue(label: "Reads in", value: formatNumber(monitor.disk.reads))
-                ResourceValue(label: "Data read", value: formatBytes(monitor.disk.readBytes), color: Theme.inbound)
-                ResourceValue(label: "Writes out", value: formatNumber(monitor.disk.writes))
-                ResourceValue(label: "Data written", value: formatBytes(monitor.disk.writtenBytes), color: Theme.outbound)
-                ResourceValue(label: "Reads in/sec", value: formatRate(monitor.disk.readsPerSecond))
-                ResourceValue(label: "Data read/sec", value: formatByteRate(monitor.disk.readBytesPerSecond))
-                ResourceValue(label: "Writes out/sec", value: formatRate(monitor.disk.writesPerSecond))
-                ResourceValue(label: "Data written/sec", value: formatByteRate(monitor.disk.writtenBytesPerSecond))
+            VStack(alignment: .leading, spacing: 8) {
+                DiskCapacityBreakdown(capacity: monitor.disk.capacity)
+
+                FlowLayout(spacing: 10) {
+                    ResourceValue(label: "Reads in", value: formatNumber(monitor.disk.reads))
+                    ResourceValue(label: "Data read", value: formatBytes(monitor.disk.readBytes), color: Theme.inbound)
+                    ResourceValue(label: "Writes out", value: formatNumber(monitor.disk.writes))
+                    ResourceValue(label: "Data written", value: formatBytes(monitor.disk.writtenBytes), color: Theme.outbound)
+                    ResourceValue(label: "Reads in/sec", value: formatRate(monitor.disk.readsPerSecond))
+                    ResourceValue(label: "Data read/sec", value: formatByteRate(monitor.disk.readBytesPerSecond))
+                    ResourceValue(label: "Writes out/sec", value: formatRate(monitor.disk.writesPerSecond))
+                    ResourceValue(label: "Data written/sec", value: formatByteRate(monitor.disk.writtenBytesPerSecond))
+                }
             }
         case .network:
             FlowLayout(spacing: 10) {
@@ -692,5 +697,108 @@ private struct ResourceValue: View {
                 .fill(Theme.raisedPanel)
                 .overlay(RoundedRectangle(cornerRadius: 7).stroke(Theme.border))
         )
+    }
+}
+
+private struct DiskCapacityBreakdown: View {
+    let capacity: DiskCapacity?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Label("Disk space", systemImage: "internaldrive.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(0.7)
+                    .foregroundColor(.white.opacity(0.58))
+
+                Spacer()
+
+                Text(occupiedPercentage)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.52))
+            }
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Theme.memory.opacity(capacity == nil ? 0.12 : 0.72))
+
+                    if let capacity {
+                        Capsule()
+                            .fill(occupiedColor)
+                            .frame(width: proxy.size.width * CGFloat(capacity.occupiedFraction))
+                    }
+                }
+            }
+            .frame(height: 8)
+
+            HStack(spacing: 18) {
+                capacityValue(
+                    label: "Occupied",
+                    value: capacity.map { formatBytes($0.occupiedBytes) } ?? "—",
+                    color: occupiedColor
+                )
+                capacityValue(
+                    label: "Free",
+                    value: capacity.map { formatBytes($0.freeBytes) } ?? "—",
+                    color: Theme.memory
+                )
+
+                Spacer(minLength: 8)
+
+                capacityValue(
+                    label: "Total",
+                    value: capacity.map { formatBytes($0.totalBytes) } ?? "—",
+                    color: .white.opacity(0.72)
+                )
+            }
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Theme.raisedPanel)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border))
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var occupiedColor: Color {
+        let fraction = capacity?.occupiedFraction ?? 0
+        if fraction >= 0.9 { return .red }
+        if fraction >= 0.75 { return .yellow }
+        return Theme.diskOccupied
+    }
+
+    private var occupiedPercentage: String {
+        guard let capacity else { return "Unavailable" }
+        return String(format: "%.0f%% occupied", capacity.occupiedFraction * 100)
+    }
+
+    private var accessibilityText: String {
+        guard let capacity else { return "Disk space unavailable" }
+        return "Disk space: \(formatBytes(capacity.occupiedBytes)) occupied, \(formatBytes(capacity.freeBytes)) free, \(formatBytes(capacity.totalBytes)) total"
+    }
+
+    private func capacityValue(label: String, value: String, color: Color) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(color)
+                .frame(width: 6, height: 6)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label)
+                    .font(.system(size: 8, weight: .semibold))
+                    .textCase(.uppercase)
+                    .tracking(0.6)
+                    .foregroundColor(.white.opacity(0.34))
+                Text(value)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.86))
+                    .lineLimit(1)
+            }
+        }
     }
 }

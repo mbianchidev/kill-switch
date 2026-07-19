@@ -15,6 +15,7 @@ struct SystemMetricsChecks {
         checkByteAndDurationParsing()
         checkPSProcessParsing()
         checkCPUCalculations()
+        checkDiskCapacityCalculations()
         checkSamplingPolicies()
 
         if failures.isEmpty {
@@ -205,6 +206,17 @@ struct SystemMetricsChecks {
             ) == nil,
             "process CPU minimum interval"
         )
+    }
+
+    private static func checkDiskCapacityCalculations() {
+        let capacity = DiskCapacity(totalBytes: 1_000, freeBytes: 250)
+        check(capacity.occupiedBytes == 750, "disk occupied bytes")
+        check(approximately(capacity.occupiedFraction, 0.75), "disk occupied fraction")
+
+        let clamped = DiskCapacity(totalBytes: 500, freeBytes: 750)
+        check(clamped.freeBytes == 500, "disk free bytes clamp to total")
+        check(clamped.occupiedBytes == 0, "disk occupied bytes avoid underflow")
+        check(clamped.occupiedFraction == 0, "disk empty capacity fraction")
     }
 
     private static func checkSamplingPolicies() {
