@@ -30,6 +30,7 @@ enum Theme {
     static let cpuSystem = Color(red: 1.0, green: 0.42, blue: 0.42)
     static let memory = Color(red: 0.39, green: 0.82, blue: 0.59)
     static let energy = Color(red: 0.97, green: 0.79, blue: 0.28)
+    static let diskOccupied = Color(red: 0.70, green: 0.50, blue: 0.96)
     static let screenTime = Color(red: 0.42, green: 0.87, blue: 0.48)
     static let inbound = Color(red: 0.39, green: 0.68, blue: 1.0)
     static let outbound = Color(red: 1.0, green: 0.47, blue: 0.57)

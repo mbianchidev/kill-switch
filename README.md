@@ -34,7 +34,7 @@ One dense, live process table with five modes:
 - **CPU** — % CPU, CPU time, threads, idle wakeups, architecture kind, PID, and user, plus a stacked user/system CPU graph.
 - **Memory** — physical footprint, threads, open files, PID, and user, plus memory pressure, physical memory, app memory, cached files, wired memory, compression, and swap.
 - **Energy** — current energy impact, rolling power history, sleep prevention, battery charge, and power-source status.
-- **Disk** — per-process bytes read/written, system operation totals, and live read/write throughput.
+- **Disk** — per-process bytes read/written, free/occupied capacity, system operation totals, and live read/write throughput.
 - **Network** — per-process bytes and packets sent/received, system totals, and live inbound/outbound throughput.
 
 CPU, memory, disk, and network views sample every six seconds; Energy samples every

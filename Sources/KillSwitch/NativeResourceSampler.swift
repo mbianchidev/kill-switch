@@ -62,6 +62,7 @@ final class ResourceSampler {
     private var previousNetwork: (date: Date, counters: NetworkCounters)?
     private var metadata: [ResourceProcessIdentity: ProcessMetadata] = [:]
     private var usernames: [uid_t: String] = [:]
+    private var reportedDiskCapacityError = false
 
     func resetBaselines() {
         previousProcessCPU.removeAll()
@@ -164,7 +165,11 @@ final class ResourceSampler {
 
         let cpu = sampleCPU(processes: parsedProcesses)
         let memory = sampleMemory(includePressure: policy.collectsMemoryPressure)
-        let disk = makeDiskSummary(now: now, counters: sampleDiskCounters())
+        let disk = makeDiskSummary(
+            now: now,
+            counters: sampleDiskCounters(),
+            capacity: sampleDiskCapacity()
+        )
         let network = policy.collectsNetwork
             ? makeNetworkSummary(now: now, counters: try sampleNetworkCounters())
             : nil
@@ -485,10 +490,42 @@ final class ResourceSampler {
         )
     }
 
-    private func makeDiskSummary(now: Date, counters: DiskCounters) -> DiskResourceSummary {
+    private func sampleDiskCapacity() -> DiskCapacity? {
+        do {
+            let attributes = try FileManager.default.attributesOfFileSystem(
+                forPath: FileManager.default.homeDirectoryForCurrentUser.path
+            )
+            guard
+                let total = attributes[.systemSize] as? NSNumber,
+                let free = attributes[.systemFreeSize] as? NSNumber
+            else {
+                reportDiskCapacityError("filesystem attributes omitted size or free-space values")
+                return nil
+            }
+
+            reportedDiskCapacityError = false
+            return DiskCapacity(totalBytes: total.uint64Value, freeBytes: free.uint64Value)
+        } catch {
+            reportDiskCapacityError(error.localizedDescription)
+            return nil
+        }
+    }
+
+    private func reportDiskCapacityError(_ message: String) {
+        guard !reportedDiskCapacityError else { return }
+        reportedDiskCapacityError = true
+        fputs("KillSwitch disk capacity sampling failed: \(message)\n", stderr)
+    }
+
+    private func makeDiskSummary(
+        now: Date,
+        counters: DiskCounters,
+        capacity: DiskCapacity?
+    ) -> DiskResourceSummary {
         defer { previousDisk = (now, counters) }
         guard let previousDisk else {
             return DiskResourceSummary(
+                capacity: capacity,
                 reads: counters.reads,
                 readBytes: counters.readBytes,
                 writes: counters.writes,
@@ -502,6 +539,7 @@ final class ResourceSampler {
 
         let elapsed = now.timeIntervalSince(previousDisk.date)
         return DiskResourceSummary(
+            capacity: capacity,
             reads: counters.reads,
             readBytes: counters.readBytes,
             writes: counters.writes,

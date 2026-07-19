@@ -63,6 +63,25 @@ public struct ResourceSamplingPolicy: Equatable, Sendable {
     }
 }
 
+public struct DiskCapacity: Equatable, Sendable {
+    public let totalBytes: UInt64
+    public let freeBytes: UInt64
+
+    public var occupiedBytes: UInt64 {
+        totalBytes - freeBytes
+    }
+
+    public var occupiedFraction: Double {
+        guard totalBytes > 0 else { return 0 }
+        return Double(occupiedBytes) / Double(totalBytes)
+    }
+
+    public init(totalBytes: UInt64, freeBytes: UInt64) {
+        self.totalBytes = totalBytes
+        self.freeBytes = min(freeBytes, totalBytes)
+    }
+}
+
 public struct SystemCPUTicks: Equatable, Sendable {
     public let user: UInt64
     public let nice: UInt64
