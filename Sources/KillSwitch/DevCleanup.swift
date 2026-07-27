@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import DevCleanupCore
 
@@ -263,9 +264,9 @@ struct DevCleanupTab: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    portsSection
                     summarySection
                     settingsSection
-                    portsSection
                     cleanedSection
                 }
                 .padding(16)
@@ -502,7 +503,7 @@ struct DevCleanupTab: View {
 
     private var portsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Dev servers & notable ports (\(monitor.portProcesses.count))")
+            Text("Running dev servers & notable ports (\(monitor.portProcesses.count))")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.white.opacity(0.7))
             if monitor.portProcesses.isEmpty {
@@ -528,6 +529,15 @@ struct DevCleanupTab: View {
                                 .foregroundColor(.white.opacity(0.4))
                         }
                         Spacer()
+                        Button {
+                            copyCommand(proc.command)
+                        } label: {
+                            Label("Copy", systemImage: "doc.on.doc")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundColor(.white.opacity(0.7))
+                        .help("Copy full command")
                         KillButton(pid: proc.pid) { monitor.killPort(pid: proc.pid) }
                     }
                     .padding(.horizontal, 12)
@@ -535,6 +545,15 @@ struct DevCleanupTab: View {
                     .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.05)))
                 }
             }
+        }
+    }
+
+    private func copyCommand(_ command: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        guard pasteboard.setString(command, forType: .string) else {
+            fputs("KillSwitch could not copy the dev server command to the clipboard.\n", stderr)
+            return
         }
     }
 
