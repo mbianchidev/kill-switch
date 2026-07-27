@@ -252,11 +252,14 @@ final class DevCleanupMonitor: ObservableObject {
 // MARK: - View
 
 struct DevCleanupTab: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var monitor = DevCleanupMonitor()
     @State private var portText = ""
     @State private var runtimeText = ""
     @State private var indicatorText = ""
     @State private var exclusionText = ""
+    @State private var copiedProcessID: Int32?
+    @State private var copyFeedbackRevision = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -275,6 +278,17 @@ struct DevCleanupTab: View {
         .background(Theme.background)
         .onAppear { monitor.start() }
         .onDisappear { monitor.stop() }
+        .task(id: copyFeedbackRevision) {
+            guard copiedProcessID != nil else { return }
+            do {
+                try await Task.sleep(nanoseconds: 1_600_000_000)
+            } catch {
+                return
+            }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
+                copiedProcessID = nil
+            }
+        }
     }
 
     private var header: some View {
@@ -512,6 +526,7 @@ struct DevCleanupTab: View {
                     .foregroundColor(.white.opacity(0.4))
             } else {
                 ForEach(monitor.portProcesses) { proc in
+                    let isCopied = copiedProcessID == proc.pid
                     HStack(spacing: 12) {
                         Text(":\(String(proc.port))")
                             .font(.system(size: 13, weight: .bold, design: .monospaced))
@@ -530,14 +545,20 @@ struct DevCleanupTab: View {
                         }
                         Spacer()
                         Button {
-                            copyCommand(proc.command)
+                            copyCommand(proc.command, from: proc.pid)
                         } label: {
-                            Label("Copy", systemImage: "doc.on.doc")
+                            Label(
+                                isCopied ? "Copied" : "Copy",
+                                systemImage: isCopied ? "checkmark.circle.fill" : "doc.on.doc"
+                            )
                                 .font(.system(size: 11, weight: .medium))
+                                .frame(width: 70, alignment: .leading)
+                                .contentTransition(.opacity)
                         }
                         .buttonStyle(.borderless)
-                        .foregroundColor(.white.opacity(0.7))
-                        .help("Copy full command")
+                        .foregroundColor(isCopied ? .green.opacity(0.9) : .white.opacity(0.7))
+                        .help(isCopied ? "Command copied" : "Copy full command")
+                        .accessibilityLabel(isCopied ? "Command copied" : "Copy full command")
                         KillButton(pid: proc.pid) { monitor.killPort(pid: proc.pid) }
                     }
                     .padding(.horizontal, 12)
@@ -548,13 +569,17 @@ struct DevCleanupTab: View {
         }
     }
 
-    private func copyCommand(_ command: String) {
+    private func copyCommand(_ command: String, from pid: Int32) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         guard pasteboard.setString(command, forType: .string) else {
             fputs("KillSwitch could not copy the dev server command to the clipboard.\n", stderr)
             return
         }
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
+            copiedProcessID = pid
+        }
+        copyFeedbackRevision += 1
     }
 
     private var cleanedSection: some View {
