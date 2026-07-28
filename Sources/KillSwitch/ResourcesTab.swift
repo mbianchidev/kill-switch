@@ -591,7 +591,7 @@ private struct ResourceHistoryChart: View {
     private var chart: some View {
         switch metric {
         case .cpu:
-            Chart(recentHistory) { point in
+            Chart(history) { point in
                 AreaMark(
                     x: .value("Time", point.date),
                     yStart: .value("Start", 0),
@@ -610,7 +610,7 @@ private struct ResourceHistoryChart: View {
             }
             .chartYScale(domain: 0...100)
         case .memory:
-            Chart(recentHistory) { point in
+            Chart(history) { point in
                 AreaMark(
                     x: .value("Time", point.date),
                     y: .value("Pressure", point.primary)
@@ -627,7 +627,7 @@ private struct ResourceHistoryChart: View {
             }
             .chartYScale(domain: 0...100)
         case .energy:
-            Chart(recentHistory) { point in
+            Chart(history) { point in
                 AreaMark(
                     x: .value("Time", point.date),
                     y: .value("Energy", point.primary)
@@ -643,7 +643,7 @@ private struct ResourceHistoryChart: View {
                 .interpolationMethod(.monotone)
             }
         case .disk:
-            Chart(recentHistory) { point in
+            Chart(history) { point in
                 LineMark(
                     x: .value("Time", point.date),
                     y: .value("Read", point.primary)
@@ -659,7 +659,7 @@ private struct ResourceHistoryChart: View {
                 .interpolationMethod(.monotone)
             }
         case .network:
-            Chart(recentHistory) { point in
+            Chart(history) { point in
                 LineMark(
                     x: .value("Time", point.date),
                     y: .value("Received", point.primary)
@@ -679,7 +679,7 @@ private struct ResourceHistoryChart: View {
 
     private var startupChart: some View {
         Chart {
-            if let point = recentHistory.last {
+            if let point = history.last {
                 RuleMark(x: .value("Latest sample", point.date))
                     .foregroundStyle(accentColor.opacity(0.28))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 3]))
@@ -758,7 +758,7 @@ private struct ResourceHistoryChart: View {
                     .tint(accentColor)
             }
 
-            Text(recentHistory.isEmpty ? "Collecting first sample…" : "Building 5-minute history…")
+            Text(history.isEmpty ? "Collecting first sample…" : "Building 5-minute history…")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(.white.opacity(0.68))
         }
@@ -772,18 +772,13 @@ private struct ResourceHistoryChart: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var recentHistory: [ResourceHistoryPoint] {
-        let cutoff = Date().addingTimeInterval(-historyWindow)
-        return history.filter { $0.date >= cutoff }
-    }
-
     private var isStartingUp: Bool {
-        recentHistory.count < 2
+        history.count < 2
     }
 
     private var timeDomain: ClosedRange<Date> {
         let interval = TimeInterval(ResourceSamplingPolicy.forMetric(metric).intervalSeconds)
-        let latest = max(recentHistory.last?.date ?? .distantPast, Date())
+        let latest = max(history.last?.date ?? .distantPast, Date())
         let end = latest.addingTimeInterval(interval / 2)
         return end.addingTimeInterval(-historyWindow)...end
     }
@@ -800,7 +795,7 @@ private struct ResourceHistoryChart: View {
     }
 
     private var latestValue: Double {
-        guard let point = recentHistory.last else { return 0 }
+        guard let point = history.last else { return 0 }
         return max(point.primary, point.secondary ?? 0)
     }
 
