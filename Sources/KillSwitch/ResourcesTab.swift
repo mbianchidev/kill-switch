@@ -540,39 +540,51 @@ private struct ResourceTableCell: View {
 }
 
 private struct ResourceHistoryChart: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let metric: ResourceMetric
     let history: [ResourceHistoryPoint]
     let pressure: Double?
 
     var body: some View {
         Group {
-            if history.isEmpty {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.black.opacity(0.22))
-                    Text("Collecting samples…")
-                        .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.35))
-                }
+            if isStartingUp {
+                startupChart
             } else {
                 chart
-                    .chartXAxis(.hidden)
-                    .chartYAxis {
-                        AxisMarks(position: .leading) {
-                            AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
-                                .foregroundStyle(Color.white.opacity(0.08))
-                            AxisValueLabel()
-                                .foregroundStyle(Color.white.opacity(0.4))
-                        }
-                    }
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.black.opacity(0.22))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border))
-                    )
             }
         }
+        .chartXScale(domain: timeDomain)
+        .chartXAxis(.hidden)
+        .chartYAxis {
+            AxisMarks(position: .leading) {
+                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                    .foregroundStyle(Color.white.opacity(0.08))
+                AxisValueLabel()
+                    .foregroundStyle(Color.white.opacity(0.4))
+            }
+        }
+        .chartPlotStyle { plotArea in
+            plotArea.background(
+                LinearGradient(
+                    colors: [.clear, accentColor.opacity(0.045)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.black.opacity(0.22))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border))
+        )
+        .overlay {
+            if isStartingUp {
+                startupStatus
+                    .transition(.opacity)
+            }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: isStartingUp)
     }
 
     @ViewBuilder
@@ -664,6 +676,139 @@ private struct ResourceHistoryChart: View {
             }
         }
     }
+
+    private var startupChart: some View {
+        Chart {
+            if let point = history.last {
+                RuleMark(x: .value("Latest sample", point.date))
+                    .foregroundStyle(accentColor.opacity(0.28))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 3]))
+
+                switch metric {
+                case .cpu:
+                    PointMark(
+                        x: .value("Time", point.date),
+                        y: .value("System", point.primary)
+                    )
+                    .foregroundStyle(Theme.cpuSystem)
+                    .symbolSize(34)
+
+                    PointMark(
+                        x: .value("Time", point.date),
+                        y: .value("User", point.primary + (point.secondary ?? 0))
+                    )
+                    .foregroundStyle(Theme.cpuUser)
+                    .symbolSize(34)
+                case .memory:
+                    PointMark(
+                        x: .value("Time", point.date),
+                        y: .value("Pressure", point.primary)
+                    )
+                    .foregroundStyle(memoryColor)
+                    .symbolSize(34)
+                case .energy:
+                    PointMark(
+                        x: .value("Time", point.date),
+                        y: .value("Energy", point.primary)
+                    )
+                    .foregroundStyle(Theme.energy)
+                    .symbolSize(34)
+                case .disk:
+                    PointMark(
+                        x: .value("Time", point.date),
+                        y: .value("Read", point.primary)
+                    )
+                    .foregroundStyle(Theme.inbound)
+                    .symbolSize(34)
+
+                    PointMark(
+                        x: .value("Time", point.date),
+                        y: .value("Write", point.secondary ?? 0)
+                    )
+                    .foregroundStyle(Theme.outbound)
+                    .symbolSize(34)
+                case .network:
+                    PointMark(
+                        x: .value("Time", point.date),
+                        y: .value("Received", point.primary)
+                    )
+                    .foregroundStyle(Theme.inbound)
+                    .symbolSize(34)
+
+                    PointMark(
+                        x: .value("Time", point.date),
+                        y: .value("Sent", point.secondary ?? 0)
+                    )
+                    .foregroundStyle(Theme.outbound)
+                    .symbolSize(34)
+                }
+            }
+        }
+        .chartYScale(domain: 0...startupYMaximum)
+    }
+
+    private var startupStatus: some View {
+        HStack(spacing: 7) {
+            if reduceMotion {
+                Image(systemName: "waveform.path.ecg")
+                    .foregroundColor(accentColor)
+            } else {
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(accentColor)
+            }
+
+            Text(history.isEmpty ? "Collecting first sample…" : "Building 5-minute history…")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.white.opacity(0.68))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            Capsule()
+                .fill(Color.black.opacity(0.62))
+                .overlay(Capsule().stroke(accentColor.opacity(0.22)))
+        )
+        .accessibilityElement(children: .combine)
+    }
+
+    private var isStartingUp: Bool {
+        history.count < 2
+    }
+
+    private var timeDomain: ClosedRange<Date> {
+        let interval = TimeInterval(ResourceSamplingPolicy.forMetric(metric).intervalSeconds)
+        let latest = max(history.last?.date ?? .distantPast, Date())
+        let end = latest.addingTimeInterval(interval / 2)
+        return end.addingTimeInterval(-historyWindow)...end
+    }
+
+    private var startupYMaximum: Double {
+        switch metric {
+        case .cpu, .memory:
+            return 100
+        case .energy:
+            return max(10, latestValue * 1.25)
+        case .disk, .network:
+            return max(1_024, latestValue * 1.25)
+        }
+    }
+
+    private var latestValue: Double {
+        guard let point = history.last else { return 0 }
+        return max(point.primary, point.secondary ?? 0)
+    }
+
+    private var accentColor: Color {
+        switch metric {
+        case .cpu: return Theme.cpuUser
+        case .memory: return memoryColor
+        case .energy: return Theme.energy
+        case .disk, .network: return Theme.inbound
+        }
+    }
+
+    private var historyWindow: TimeInterval { 300 }
 
     private var memoryColor: Color {
         let value = pressure ?? 0
