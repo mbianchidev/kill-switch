@@ -553,7 +553,6 @@ struct DevCleanupTab: View {
                             )
                                 .font(.system(size: 11, weight: .medium))
                                 .frame(width: 70, alignment: .leading)
-                                .contentTransition(.opacity)
                         }
                         .buttonStyle(.borderless)
                         .foregroundColor(isCopied ? .green.opacity(0.9) : .white.opacity(0.7))
