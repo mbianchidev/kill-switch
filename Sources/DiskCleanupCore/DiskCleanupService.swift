@@ -260,22 +260,22 @@ public final class DiskCleanupService {
         var permissionDeniedCount = 0
         var excludedCloudItemCount = 0
         var scannedEntryCount = 0
-        var incompleteAccumulatorNames: Set<String> = []
+        var incompleteAccumulatorPaths: Set<String> = []
         var reporter = ProgressReporter(
             stride: progressStride,
             minimumInterval: progressInterval
         )
 
         var accumulators: [DirectoryAccumulator] = []
-        var accumulatorIndexByName: [String: Int] = [:]
+        var accumulatorIndexByPath: [String: Int] = [:]
 
         guard let directEnumerator = fileManager.enumerator(
             at: root,
             includingPropertiesForKeys: Array(resourceKeys),
             options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants],
             errorHandler: { url, error in
-                if let name = self.relativeComponents(of: url, from: root)?.first {
-                    incompleteAccumulatorNames.insert(name)
+                if let path = self.directChildPath(containing: url, under: root) {
+                    incompleteAccumulatorPaths.insert(path)
                 }
                 if Self.isPermissionError(error) {
                     permissionDeniedCount += 1
@@ -323,7 +323,7 @@ public final class DiskCleanupService {
                 }
 
                 let name = url.lastPathComponent
-                accumulatorIndexByName[name] = accumulators.count
+                accumulatorIndexByPath[url.standardizedFileURL.path] = accumulators.count
                 accumulators.append(
                     DirectoryAccumulator(
                         url: url.standardizedFileURL,
@@ -354,8 +354,8 @@ public final class DiskCleanupService {
             // Hidden descendants count because moving the visible parent to Trash removes them too.
             options: [],
             errorHandler: { url, error in
-                if let name = self.relativeComponents(of: url, from: root)?.first {
-                    incompleteAccumulatorNames.insert(name)
+                if let path = self.directChildPath(containing: url, under: root) {
+                    incompleteAccumulatorPaths.insert(path)
                 }
                 if Self.isPermissionError(error) {
                     permissionDeniedCount += 1
@@ -397,7 +397,11 @@ public final class DiskCleanupService {
 
             do {
                 let values = try url.resourceValues(forKeys: resourceKeys)
-                guard let index = accumulatorIndexByName[directChildName] else {
+                let directChildPath = root
+                    .appendingPathComponent(directChildName)
+                    .standardizedFileURL
+                    .path
+                guard let index = accumulatorIndexByPath[directChildPath] else {
                     if relativeComponents.count == 1, values.isDirectory == true {
                         enumerator.skipDescendants()
                     }
@@ -438,7 +442,9 @@ public final class DiskCleanupService {
 
         let items = accumulators.map { accumulator in
             accumulator.item(
-                scanIncomplete: incompleteAccumulatorNames.contains(accumulator.name)
+                scanIncomplete: incompleteAccumulatorPaths.contains(
+                    accumulator.url.standardizedFileURL.path
+                )
             )
         }.sorted(by: Self.sortLargestFirst)
         return DiskCleanupScanResult(
@@ -607,6 +613,13 @@ public final class DiskCleanupService {
             return nil
         }
         return Array(candidateComponents.dropFirst(rootComponents.count))
+    }
+
+    private func directChildPath(containing url: URL, under root: URL) -> String? {
+        guard let name = relativeComponents(of: url, from: root)?.first else {
+            return nil
+        }
+        return root.appendingPathComponent(name).standardizedFileURL.path
     }
 
     private func checkCancellation(
