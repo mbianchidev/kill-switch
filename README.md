@@ -51,6 +51,9 @@ of fabricated data.
 - Opens on the **largest individual files first**, sorted by the disk space they
   currently use.
 - Switch between **Largest files**, **Temporary**, **Caches**, and **Large folders**.
+- Switching app tabs, cleanup categories, or browsed folders does not cancel
+  scans already in progress. Completed locations remain cached, and **Rescan**
+  keeps current rows visible while applying only added, updated, and removed items.
 - Browse folder contents with breadcrumbs, filter by name or path, reveal any item
   in Finder, and select one or more cleanup candidates.
 - Every cleanup requires confirmation and uses the macOS Trash; KillSwitch never
