@@ -520,6 +520,10 @@ struct DiskCleanupTab: View {
                     .foregroundColor(allVisibleSelected ? Theme.diskCleanupAccent : .white.opacity(0.35))
             }
             .buttonStyle(.plain)
+            .help(allVisibleSelected ? "Deselect all visible items" : "Select all visible items")
+            .accessibilityLabel(
+                allVisibleSelected ? "Deselect all visible items" : "Select all visible items"
+            )
             .disabled(selectableVisibleItems.isEmpty || monitor.isScanning || monitor.isTrashing)
             .frame(width: 22)
 
@@ -759,6 +763,7 @@ private struct DiskCleanupRow: View {
                     .font(.system(size: 10))
                     .foregroundColor(.white.opacity(0.32))
                     .help(item.protectionReason ?? "Protected")
+                    .accessibilityLabel(item.protectionReason ?? "Protected item")
                     .frame(width: 24)
             }
         }
@@ -794,6 +799,7 @@ private struct DiskCleanupRow: View {
             Image(systemName: "square")
                 .foregroundColor(.white.opacity(0.12))
                 .help(item.protectionReason ?? "Protected")
+                .accessibilityHidden(true)
         }
     }
 
