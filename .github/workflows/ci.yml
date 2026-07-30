@@ -23,6 +23,9 @@ jobs:
       - name: Dev cleanup core checks
         run: swift run DevCleanupCoreChecks
 
+      - name: Disk cleanup core checks
+        run: swift run DiskCleanupCoreChecks
+
       - name: Install path safety checks
         run: swift run InstallCoreChecks
 
