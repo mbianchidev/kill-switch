@@ -741,6 +741,7 @@ private struct DiskCleanupRow: View {
             .buttonStyle(.plain)
             .foregroundColor(.white.opacity(0.5))
             .help("Reveal in Finder")
+            .accessibilityLabel("Reveal \(item.name) in Finder")
             .frame(width: 24)
 
             if item.canTrash {
@@ -750,6 +751,7 @@ private struct DiskCleanupRow: View {
                 .buttonStyle(.plain)
                 .foregroundColor(Theme.diskCleanupAction.opacity(0.85))
                 .help("Move to Trash")
+                .accessibilityLabel("Move \(item.name) to Trash")
                 .disabled(isBusy)
                 .frame(width: 24)
             } else {

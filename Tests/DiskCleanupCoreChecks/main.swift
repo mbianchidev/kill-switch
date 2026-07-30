@@ -39,9 +39,14 @@ struct CheckRunner {
         try createDirectory(downloads)
         try createDirectory(movies)
         try createDirectory(hidden)
+        try createDirectory(downloads.appendingPathComponent(".git/objects", isDirectory: true))
 
         try writeFile(downloads.appendingPathComponent("medium.bin"), bytes: 32 * 1024)
         try writeFile(downloads.appendingPathComponent("small.bin"), bytes: 8 * 1024)
+        try writeFile(
+            downloads.appendingPathComponent(".git/objects/object.bin"),
+            bytes: 64 * 1024
+        )
         try writeFile(movies.appendingPathComponent("large.bin"), bytes: 128 * 1024)
         try writeFile(hidden.appendingPathComponent("hidden.bin"), bytes: 256 * 1024)
         try writeFile(
@@ -122,6 +127,10 @@ struct CheckRunner {
         check(
             folders.items.first(where: { $0.name == "Downloads" })?.protectionReason != nil,
             "protects standard home anchor folders"
+        )
+        check(
+            folders.items.first(where: { $0.name == "Downloads" })?.fileCount == 3,
+            "counts hidden descendants in a visible folder's cleanup size"
         )
     }
 
@@ -219,6 +228,11 @@ struct CheckRunner {
         try writeFile(validURL, bytes: 8192)
         let protectedURL = downloads.appendingPathComponent("protected.bin")
         try writeFile(protectedURL, bytes: 8192)
+        let normalizedURL = downloads.appendingPathComponent("normalized.bin")
+        try writeFile(normalizedURL, bytes: 8192)
+        let nonStandardURL = URL(
+            fileURLWithPath: downloads.appendingPathComponent("nested/../normalized.bin").path
+        )
 
         let outsideURL = fixtureRoot.appendingPathComponent("outside-trash.bin")
         try writeFile(outsideURL, bytes: 8192)
@@ -248,13 +262,31 @@ struct CheckRunner {
             modificationDate: nil,
             protectionReason: "Incomplete scan"
         )
+        let nonStandardItem = item(nonStandardURL, kind: .file)
         let result = service.moveToTrash(
-            [incompleteItem, validItem, rootItem, anchorItem, outsideItem, symlinkItem],
+            [
+                incompleteItem,
+                validItem,
+                nonStandardItem,
+                rootItem,
+                anchorItem,
+                outsideItem,
+                symlinkItem
+            ],
             category: .largestFiles
         )
 
-        check(result.movedItems == [validItem], "moves only a validated item")
-        check(movedPaths == [validURL.standardizedFileURL.path], "uses the injected Trash mover")
+        check(
+            result.movedItems == [validItem, nonStandardItem],
+            "moves only validated items"
+        )
+        check(
+            movedPaths == [
+                validURL.standardizedFileURL.path,
+                normalizedURL.standardizedFileURL.path
+            ],
+            "uses standardized URLs with the injected Trash mover"
+        )
         check(result.failures.count == 5, "reports every rejected Trash operation")
 
         let cacheURL = roots.caches.appendingPathComponent("safe-cache", isDirectory: true)

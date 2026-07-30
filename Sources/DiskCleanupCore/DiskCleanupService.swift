@@ -104,15 +104,16 @@ public final class DiskCleanupService {
         var seenPaths: Set<String> = []
 
         for item in items {
-            let path = item.url.standardizedFileURL.path
+            let candidate = item.url.standardizedFileURL
+            let path = candidate.path
             guard seenPaths.insert(path).inserted else { continue }
 
             do {
                 if let reason = item.protectionReason {
                     throw DiskCleanupError.unsafeTrashLocation(path, reason)
                 }
-                try validateTrashLocation(item.url, category: category)
-                try trashMover(item.url)
+                try validateTrashLocation(candidate, category: category)
+                try trashMover(candidate)
                 movedItems.append(item)
             } catch {
                 failures.append(
@@ -350,6 +351,7 @@ public final class DiskCleanupService {
         guard let enumerator = fileManager.enumerator(
             at: root,
             includingPropertiesForKeys: Array(resourceKeys),
+            // Hidden descendants count because moving the visible parent to Trash removes them too.
             options: [],
             errorHandler: { url, error in
                 if let name = self.relativeComponents(of: url, from: root)?.first {
