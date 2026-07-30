@@ -21,6 +21,7 @@ final class DiskCleanupMonitor: ObservableObject {
     private let trashQueue = DispatchQueue(label: "DiskCleanupMonitor.trash", qos: .utility)
     private var scanStates: [ScanKey: ScanState] = [:]
     private var navigationByCategory: [DiskCleanupCategory: [URL]] = [:]
+    private var filesystemMutationGeneration = 0
     private var hasStarted = false
 
     init(service: DiskCleanupService = DiskCleanupService()) {
@@ -105,6 +106,7 @@ final class DiskCleanupMonitor: ObservableObject {
         state.cancellationToken?.cancel()
         state.cancellationToken = nil
         state.requestID = nil
+        state.requestMutationGeneration = nil
         state.isScanning = false
         state.progress = nil
         state.statusMessage = "Scan cancelled."
@@ -223,7 +225,8 @@ final class DiskCleanupMonitor: ObservableObject {
     private func scanCurrentLocationIfNeeded() {
         let key = currentScanKey
         let currentState = scanStates[key]
-        guard currentState?.isScanning != true, currentState?.lastScan == nil else { return }
+        guard currentState?.isScanning != true else { return }
+        guard currentState?.lastScan == nil || currentState?.requiresRefresh == true else { return }
         beginScan(for: key)
     }
 
@@ -241,6 +244,7 @@ final class DiskCleanupMonitor: ObservableObject {
         state.scannedEntryCount = 0
         state.errorMessage = nil
         state.statusMessage = nil
+        state.requestMutationGeneration = filesystemMutationGeneration
         setState(state, for: key)
 
         let serviceBox = serviceBox
@@ -297,6 +301,18 @@ final class DiskCleanupMonitor: ObservableObject {
         requestID: UUID
     ) {
         guard var state = scanStates[key], state.requestID == requestID else { return }
+        guard state.requestMutationGeneration == filesystemMutationGeneration else {
+            state.isScanning = false
+            state.progress = nil
+            state.cancellationToken = nil
+            state.requestID = nil
+            state.requestMutationGeneration = nil
+            state.requiresRefresh = true
+            setState(state, for: key)
+            beginScan(for: key)
+            return
+        }
+
         let isRescan = state.lastScan != nil
         let delta = DiskCleanupScanDelta(
             previousItems: state.items,
@@ -320,6 +336,8 @@ final class DiskCleanupMonitor: ObservableObject {
         state.progress = nil
         state.cancellationToken = nil
         state.requestID = nil
+        state.requestMutationGeneration = nil
+        state.requiresRefresh = false
         state.errorMessage = nil
         state.statusMessage = isRescan ? rescanStatus(for: delta) : nil
         setState(state, for: key)
@@ -331,6 +349,7 @@ final class DiskCleanupMonitor: ObservableObject {
         state.progress = nil
         state.cancellationToken = nil
         state.requestID = nil
+        state.requestMutationGeneration = nil
         setState(state, for: key)
     }
 
@@ -345,6 +364,7 @@ final class DiskCleanupMonitor: ObservableObject {
         state.progress = nil
         state.cancellationToken = nil
         state.requestID = nil
+        state.requestMutationGeneration = nil
         setState(state, for: key)
     }
 
@@ -352,11 +372,8 @@ final class DiskCleanupMonitor: ObservableObject {
         _ result: DiskCleanupTrashResult,
         requestKey: ScanKey
     ) {
-        let movedIDs = Set(result.movedItems.map(\.id))
-        objectWillChange.send()
-        for key in Array(scanStates.keys) {
-            scanStates[key]?.items.removeAll { movedIDs.contains($0.id) }
-            scanStates[key]?.selectedIDs.subtract(movedIDs)
+        if !result.movedItems.isEmpty {
+            reconcileCaches(afterMoving: result.movedItems)
         }
 
         var requestState = state(for: requestKey)
@@ -377,6 +394,100 @@ final class DiskCleanupMonitor: ObservableObject {
         }
         scanStates[requestKey] = requestState
         isTrashing = false
+    }
+
+    private func reconcileCaches(afterMoving movedItems: [DiskCleanupItem]) {
+        let previousMutationGeneration = filesystemMutationGeneration
+        filesystemMutationGeneration += 1
+        objectWillChange.send()
+
+        let movedDirectories = movedItems.filter { $0.kind == .directory }
+        for key in Array(scanStates.keys) {
+            guard var state = scanStates[key] else { continue }
+
+            if movedDirectories.contains(where: {
+                Self.isDescendantOrEqual(key.directory, of: $0.url)
+            }) {
+                state.cancellationToken?.cancel()
+                scanStates.removeValue(forKey: key)
+                continue
+            }
+
+            guard movedItems.contains(where: { scan(key, includes: $0.url) }) else {
+                if state.isScanning,
+                   state.requestMutationGeneration == previousMutationGeneration {
+                    state.requestMutationGeneration = filesystemMutationGeneration
+                    scanStates[key] = state
+                }
+                continue
+            }
+
+            state.items = reconciledItems(state.items, removing: movedItems)
+            state.selectedIDs = Set(state.selectedIDs.filter { id in
+                let selectedURL = URL(fileURLWithPath: id)
+                return !movedItems.contains {
+                    Self.isDescendantOrEqual(selectedURL, of: $0.url)
+                }
+            })
+            state.requiresRefresh = true
+            scanStates[key] = state
+        }
+
+        for category in Array(navigationByCategory.keys) {
+            guard let stack = navigationByCategory[category],
+                  let affectedIndex = stack.firstIndex(where: { url in
+                      movedDirectories.contains {
+                          Self.isDescendantOrEqual(url, of: $0.url)
+                      }
+                  }) else {
+                continue
+            }
+            navigationByCategory[category] = Array(stack.prefix(max(1, affectedIndex)))
+        }
+    }
+
+    private func reconciledItems(
+        _ items: [DiskCleanupItem],
+        removing movedItems: [DiskCleanupItem]
+    ) -> [DiskCleanupItem] {
+        items.compactMap { item in
+            if movedItems.contains(where: {
+                Self.isDescendantOrEqual(item.url, of: $0.url)
+            }) {
+                return nil
+            }
+
+            let descendants = movedItems.filter {
+                Self.isDescendantOrEqual($0.url, of: item.url)
+            }
+            guard !descendants.isEmpty else { return item }
+
+            let removedBytes = descendants.reduce(UInt64(0)) { $0 + $1.sizeBytes }
+            let removedFiles = descendants.reduce(0) {
+                $0 + ($1.kind == .file ? 1 : $1.fileCount)
+            }
+            return DiskCleanupItem(
+                url: item.url,
+                name: item.name,
+                kind: item.kind,
+                sizeBytes: item.sizeBytes > removedBytes ? item.sizeBytes - removedBytes : 0,
+                fileCount: max(0, item.fileCount - removedFiles),
+                modificationDate: item.modificationDate,
+                protectionReason: item.protectionReason
+            )
+        }
+    }
+
+    private func scan(_ key: ScanKey, includes url: URL) -> Bool {
+        guard Self.isDescendantOrEqual(url, of: key.directory) else { return false }
+        guard key.category == .largestFiles || key.category == .largeFolders else {
+            return true
+        }
+
+        let library = service.homeDirectory.appendingPathComponent("Library", isDirectory: true)
+        let trash = service.homeDirectory.appendingPathComponent(".Trash", isDirectory: true)
+        return !Self.isDescendantOrEqual(url, of: library)
+            && !Self.isDescendantOrEqual(url, of: trash)
     }
 
     private func rescanStatus(for delta: DiskCleanupScanDelta) -> String {
@@ -403,6 +514,12 @@ final class DiskCleanupMonitor: ObservableObject {
         scanStates[key] = state
     }
 
+    private static func isDescendantOrEqual(_ candidate: URL, of root: URL) -> Bool {
+        candidate.standardizedFileURL.pathComponents.starts(
+            with: root.standardizedFileURL.pathComponents
+        )
+    }
+
     private struct ScanKey: Hashable, Sendable {
         let category: DiskCleanupCategory
         let directory: URL
@@ -426,7 +543,9 @@ final class DiskCleanupMonitor: ObservableObject {
         var errorMessage: String?
         var statusMessage: String?
         var requestID: UUID?
+        var requestMutationGeneration: Int?
         var cancellationToken: DiskCleanupCancellationToken?
+        var requiresRefresh = false
     }
 }
 
