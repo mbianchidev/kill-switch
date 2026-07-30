@@ -22,6 +22,7 @@ struct CheckRunner {
                 withIntermediateDirectories: true
             )
             try checkScanning(in: fixtureRoot)
+            checkScanDelta()
             try checkCancellation(in: fixtureRoot)
             try checkIncompleteFolderProtection(in: fixtureRoot)
             try checkTrashSafety(in: fixtureRoot)
@@ -187,6 +188,42 @@ struct CheckRunner {
         } catch {
             fail("cancels before listing directory contents: \(error.localizedDescription)")
         }
+    }
+
+    private mutating func checkScanDelta() {
+        let root = URL(fileURLWithPath: "/tmp/disk-cleanup-delta", isDirectory: true)
+        let removed = item(root.appendingPathComponent("removed.bin"), kind: .file)
+        let unchanged = item(root.appendingPathComponent("unchanged.bin"), kind: .file)
+        let updatedURL = root.appendingPathComponent("updated.bin")
+        let previousUpdated = item(updatedURL, kind: .file)
+        let currentUpdated = DiskCleanupItem(
+            url: updatedURL,
+            name: updatedURL.lastPathComponent,
+            kind: .file,
+            sizeBytes: 16_384,
+            fileCount: 1,
+            modificationDate: Date(timeIntervalSince1970: 2),
+            protectionReason: nil
+        )
+        let added = item(root.appendingPathComponent("added.bin"), kind: .file)
+        let previous = [removed, previousUpdated, unchanged]
+        let current = [currentUpdated, added, unchanged]
+
+        let delta = DiskCleanupScanDelta(previousItems: previous, currentItems: current)
+        check(delta.addedItems == [added], "identifies added scan items")
+        check(delta.updatedItems == [currentUpdated], "identifies updated scan items")
+        check(delta.removedItems == [removed], "identifies removed scan items")
+        check(delta.changeCount == 3, "counts every differential scan change")
+        check(
+            delta.applying(to: previous) == current,
+            "applies scan changes in the current scan order"
+        )
+
+        let unchangedDelta = DiskCleanupScanDelta(
+            previousItems: current,
+            currentItems: current
+        )
+        check(unchangedDelta.isEmpty, "reports an empty differential scan")
     }
 
     private mutating func checkIncompleteFolderProtection(in fixtureRoot: URL) throws {

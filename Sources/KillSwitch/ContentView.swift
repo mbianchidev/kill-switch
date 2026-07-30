@@ -16,6 +16,7 @@ struct ContentView: View {
     @StateObject private var diagnostics = DiagnosticsController.shared
     @StateObject private var watchdog = CPUWatchdog()
     @StateObject private var resourceMonitor = ResourceMonitor()
+    @StateObject private var diskCleanupMonitor = DiskCleanupMonitor()
     @ObservedObject private var updater = UpdateChecker.shared
 
     var body: some View {
@@ -23,7 +24,7 @@ struct ContentView: View {
             ResourcesTab(monitor: resourceMonitor)
                 .tabItem { Label("Resources", systemImage: "waveform.path.ecg") }
                 .tag(MainTab.resources)
-            DiskCleanupTab()
+            DiskCleanupTab(monitor: diskCleanupMonitor)
                 .tabItem { Label("Disk cleanup", systemImage: "internaldrive") }
                 .tag(MainTab.diskCleanup)
             DevCleanupTab()

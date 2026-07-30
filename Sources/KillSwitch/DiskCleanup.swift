@@ -2,115 +2,149 @@ import AppKit
 import DiskCleanupCore
 import SwiftUI
 
+// The monitor shares this immutable service across scan workers and its serial Trash worker.
+private final class DiskCleanupServiceBox: @unchecked Sendable {
+    let service: DiskCleanupService
+
+    init(_ service: DiskCleanupService) {
+        self.service = service
+    }
+}
+
+@MainActor
 final class DiskCleanupMonitor: ObservableObject {
     @Published private(set) var category: DiskCleanupCategory = .largestFiles
-    @Published private(set) var items: [DiskCleanupItem] = []
-    @Published private(set) var navigationStack: [URL] = []
-    @Published private(set) var isScanning = false
     @Published private(set) var isTrashing = false
-    @Published private(set) var progress: DiskCleanupProgress?
-    @Published private(set) var scannedEntryCount = 0
-    @Published private(set) var skippedItemCount = 0
-    @Published private(set) var permissionDeniedCount = 0
-    @Published private(set) var excludedCloudItemCount = 0
-    @Published private(set) var lastScan: Date?
-    @Published private(set) var errorMessage: String?
-    @Published private(set) var statusMessage: String?
-    @Published var selectedIDs: Set<String> = []
 
-    private let service: DiskCleanupService
-    private let workQueue = DispatchQueue(label: "DiskCleanupMonitor.work", qos: .utility)
-    private var cancellationToken: DiskCleanupCancellationToken?
-    private var generation = 0
+    private let serviceBox: DiskCleanupServiceBox
+    private let scanQueue: OperationQueue
+    private let trashQueue = DispatchQueue(label: "DiskCleanupMonitor.trash", qos: .utility)
+    private var scanStates: [ScanKey: ScanState] = [:]
+    private var navigationByCategory: [DiskCleanupCategory: [URL]] = [:]
+    private var filesystemMutationGeneration = 0
     private var hasStarted = false
 
     init(service: DiskCleanupService = DiskCleanupService()) {
-        self.service = service
+        serviceBox = DiskCleanupServiceBox(service)
+        let scanQueue = OperationQueue()
+        scanQueue.name = "DiskCleanupMonitor.scan"
+        scanQueue.qualityOfService = .utility
+        scanQueue.maxConcurrentOperationCount = 2
+        self.scanQueue = scanQueue
     }
 
+    private var service: DiskCleanupService { serviceBox.service }
+
+    var items: [DiskCleanupItem] { currentState?.items ?? [] }
+    var navigationStack: [URL] {
+        guard category != .largestFiles else { return [] }
+        return navigationByCategory[category] ?? [service.rootURL(for: category)]
+    }
     var currentDirectory: URL? { navigationStack.last }
+    var isScanning: Bool { currentState?.isScanning ?? false }
+    var progress: DiskCleanupProgress? { currentState?.progress }
+    var scannedEntryCount: Int { currentState?.scannedEntryCount ?? 0 }
+    var skippedItemCount: Int { currentState?.skippedItemCount ?? 0 }
+    var permissionDeniedCount: Int { currentState?.permissionDeniedCount ?? 0 }
+    var excludedCloudItemCount: Int { currentState?.excludedCloudItemCount ?? 0 }
+    var lastScan: Date? { currentState?.lastScan }
+    var errorMessage: String? { currentState?.errorMessage }
+    var statusMessage: String? { currentState?.statusMessage }
+    var selectedIDs: Set<String> { currentState?.selectedIDs ?? [] }
 
     var selectedItems: [DiskCleanupItem] {
         items.filter { selectedIDs.contains($0.id) }
     }
 
-    func start(category: DiskCleanupCategory) {
+    func start() {
         if !hasStarted {
             hasStarted = true
-            selectCategory(category)
-        } else if items.isEmpty && !isScanning {
-            scanCurrentLocation()
+            initializeNavigation(for: category)
         }
+        scanCurrentLocationIfNeeded()
     }
 
     func selectCategory(_ newCategory: DiskCleanupCategory) {
         guard !isTrashing else { return }
+        initializeNavigation(for: newCategory)
         category = newCategory
-        selectedIDs.removeAll()
-        if newCategory == .largestFiles {
-            navigationStack = []
-        } else {
-            navigationStack = [service.rootURL(for: newCategory)]
-        }
-        scanCurrentLocation()
+        scanCurrentLocationIfNeeded()
     }
 
     func scanCurrentLocation() {
         guard !isTrashing else { return }
-        beginScan(
-            category: category,
-            directory: category == .largestFiles ? nil : currentDirectory
-        )
+        beginScan(for: currentScanKey)
     }
 
     func openDirectory(_ item: DiskCleanupItem) {
         guard item.kind == .directory,
               category != .largestFiles,
-              !isScanning,
               !isTrashing else {
             return
         }
-        navigationStack.append(item.url)
-        selectedIDs.removeAll()
-        beginScan(category: category, directory: item.url)
+        objectWillChange.send()
+        navigationByCategory[category, default: [service.rootURL(for: category)]].append(
+            item.url.standardizedFileURL
+        )
+        scanCurrentLocationIfNeeded()
     }
 
     func navigate(to index: Int) {
         guard category != .largestFiles,
               navigationStack.indices.contains(index),
-              !isScanning,
               !isTrashing else {
             return
         }
-        navigationStack = Array(navigationStack.prefix(index + 1))
-        selectedIDs.removeAll()
-        beginScan(category: category, directory: navigationStack.last)
+        objectWillChange.send()
+        navigationByCategory[category] = Array(navigationStack.prefix(index + 1))
+        scanCurrentLocationIfNeeded()
     }
 
     func cancelScan() {
-        cancellationToken?.cancel()
-        cancellationToken = nil
-        generation += 1
-        isScanning = false
-        progress = nil
+        let key = currentScanKey
+        guard var state = scanStates[key], state.isScanning else { return }
+        state.cancellationToken?.cancel()
+        state.cancellationToken = nil
+        state.requestID = nil
+        state.requestMutationGeneration = nil
+        state.isScanning = false
+        state.progress = nil
+        state.statusMessage = "Scan cancelled."
+        setState(state, for: key)
     }
 
     func toggleSelection(_ item: DiskCleanupItem) {
-        guard item.canTrash else { return }
-        if selectedIDs.contains(item.id) {
-            selectedIDs.remove(item.id)
+        guard item.canTrash, !isTrashing else { return }
+        let key = currentScanKey
+        var state = state(for: key)
+        if state.selectedIDs.contains(item.id) {
+            state.selectedIDs.remove(item.id)
         } else {
-            selectedIDs.insert(item.id)
+            state.selectedIDs.insert(item.id)
         }
+        setState(state, for: key)
     }
 
     func setSelection(_ selected: Bool, for items: [DiskCleanupItem]) {
+        guard !isTrashing else { return }
         let ids = Set(items.filter(\.canTrash).map(\.id))
+        let key = currentScanKey
+        var state = state(for: key)
         if selected {
-            selectedIDs.formUnion(ids)
+            state.selectedIDs.formUnion(ids)
         } else {
-            selectedIDs.subtract(ids)
+            state.selectedIDs.subtract(ids)
         }
+        setState(state, for: key)
+    }
+
+    func clearSelection() {
+        guard !isTrashing else { return }
+        let key = currentScanKey
+        var state = state(for: key)
+        guard !state.selectedIDs.isEmpty else { return }
+        state.selectedIDs.removeAll()
+        setState(state, for: key)
     }
 
     func moveToTrash(_ requestedItems: [DiskCleanupItem]) {
@@ -118,33 +152,21 @@ final class DiskCleanupMonitor: ObservableObject {
         guard !safeItems.isEmpty, !isScanning, !isTrashing else { return }
 
         isTrashing = true
-        errorMessage = nil
-        statusMessage = nil
+        let requestKey = currentScanKey
+        var requestState = state(for: requestKey)
+        requestState.errorMessage = nil
+        requestState.statusMessage = nil
+        setState(requestState, for: requestKey)
         let requestCategory = category
+        let serviceBox = serviceBox
 
-        workQueue.async { [weak self] in
-            guard let self else { return }
-            let result = self.service.moveToTrash(safeItems, category: requestCategory)
+        trashQueue.async { [weak self] in
+            let result = serviceBox.service.moveToTrash(
+                safeItems,
+                category: requestCategory
+            )
             DispatchQueue.main.async {
-                let movedIDs = Set(result.movedItems.map(\.id))
-                self.items.removeAll { movedIDs.contains($0.id) }
-                self.selectedIDs.subtract(movedIDs)
-                self.isTrashing = false
-
-                if !result.movedItems.isEmpty {
-                    let bytes = result.movedItems.reduce(UInt64(0)) { $0 + $1.sizeBytes }
-                    self.statusMessage = "Moved \(result.movedItems.count) item(s) (\(formatBytes(bytes))) to Trash."
-                }
-
-                if !result.failures.isEmpty {
-                    let details = result.failures
-                        .map { "\($0.item.url.path): \($0.message)" }
-                        .joined(separator: "\n")
-                    fputs("KillSwitch disk cleanup failed:\n\(details)\n", stderr)
-                    self.errorMessage = result.failures.count == 1
-                        ? result.failures[0].message
-                        : "\(result.failures.count) items could not be moved to Trash. \(result.failures[0].message)"
-                }
+                self?.finishTrash(result, requestKey: requestKey)
             }
         }
     }
@@ -176,83 +198,363 @@ final class DiskCleanupMonitor: ObservableObject {
         guard let url = URL(
             string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
         ), NSWorkspace.shared.open(url) else {
-            errorMessage = "Could not open Full Disk Access settings."
+            var state = state(for: currentScanKey)
+            state.errorMessage = "Could not open Full Disk Access settings."
+            setState(state, for: currentScanKey)
             return
         }
     }
 
-    private func beginScan(
-        category scanCategory: DiskCleanupCategory,
-        directory: URL?
-    ) {
-        guard !isTrashing else { return }
-        cancellationToken?.cancel()
-        generation += 1
-        let scanGeneration = generation
-        let token = DiskCleanupCancellationToken()
-        cancellationToken = token
-        isScanning = true
-        items = []
-        progress = nil
-        scannedEntryCount = 0
-        skippedItemCount = 0
-        permissionDeniedCount = 0
-        excludedCloudItemCount = 0
-        errorMessage = nil
-        statusMessage = nil
-        selectedIDs.removeAll()
+    private var currentScanKey: ScanKey {
+        ScanKey(
+            category: category,
+            directory: category == .largestFiles
+                ? service.rootURL(for: category)
+                : currentDirectory ?? service.rootURL(for: category)
+        )
+    }
 
-        workQueue.async { [weak self] in
-            guard let self else { return }
+    private var currentState: ScanState? {
+        scanStates[currentScanKey]
+    }
+
+    private func initializeNavigation(for category: DiskCleanupCategory) {
+        guard category != .largestFiles, navigationByCategory[category] == nil else { return }
+        navigationByCategory[category] = [service.rootURL(for: category)]
+    }
+
+    private func scanCurrentLocationIfNeeded() {
+        let key = currentScanKey
+        let currentState = scanStates[key]
+        guard currentState?.isScanning != true else { return }
+        guard currentState?.lastScan == nil || currentState?.requiresRefresh == true else { return }
+        beginScan(for: key)
+    }
+
+    private func beginScan(for key: ScanKey) {
+        guard !isTrashing else { return }
+        var state = state(for: key)
+        guard !state.isScanning else { return }
+
+        let requestID = UUID()
+        let token = DiskCleanupCancellationToken()
+        state.requestID = requestID
+        state.cancellationToken = token
+        state.isScanning = true
+        state.progress = nil
+        state.scannedEntryCount = 0
+        state.skippedItemCount = 0
+        state.permissionDeniedCount = 0
+        state.excludedCloudItemCount = 0
+        state.errorMessage = nil
+        state.statusMessage = nil
+        state.requestMutationGeneration = filesystemMutationGeneration
+        setState(state, for: key)
+
+        let serviceBox = serviceBox
+        scanQueue.addOperation { [weak self] in
             do {
-                let result = try self.service.scan(
-                    category: scanCategory,
-                    directory: directory,
+                let result = try serviceBox.service.scan(
+                    category: key.category,
+                    directory: key.category == .largestFiles ? nil : key.directory,
                     cancellationToken: token,
                     progress: { [weak self] progress in
                         DispatchQueue.main.async {
-                            guard let self, self.generation == scanGeneration else { return }
-                            self.progress = progress
-                            self.scannedEntryCount = progress.scannedEntryCount
+                            self?.receiveProgress(
+                                progress,
+                                for: key,
+                                requestID: requestID
+                            )
                         }
                     }
                 )
                 DispatchQueue.main.async {
-                    guard self.generation == scanGeneration else { return }
-                    self.items = result.items
-                    self.scannedEntryCount = result.scannedEntryCount
-                    self.skippedItemCount = result.skippedItemCount
-                    self.permissionDeniedCount = result.permissionDeniedCount
-                    self.excludedCloudItemCount = result.excludedCloudItemCount
-                    self.lastScan = Date()
-                    self.isScanning = false
-                    self.progress = nil
-                    self.cancellationToken = nil
+                    self?.finishScan(result, for: key, requestID: requestID)
                 }
             } catch DiskCleanupError.cancelled {
                 DispatchQueue.main.async {
-                    guard self.generation == scanGeneration else { return }
-                    self.isScanning = false
-                    self.progress = nil
-                    self.cancellationToken = nil
+                    self?.finishCancelledScan(for: key, requestID: requestID)
                 }
             } catch {
                 fputs("KillSwitch disk scan failed: \(error.localizedDescription)\n", stderr)
                 DispatchQueue.main.async {
-                    guard self.generation == scanGeneration else { return }
-                    self.errorMessage = error.localizedDescription
-                    self.isScanning = false
-                    self.progress = nil
-                    self.cancellationToken = nil
+                    self?.finishScan(
+                        with: error,
+                        for: key,
+                        requestID: requestID
+                    )
                 }
             }
         }
     }
+
+    private func receiveProgress(
+        _ progress: DiskCleanupProgress,
+        for key: ScanKey,
+        requestID: UUID
+    ) {
+        guard var state = scanStates[key], state.requestID == requestID else { return }
+        state.progress = progress
+        state.scannedEntryCount = progress.scannedEntryCount
+        setState(state, for: key)
+    }
+
+    private func finishScan(
+        _ result: DiskCleanupScanResult,
+        for key: ScanKey,
+        requestID: UUID
+    ) {
+        guard var state = scanStates[key], state.requestID == requestID else { return }
+        guard state.requestMutationGeneration == filesystemMutationGeneration else {
+            state.isScanning = false
+            state.progress = nil
+            state.cancellationToken = nil
+            state.requestID = nil
+            state.requestMutationGeneration = nil
+            state.requiresRefresh = true
+            setState(state, for: key)
+            beginScan(for: key)
+            return
+        }
+
+        let isRescan = state.lastScan != nil
+        let delta = DiskCleanupScanDelta(
+            previousItems: state.items,
+            currentItems: result.items
+        )
+        state.items = delta.applying(to: state.items)
+
+        var currentItemsByID: [String: DiskCleanupItem] = [:]
+        for item in state.items {
+            currentItemsByID[item.id] = item
+        }
+        state.selectedIDs = Set(state.selectedIDs.filter { id in
+            currentItemsByID[id]?.canTrash == true
+        })
+        state.scannedEntryCount = result.scannedEntryCount
+        state.skippedItemCount = result.skippedItemCount
+        state.permissionDeniedCount = result.permissionDeniedCount
+        state.excludedCloudItemCount = result.excludedCloudItemCount
+        state.lastScan = Date()
+        state.isScanning = false
+        state.progress = nil
+        state.cancellationToken = nil
+        state.requestID = nil
+        state.requestMutationGeneration = nil
+        state.requiresRefresh = false
+        state.errorMessage = nil
+        state.statusMessage = isRescan ? rescanStatus(for: delta) : nil
+        setState(state, for: key)
+    }
+
+    private func finishCancelledScan(for key: ScanKey, requestID: UUID) {
+        guard var state = scanStates[key], state.requestID == requestID else { return }
+        state.isScanning = false
+        state.progress = nil
+        state.cancellationToken = nil
+        state.requestID = nil
+        state.requestMutationGeneration = nil
+        setState(state, for: key)
+    }
+
+    private func finishScan(
+        with error: Error,
+        for key: ScanKey,
+        requestID: UUID
+    ) {
+        guard var state = scanStates[key], state.requestID == requestID else { return }
+        state.errorMessage = error.localizedDescription
+        state.isScanning = false
+        state.progress = nil
+        state.cancellationToken = nil
+        state.requestID = nil
+        state.requestMutationGeneration = nil
+        setState(state, for: key)
+    }
+
+    private func finishTrash(
+        _ result: DiskCleanupTrashResult,
+        requestKey: ScanKey
+    ) {
+        if !result.movedItems.isEmpty {
+            reconcileCaches(afterMoving: result.movedItems)
+        }
+
+        var requestState = state(for: requestKey)
+        if !result.movedItems.isEmpty {
+            let bytes = result.movedItems.reduce(UInt64(0)) { $0 + $1.sizeBytes }
+            requestState.statusMessage =
+                "Moved \(result.movedItems.count) item(s) (\(formatBytes(bytes))) to Trash."
+        }
+
+        if !result.failures.isEmpty {
+            let details = result.failures
+                .map { "\($0.item.url.path): \($0.message)" }
+                .joined(separator: "\n")
+            fputs("KillSwitch disk cleanup failed:\n\(details)\n", stderr)
+            requestState.errorMessage = result.failures.count == 1
+                ? result.failures[0].message
+                : "\(result.failures.count) items could not be moved to Trash. \(result.failures[0].message)"
+        }
+        scanStates[requestKey] = requestState
+        isTrashing = false
+    }
+
+    private func reconcileCaches(afterMoving movedItems: [DiskCleanupItem]) {
+        let previousMutationGeneration = filesystemMutationGeneration
+        filesystemMutationGeneration += 1
+        objectWillChange.send()
+
+        let movedDirectories = movedItems.filter { $0.kind == .directory }
+        for key in Array(scanStates.keys) {
+            guard var state = scanStates[key] else { continue }
+
+            if movedDirectories.contains(where: {
+                Self.isDescendantOrEqual(key.directory, of: $0.url)
+            }) {
+                state.cancellationToken?.cancel()
+                scanStates.removeValue(forKey: key)
+                continue
+            }
+
+            guard movedItems.contains(where: { scan(key, includes: $0.url) }) else {
+                if state.isScanning,
+                   state.requestMutationGeneration == previousMutationGeneration {
+                    state.requestMutationGeneration = filesystemMutationGeneration
+                    scanStates[key] = state
+                }
+                continue
+            }
+
+            state.items = reconciledItems(state.items, removing: movedItems)
+            state.selectedIDs = Set(state.selectedIDs.filter { id in
+                let selectedURL = URL(fileURLWithPath: id)
+                return !movedItems.contains {
+                    Self.isDescendantOrEqual(selectedURL, of: $0.url)
+                }
+            })
+            state.requiresRefresh = true
+            scanStates[key] = state
+        }
+
+        for category in Array(navigationByCategory.keys) {
+            guard let stack = navigationByCategory[category],
+                  let affectedIndex = stack.firstIndex(where: { url in
+                      movedDirectories.contains {
+                          Self.isDescendantOrEqual(url, of: $0.url)
+                      }
+                  }) else {
+                continue
+            }
+            navigationByCategory[category] = Array(stack.prefix(max(1, affectedIndex)))
+        }
+    }
+
+    private func reconciledItems(
+        _ items: [DiskCleanupItem],
+        removing movedItems: [DiskCleanupItem]
+    ) -> [DiskCleanupItem] {
+        items.compactMap { item in
+            if movedItems.contains(where: {
+                Self.isDescendantOrEqual(item.url, of: $0.url)
+            }) {
+                return nil
+            }
+
+            let descendants = movedItems.filter {
+                Self.isDescendantOrEqual($0.url, of: item.url)
+            }
+            guard !descendants.isEmpty else { return item }
+
+            let removedBytes = descendants.reduce(UInt64(0)) { $0 + $1.sizeBytes }
+            let removedFiles = descendants.reduce(0) {
+                $0 + ($1.kind == .file ? 1 : $1.fileCount)
+            }
+            return DiskCleanupItem(
+                url: item.url,
+                name: item.name,
+                kind: item.kind,
+                sizeBytes: item.sizeBytes > removedBytes ? item.sizeBytes - removedBytes : 0,
+                fileCount: max(0, item.fileCount - removedFiles),
+                modificationDate: item.modificationDate,
+                protectionReason: item.protectionReason
+            )
+        }
+    }
+
+    private func scan(_ key: ScanKey, includes url: URL) -> Bool {
+        guard Self.isDescendantOrEqual(url, of: key.directory) else { return false }
+        guard key.category == .largestFiles || key.category == .largeFolders else {
+            return true
+        }
+
+        let library = service.homeDirectory.appendingPathComponent("Library", isDirectory: true)
+        let trash = service.homeDirectory.appendingPathComponent(".Trash", isDirectory: true)
+        return !Self.isDescendantOrEqual(url, of: library)
+            && !Self.isDescendantOrEqual(url, of: trash)
+    }
+
+    private func rescanStatus(for delta: DiskCleanupScanDelta) -> String {
+        guard !delta.isEmpty else { return "Rescan found no changes." }
+        var changes: [String] = []
+        if !delta.addedItems.isEmpty {
+            changes.append("\(delta.addedItems.count) added")
+        }
+        if !delta.updatedItems.isEmpty {
+            changes.append("\(delta.updatedItems.count) updated")
+        }
+        if !delta.removedItems.isEmpty {
+            changes.append("\(delta.removedItems.count) removed")
+        }
+        return "Rescan applied " + changes.joined(separator: ", ") + "."
+    }
+
+    private func state(for key: ScanKey) -> ScanState {
+        scanStates[key] ?? ScanState()
+    }
+
+    private func setState(_ state: ScanState, for key: ScanKey) {
+        objectWillChange.send()
+        scanStates[key] = state
+    }
+
+    private static func isDescendantOrEqual(_ candidate: URL, of root: URL) -> Bool {
+        candidate.standardizedFileURL.pathComponents.starts(
+            with: root.standardizedFileURL.pathComponents
+        )
+    }
+
+    private struct ScanKey: Hashable, Sendable {
+        let category: DiskCleanupCategory
+        let directory: URL
+
+        init(category: DiskCleanupCategory, directory: URL) {
+            self.category = category
+            self.directory = directory.standardizedFileURL
+        }
+    }
+
+    private struct ScanState {
+        var items: [DiskCleanupItem] = []
+        var selectedIDs: Set<String> = []
+        var isScanning = false
+        var progress: DiskCleanupProgress?
+        var scannedEntryCount = 0
+        var skippedItemCount = 0
+        var permissionDeniedCount = 0
+        var excludedCloudItemCount = 0
+        var lastScan: Date?
+        var errorMessage: String?
+        var statusMessage: String?
+        var requestID: UUID?
+        var requestMutationGeneration: Int?
+        var cancellationToken: DiskCleanupCancellationToken?
+        var requiresRefresh = false
+    }
 }
 
 struct DiskCleanupTab: View {
-    @StateObject private var monitor = DiskCleanupMonitor()
-    @State private var selectedCategory: DiskCleanupCategory = .largestFiles
+    @ObservedObject var monitor: DiskCleanupMonitor
     @State private var searchText = ""
     @State private var pendingTrashItems: [DiskCleanupItem] = []
     @State private var showTrashConfirmation = false
@@ -269,12 +571,7 @@ struct DiskCleanupTab: View {
             actionBar
         }
         .background(Theme.background)
-        .onAppear { monitor.start(category: selectedCategory) }
-        .onDisappear { monitor.cancelScan() }
-        .onChange(of: selectedCategory) { newCategory in
-            searchText = ""
-            monitor.selectCategory(newCategory)
-        }
+        .onAppear { monitor.start() }
         .alert(trashAlertTitle, isPresented: $showTrashConfirmation) {
             Button("Cancel", role: .cancel) {
                 pendingTrashItems = []
@@ -305,7 +602,7 @@ struct DiskCleanupTab: View {
                     Text("Disk cleanup")
                         .font(.system(size: 18, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
-                    Text(selectedCategory.description)
+                    Text(monitor.category.description)
                         .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.45))
                 }
@@ -330,7 +627,7 @@ struct DiskCleanupTab: View {
                 }
             }
 
-            Picker("Cleanup view", selection: $selectedCategory) {
+            Picker("Cleanup view", selection: categorySelection) {
                 ForEach(DiskCleanupCategory.allCases, id: \.self) { category in
                     Label(category.label, systemImage: category.systemImage)
                         .tag(category)
@@ -391,7 +688,7 @@ struct DiskCleanupTab: View {
 
     private var browserToolbar: some View {
         HStack(spacing: 12) {
-            if selectedCategory == .largestFiles {
+            if monitor.category == .largestFiles {
                 Label("Largest individual files in your home folders", systemImage: "arrow.down.to.line")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.white.opacity(0.72))
@@ -457,7 +754,6 @@ struct DiskCleanupTab: View {
                     .buttonStyle(.plain)
                     .disabled(
                         index == monitor.navigationStack.count - 1
-                            || monitor.isScanning
                             || monitor.isTrashing
                     )
                 }
@@ -483,10 +779,10 @@ struct DiskCleanupTab: View {
                     Image(systemName: searchText.isEmpty ? "sparkles" : "magnifyingglass")
                         .font(.system(size: 26, weight: .light))
                         .foregroundColor(Theme.diskCleanupAccent.opacity(0.8))
-                    Text(searchText.isEmpty ? selectedCategory.emptyMessage : "No matching items")
+                    Text(searchText.isEmpty ? monitor.category.emptyMessage : "No matching items")
                         .font(.system(size: 15, weight: .semibold, design: .rounded))
                         .foregroundColor(.white.opacity(0.82))
-                    Text(searchText.isEmpty ? selectedCategory.emptyDetail : "Try a different file or folder name.")
+                    Text(searchText.isEmpty ? monitor.category.emptyDetail : "Try a different file or folder name.")
                         .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.4))
                 }
@@ -505,8 +801,9 @@ struct DiskCleanupTab: View {
                                     ? 0
                                     : Double(item.sizeBytes) / Double(maximumVisibleSize),
                                 isSelected: monitor.selectedIDs.contains(item.id),
-                                canNavigate: item.kind == .directory && selectedCategory != .largestFiles,
-                                isBusy: monitor.isScanning || monitor.isTrashing,
+                                canNavigate: item.kind == .directory && monitor.category != .largestFiles,
+                                isScanning: monitor.isScanning,
+                                isTrashing: monitor.isTrashing,
                                 onToggleSelection: { monitor.toggleSelection(item) },
                                 onOpen: { monitor.openDirectory(item) },
                                 onReveal: {
@@ -538,7 +835,7 @@ struct DiskCleanupTab: View {
             .accessibilityLabel(
                 allVisibleSelected ? "Deselect all visible items" : "Select all visible items"
             )
-            .disabled(selectableVisibleItems.isEmpty || monitor.isScanning || monitor.isTrashing)
+            .disabled(selectableVisibleItems.isEmpty || monitor.isTrashing)
             .frame(width: 22)
 
             Text("ITEM")
@@ -570,10 +867,11 @@ struct DiskCleanupTab: View {
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundColor(.white.opacity(0.75))
                 Button("Clear") {
-                    monitor.selectedIDs.removeAll()
+                    monitor.clearSelection()
                 }
                 .buttonStyle(.borderless)
                 .font(.system(size: 11))
+                .disabled(monitor.isTrashing)
             }
 
             Spacer()
@@ -627,6 +925,16 @@ struct DiskCleanupTab: View {
         showTrashConfirmation = true
     }
 
+    private var categorySelection: Binding<DiskCleanupCategory> {
+        Binding(
+            get: { monitor.category },
+            set: { category in
+                searchText = ""
+                monitor.selectCategory(category)
+            }
+        )
+    }
+
     private var visibleItems: [DiskCleanupItem] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return monitor.items }
@@ -674,7 +982,7 @@ struct DiskCleanupTab: View {
     private var trashAlertMessage: String {
         let size = pendingTrashItems.reduce(UInt64(0)) { $0 + $1.sizeBytes }
         let recovery = "They use \(formatBytes(size)) and remain recoverable until the Trash is emptied."
-        switch selectedCategory {
+        switch monitor.category {
         case .temporary, .caches:
             return "\(recovery) Running apps may recreate or currently use some of this data."
         case .largestFiles, .largeFolders:
@@ -689,7 +997,8 @@ private struct DiskCleanupRow: View {
     let sizeRatio: Double
     let isSelected: Bool
     let canNavigate: Bool
-    let isBusy: Bool
+    let isScanning: Bool
+    let isTrashing: Bool
     let onToggleSelection: () -> Void
     let onOpen: () -> Void
     let onReveal: () -> Void
@@ -700,58 +1009,64 @@ private struct DiskCleanupRow: View {
             selectionControl
                 .frame(width: 22)
 
-            Image(systemName: itemIcon)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(item.kind == .file ? Theme.diskCleanupBar : Theme.diskCleanupAccent)
-                .frame(width: 22)
+            Button(action: performPrimaryAction) {
+                HStack(spacing: 10) {
+                    Image(systemName: itemIcon)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(
+                            item.kind == .file ? Theme.diskCleanupBar : Theme.diskCleanupAccent
+                        )
+                        .frame(width: 22)
 
-            VStack(alignment: .leading, spacing: 3) {
-                if canNavigate {
-                    Button(action: onOpen) {
+                    VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 5) {
                             Text(item.name)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundColor(Theme.diskCleanupAccent.opacity(0.7))
+                            if canNavigate {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundColor(Theme.diskCleanupAccent.opacity(0.7))
+                            }
                         }
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
-                    .disabled(isBusy)
-                } else {
-                    Text(item.name)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(.white)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+
+                        Text(path)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.36))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .frame(minWidth: 388, maxWidth: .infinity, alignment: .leading)
+
+                    Text(contentsLabel)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.48))
+                        .frame(width: 90, alignment: .leading)
+
+                    Text(item.modificationDate?.formatted(date: .abbreviated, time: .omitted) ?? "-")
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.45))
+                        .frame(width: 130, alignment: .leading)
+
+                    Text(formatBytes(item.sizeBytes))
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.82))
+                        .frame(width: 100, alignment: .trailing)
                 }
-
-                Text(path)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.36))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
+                .contentShape(Rectangle())
             }
-            .frame(minWidth: 388, maxWidth: .infinity, alignment: .leading)
-
-            Text(contentsLabel)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(.white.opacity(0.48))
-                .frame(width: 90, alignment: .leading)
-
-            Text(item.modificationDate?.formatted(date: .abbreviated, time: .omitted) ?? "-")
-                .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.45))
-                .frame(width: 130, alignment: .leading)
-
-            Text(formatBytes(item.sizeBytes))
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundColor(.white.opacity(0.82))
-                .frame(width: 100, alignment: .trailing)
+            .buttonStyle(.plain)
+            .disabled(isTrashing)
+            .help(primaryActionHelp)
+            .accessibilityLabel(primaryActionLabel)
+            .contextMenu {
+                Button("Copy Path") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(item.url.path, forType: .string)
+                }
+            }
 
             Button(action: onReveal) {
                 Image(systemName: "finder")
@@ -770,7 +1085,7 @@ private struct DiskCleanupRow: View {
                 .foregroundColor(Theme.diskCleanupAction.opacity(0.85))
                 .help("Move to Trash")
                 .accessibilityLabel("Move \(item.name) to Trash")
-                .disabled(isBusy)
+                .disabled(isScanning || isTrashing)
                 .frame(width: 24)
             } else {
                 Image(systemName: "lock.fill")
@@ -796,7 +1111,6 @@ private struct DiskCleanupRow: View {
                 .fill(Color.white.opacity(0.045))
                 .frame(height: 1)
         }
-        .contentShape(Rectangle())
     }
 
     @ViewBuilder
@@ -807,7 +1121,7 @@ private struct DiskCleanupRow: View {
                     .foregroundColor(isSelected ? Theme.diskCleanupAccent : .white.opacity(0.34))
             }
             .buttonStyle(.plain)
-            .disabled(isBusy)
+            .disabled(isTrashing)
             .accessibilityLabel(isSelected ? "Deselect \(item.name)" : "Select \(item.name)")
         } else {
             Image(systemName: "square")
@@ -815,6 +1129,36 @@ private struct DiskCleanupRow: View {
                 .help(item.protectionReason ?? "Protected")
                 .accessibilityHidden(true)
         }
+    }
+
+    private func performPrimaryAction() {
+        if canNavigate {
+            onOpen()
+        } else if item.canTrash {
+            onToggleSelection()
+        } else {
+            onReveal()
+        }
+    }
+
+    private var primaryActionLabel: String {
+        if canNavigate {
+            return "Open \(item.name)"
+        }
+        if item.canTrash {
+            return isSelected ? "Deselect \(item.name)" : "Select \(item.name)"
+        }
+        return "Reveal \(item.name) in Finder"
+    }
+
+    private var primaryActionHelp: String {
+        if canNavigate {
+            return "Open folder"
+        }
+        if item.canTrash {
+            return isSelected ? "Deselect item" : "Select item"
+        }
+        return "Reveal in Finder"
     }
 
     private var contentsLabel: String {

@@ -1,19 +1,19 @@
 import Foundation
 
-public enum DiskCleanupCategory: String, CaseIterable, Hashable {
+public enum DiskCleanupCategory: String, CaseIterable, Hashable, Sendable {
     case largestFiles
     case temporary
     case caches
     case largeFolders
 }
 
-public enum DiskCleanupItemKind: Equatable {
+public enum DiskCleanupItemKind: Equatable, Sendable {
     case file
     case directory
     case package
 }
 
-public struct DiskCleanupItem: Identifiable, Equatable {
+public struct DiskCleanupItem: Identifiable, Equatable, Sendable {
     public var id: String { url.standardizedFileURL.path }
 
     public let url: URL
@@ -45,7 +45,7 @@ public struct DiskCleanupItem: Identifiable, Equatable {
     }
 }
 
-public struct DiskCleanupProgress: Equatable {
+public struct DiskCleanupProgress: Equatable, Sendable {
     public let scannedEntryCount: Int
     public let currentURL: URL
 
@@ -55,7 +55,7 @@ public struct DiskCleanupProgress: Equatable {
     }
 }
 
-public struct DiskCleanupScanResult: Equatable {
+public struct DiskCleanupScanResult: Equatable, Sendable {
     public let category: DiskCleanupCategory
     public let rootURL: URL
     public let items: [DiskCleanupItem]
@@ -83,7 +83,63 @@ public struct DiskCleanupScanResult: Equatable {
     }
 }
 
-public struct DiskCleanupTrashFailure: Equatable {
+public struct DiskCleanupScanDelta: Equatable, Sendable {
+    public let addedItems: [DiskCleanupItem]
+    public let updatedItems: [DiskCleanupItem]
+    public let removedItems: [DiskCleanupItem]
+
+    private let orderedItemIDs: [String]
+
+    public init(
+        previousItems: [DiskCleanupItem],
+        currentItems: [DiskCleanupItem]
+    ) {
+        var previousByID: [String: DiskCleanupItem] = [:]
+        for item in previousItems {
+            previousByID[item.id] = item
+        }
+
+        var currentByID: [String: DiskCleanupItem] = [:]
+        for item in currentItems {
+            currentByID[item.id] = item
+        }
+
+        addedItems = currentItems.filter { previousByID[$0.id] == nil }
+        updatedItems = currentItems.filter { item in
+            guard let previous = previousByID[item.id] else { return false }
+            return previous != item
+        }
+        removedItems = previousItems.filter { currentByID[$0.id] == nil }
+        orderedItemIDs = currentItems.map(\.id)
+    }
+
+    public var changeCount: Int {
+        addedItems.count + updatedItems.count + removedItems.count
+    }
+
+    public var isEmpty: Bool {
+        changeCount == 0
+    }
+
+    public func applying(to previousItems: [DiskCleanupItem]) -> [DiskCleanupItem] {
+        var itemsByID: [String: DiskCleanupItem] = [:]
+        for item in previousItems {
+            itemsByID[item.id] = item
+        }
+        for item in removedItems {
+            itemsByID.removeValue(forKey: item.id)
+        }
+        for item in updatedItems {
+            itemsByID[item.id] = item
+        }
+        for item in addedItems {
+            itemsByID[item.id] = item
+        }
+        return orderedItemIDs.compactMap { itemsByID[$0] }
+    }
+}
+
+public struct DiskCleanupTrashFailure: Equatable, Sendable {
     public let item: DiskCleanupItem
     public let message: String
 
@@ -93,7 +149,7 @@ public struct DiskCleanupTrashFailure: Equatable {
     }
 }
 
-public struct DiskCleanupTrashResult: Equatable {
+public struct DiskCleanupTrashResult: Equatable, Sendable {
     public let movedItems: [DiskCleanupItem]
     public let failures: [DiskCleanupTrashFailure]
 
@@ -103,7 +159,7 @@ public struct DiskCleanupTrashResult: Equatable {
     }
 }
 
-public final class DiskCleanupCancellationToken {
+public final class DiskCleanupCancellationToken: @unchecked Sendable {
     private let lock = NSLock()
     private var cancelled = false
 
@@ -122,7 +178,7 @@ public final class DiskCleanupCancellationToken {
     }
 }
 
-public enum DiskCleanupError: LocalizedError, Equatable {
+public enum DiskCleanupError: LocalizedError, Equatable, Sendable {
     case cancelled
     case unavailableRoot(String)
     case invalidScanLocation(String)
