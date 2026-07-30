@@ -73,14 +73,14 @@ public final class DiskCleanupService {
     public func scan(
         category: DiskCleanupCategory,
         directory: URL? = nil,
-        limit: Int = 200,
+        largestFileLimit: Int = 200,
         cancellationToken: DiskCleanupCancellationToken = DiskCleanupCancellationToken(),
         progress: ProgressHandler? = nil
     ) throws -> DiskCleanupScanResult {
         switch category {
         case .largestFiles:
             return try scanLargestFiles(
-                limit: max(1, limit),
+                limit: max(1, largestFileLimit),
                 cancellationToken: cancellationToken,
                 progress: progress
             )

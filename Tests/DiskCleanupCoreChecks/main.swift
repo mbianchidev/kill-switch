@@ -90,7 +90,7 @@ struct CheckRunner {
             trashMover: { _ in }
         )
 
-        let largest = try service.scan(category: .largestFiles, limit: 2)
+        let largest = try service.scan(category: .largestFiles, largestFileLimit: 2)
         check(largest.items.count == 2, "limits largest-file results")
         check(
             largest.items.map(\.name) == ["large.bin", "medium.bin"],
