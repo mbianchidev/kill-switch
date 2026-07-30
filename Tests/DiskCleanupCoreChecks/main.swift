@@ -6,6 +6,12 @@ struct CheckRunner {
     private let fileManager = FileManager.default
 
     mutating func run() -> Int32 {
+        check(
+            DiskCleanupError.invalidScanLocation("/tmp/example").localizedDescription
+                == "Refusing to scan this cleanup location: /tmp/example",
+            "describes rejected scan locations without assuming they are outside the root"
+        )
+
         let fixtureRoot = fileManager.temporaryDirectory
             .appendingPathComponent("DiskCleanupCoreChecks-\(UUID().uuidString)", isDirectory: true)
         defer { try? fileManager.removeItem(at: fixtureRoot) }

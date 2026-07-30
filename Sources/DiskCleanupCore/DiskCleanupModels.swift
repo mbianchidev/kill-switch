@@ -136,7 +136,7 @@ public enum DiskCleanupError: LocalizedError, Equatable {
         case .unavailableRoot(let path):
             return "The cleanup location is unavailable: \(path)"
         case .invalidScanLocation(let path):
-            return "Refusing to scan outside the selected cleanup location: \(path)"
+            return "Refusing to scan this cleanup location: \(path)"
         case .unreadableDirectory(let path, let message):
             return "Could not read \(path): \(message)"
         case .unsafeTrashLocation(let path, let reason):

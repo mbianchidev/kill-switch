@@ -44,6 +44,7 @@ final class DiskCleanupMonitor: ObservableObject {
     }
 
     func selectCategory(_ newCategory: DiskCleanupCategory) {
+        guard !isTrashing else { return }
         category = newCategory
         selectedIDs.removeAll()
         if newCategory == .largestFiles {
@@ -55,6 +56,7 @@ final class DiskCleanupMonitor: ObservableObject {
     }
 
     func scanCurrentLocation() {
+        guard !isTrashing else { return }
         beginScan(
             category: category,
             directory: category == .largestFiles ? nil : currentDirectory
@@ -62,7 +64,12 @@ final class DiskCleanupMonitor: ObservableObject {
     }
 
     func openDirectory(_ item: DiskCleanupItem) {
-        guard item.kind == .directory, category != .largestFiles, !isScanning else { return }
+        guard item.kind == .directory,
+              category != .largestFiles,
+              !isScanning,
+              !isTrashing else {
+            return
+        }
         navigationStack.append(item.url)
         selectedIDs.removeAll()
         beginScan(category: category, directory: item.url)
@@ -71,7 +78,8 @@ final class DiskCleanupMonitor: ObservableObject {
     func navigate(to index: Int) {
         guard category != .largestFiles,
               navigationStack.indices.contains(index),
-              !isScanning else {
+              !isScanning,
+              !isTrashing else {
             return
         }
         navigationStack = Array(navigationStack.prefix(index + 1))
@@ -177,6 +185,7 @@ final class DiskCleanupMonitor: ObservableObject {
         category scanCategory: DiskCleanupCategory,
         directory: URL?
     ) {
+        guard !isTrashing else { return }
         cancellationToken?.cancel()
         generation += 1
         let scanGeneration = generation
@@ -317,6 +326,7 @@ struct DiskCleanupTab: View {
                         Label("Rescan", systemImage: "arrow.clockwise")
                     }
                     .buttonStyle(.borderless)
+                    .disabled(monitor.isTrashing)
                 }
             }
 
@@ -445,7 +455,11 @@ struct DiskCleanupTab: View {
                             .lineLimit(1)
                     }
                     .buttonStyle(.plain)
-                    .disabled(index == monitor.navigationStack.count - 1 || monitor.isScanning)
+                    .disabled(
+                        index == monitor.navigationStack.count - 1
+                            || monitor.isScanning
+                            || monitor.isTrashing
+                    )
                 }
             }
         }
