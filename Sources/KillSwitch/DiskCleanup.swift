@@ -139,6 +139,7 @@ final class DiskCleanupMonitor: ObservableObject {
     }
 
     func clearSelection() {
+        guard !isTrashing else { return }
         let key = currentScanKey
         var state = state(for: key)
         guard !state.selectedIDs.isEmpty else { return }
@@ -242,6 +243,9 @@ final class DiskCleanupMonitor: ObservableObject {
         state.isScanning = true
         state.progress = nil
         state.scannedEntryCount = 0
+        state.skippedItemCount = 0
+        state.permissionDeniedCount = 0
+        state.excludedCloudItemCount = 0
         state.errorMessage = nil
         state.statusMessage = nil
         state.requestMutationGeneration = filesystemMutationGeneration
@@ -867,6 +871,7 @@ struct DiskCleanupTab: View {
                 }
                 .buttonStyle(.borderless)
                 .font(.system(size: 11))
+                .disabled(monitor.isTrashing)
             }
 
             Spacer()
