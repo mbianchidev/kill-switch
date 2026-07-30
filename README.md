@@ -1,6 +1,6 @@
 # KillSwitch
 
-A macOS resource manager with automation useful for the AI era. It provides Activity Monitor-style system resources, one-click process termination, developer cleanup, CPU alerts, active screen-time tracking, keep-awake controls, and native diagnostic collection.
+A macOS resource manager with automation useful for the AI era. It provides Activity Monitor-style system resources, guided disk cleanup, one-click process termination, developer cleanup, CPU alerts, active screen-time tracking, keep-awake controls, and native diagnostic collection.
 
 <img width="1710" height="1066" alt="image" src="docs/image.png" />
 
@@ -13,6 +13,7 @@ A macOS resource manager with automation useful for the AI era. It provides Acti
 - Shows application icons and full executable names where macOS exposes them
 - Filter by process, PID, or user and sort by the active resource
 - One-click process termination (SIGTERM, falls back to SIGKILL)
+- Guided disk cleanup for large files, temporary data, caches, and large folders
 - Generates privileged 10-second spindump reports with preview, save, and reveal actions
 - Runs full macOS `sysdiagnose` from the app or with **Shift-Command-D**
 - Native macOS notifications when a process sustains high CPU for an extended period
@@ -44,6 +45,26 @@ continues while the main window is hidden so live data and history keep flowing.
 other-user processes. macOS can restrict disk, architecture, open-file, GPU, and App
 Nap values for protected processes, so unavailable fields display an em dash instead
 of fabricated data.
+
+### Disk cleanup
+
+- Opens on the **largest individual files first**, sorted by the disk space they
+  currently use.
+- Switch between **Largest files**, **Temporary**, **Caches**, and **Large folders**.
+- Browse folder contents with breadcrumbs, filter by name or path, reveal any item
+  in Finder, and select one or more cleanup candidates.
+- Every cleanup requires confirmation and uses the macOS Trash; KillSwitch never
+  permanently deletes an item.
+- Standard home folders such as Documents, Downloads, Pictures, and Movies must be
+  opened before their contents can be selected, preventing accidental removal of
+  the whole anchor folder. `~/Library`, hidden home configuration, and the cleanup
+  roots themselves are protected.
+- iCloud-synced items are excluded because moving one to Trash can remove it from
+  every synced device.
+- macOS privacy controls can block Desktop, Documents, Downloads, and other
+  locations. The tab reports partial scans and links to **Full Disk Access**
+  settings. Replacing the standalone KillSwitch binary during an update can require
+  granting access again.
 
 ### Dev cleanup
 

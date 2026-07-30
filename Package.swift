@@ -6,6 +6,10 @@ let package = Package(
     platforms: [.macOS(.v13)],
     targets: [
         .target(
+            name: "DiskCleanupCore",
+            path: "Sources/DiskCleanupCore"
+        ),
+        .target(
             name: "DevCleanupCore",
             path: "Sources/DevCleanupCore"
         ),
@@ -28,6 +32,7 @@ let package = Package(
         .executableTarget(
             name: "KillSwitch",
             dependencies: [
+                "DiskCleanupCore",
                 "DevCleanupCore",
                 "InstallCore",
                 "KeepAwakeCore",
@@ -35,6 +40,11 @@ let package = Package(
                 "SystemMetricsCore"
             ],
             path: "Sources/KillSwitch"
+        ),
+        .executableTarget(
+            name: "DiskCleanupCoreChecks",
+            dependencies: ["DiskCleanupCore"],
+            path: "Tests/DiskCleanupCoreChecks"
         ),
         .executableTarget(
             name: "DevCleanupCoreChecks",

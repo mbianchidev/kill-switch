@@ -2,6 +2,7 @@ import SwiftUI
 
 private enum MainTab: Hashable {
     case resources
+    case diskCleanup
     case cleanup
     case watchdog
     case screenTime
@@ -22,6 +23,9 @@ struct ContentView: View {
             ResourcesTab(monitor: resourceMonitor)
                 .tabItem { Label("Resources", systemImage: "waveform.path.ecg") }
                 .tag(MainTab.resources)
+            DiskCleanupTab()
+                .tabItem { Label("Disk cleanup", systemImage: "internaldrive") }
+                .tag(MainTab.diskCleanup)
             DevCleanupTab()
                 .tabItem { Label("Dev cleanup", systemImage: "trash") }
                 .tag(MainTab.cleanup)
