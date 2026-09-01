@@ -562,7 +562,7 @@ struct DevCleanupTab: View {
                             Image(systemName: "lock.fill")
                                 .foregroundColor(.white.opacity(0.45))
                                 .help(reason)
-                                .accessibilityLabel("Protected process")
+                                .accessibilityLabel("Protected process: \(reason)")
                         } else {
                             KillButton(pid: proc.pid) { monitor.killPort(pid: proc.pid) }
                         }

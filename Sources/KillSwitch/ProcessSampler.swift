@@ -46,7 +46,10 @@ enum ProcessSampler {
     }
 
     static func fetchDetailedThrowing() throws -> [Detailed] {
-        let output = try runProcessThrowing("/bin/ps", ["-axo", "pid,ppid,user,etime,args"])
+        let output = try runProcessThrowing(
+            "/bin/ps",
+            ["-axww", "-o", "pid,ppid,user,etime,args"]
+        )
         var result: [Detailed] = []
         for line in output.components(separatedBy: "\n").dropFirst() {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
