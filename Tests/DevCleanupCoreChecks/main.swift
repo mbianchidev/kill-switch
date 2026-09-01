@@ -10,6 +10,7 @@ struct CheckRunner {
         checkPreferences()
         checkLegacyMigration()
         checkProcessErrors()
+        checkProcessTerminationPolicy()
         checkCleanupService()
 
         if failures == 0 {
@@ -186,6 +187,37 @@ struct CheckRunner {
         )
     }
 
+    private mutating func checkProcessTerminationPolicy() {
+        let portoHostAgent = """
+        /opt/homebrew/bin/limactl hostagent \
+        --pidfile /Users/example/.lima/porto-k0s-smoke-server-1/ha.pid \
+        --socket /Users/example/.lima/porto-k0s-smoke-server-1/ha.sock \
+        porto-k0s-smoke-server-1
+        """
+        check(
+            ProcessTerminationPolicy.protectionReason(for: portoHostAgent) != nil,
+            "protects Porto-managed Lima hostagents"
+        )
+        check(
+            ProcessTerminationPolicy.protectionReason(
+                for: "/Volumes/Porto 1.0.0-arm64 1/bin/limactl hostagent --socket /tmp/porto-engine/ha.sock porto-engine"
+            ) != nil,
+            "protects Porto hostagents when the limactl path contains spaces"
+        )
+        check(
+            ProcessTerminationPolicy.protectionReason(
+                for: "/opt/homebrew/bin/limactl hostagent default"
+            ) == nil,
+            "does not protect unrelated Lima hostagents"
+        )
+        check(
+            ProcessTerminationPolicy.protectionReason(
+                for: "/usr/local/bin/node /tmp/porto-dev-server.js"
+            ) == nil,
+            "requires the limactl hostagent command"
+        )
+    }
+
     private mutating func checkCleanupService() {
         let processes = [
             DevCleanupProcess(
@@ -203,6 +235,10 @@ struct CheckRunner {
             DevCleanupProcess(
                 pid: 104, user: "me", elapsedSeconds: 7_200,
                 command: "/usr/local/bin/node copilot vite"
+            ),
+            DevCleanupProcess(
+                pid: 105, user: "me", elapsedSeconds: 7_200,
+                command: "/opt/homebrew/bin/limactl hostagent --pidfile /Users/example/.lima/porto-k0s-smoke-server-1/ha.pid porto-k0s-smoke-server-1"
             )
         ]
         var terminated: [Int32] = []
@@ -219,8 +255,8 @@ struct CheckRunner {
             autoKillEnabled: true,
             ageThresholdSeconds: 3_600,
             effectivePorts: [41000, 41001],
-            runtimes: ["node"],
-            indicators: ["vite"],
+            runtimes: ["node", "limactl"],
+            indicators: ["vite", "hostagent"],
             exclusions: ["copilot"]
         )
 

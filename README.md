@@ -12,7 +12,7 @@ A macOS resource manager with automation useful for the AI era. It provides Acti
 - Low-overhead native CPU, memory, and disk sampling; heavyweight collectors run only for the selected metric
 - Shows application icons and full executable names where macOS exposes them
 - Filter by process, PID, or user and sort by the active resource
-- One-click process termination (SIGTERM, falls back to SIGKILL)
+- One-click process termination (SIGTERM, falls back to SIGKILL), with fail-closed managed-process protection
 - Guided disk cleanup for large files, temporary data, caches, and large folders
 - Generates privileged 10-second spindump reports with preview, save, and reveal actions
 - Runs full macOS `sysdiagnose` from the app or with **Shift-Command-D**
@@ -73,7 +73,7 @@ of fabricated data.
 
 - Lists processes **listening on notable dev ports** (defaults: 3000–3003, 4000, 4200, 5000/5001, 5173/5174, 5555, 6006, 8000/8001, 8080/8081, 8090, 8443, 8888, 9000/9090/9091), showing PID, command, and port, each with a kill button.
 - **Auto-kills** stale dev servers (node, python, java/mvn, rust/cargo, go, ruby, deno, bun, …) owned by the current user that have been running past the configured age (default **12 hours**).
-- Never touches: processes owned by other users or the system, Copilot CLI / SDK, node-based MCP servers (github, context7, work_iq, fabric, seismic, azure, kusto, revenue, …), IDEs (VS Code, Obsidian, Chrome, Slack, Teams, OrbStack) or non-dev apps (Spotify, Handy, …). Detection is conservative — when in doubt it does **not** kill.
+- Never touches: Porto-managed Lima hostagents, processes owned by other users or the system, Copilot CLI / SDK, node-based MCP servers (github, context7, work_iq, fabric, seismic, azure, kusto, revenue, …), IDEs (VS Code, Obsidian, Chrome, Slack, Teams, OrbStack) or non-dev apps (Spotify, Handy, …). Detection is conservative — when in doubt it does **not** kill.
 - Re-scans ports and re-runs cleanup on configurable intervals (defaults: every 5s / 10 min), plus a manual "Run cleanup now" button, and shows a summary of what was found and cleaned.
 - **Fully configurable from the Settings card** — every detection input is exposed and editable, with changes persisted across launches:
   - Toggle **auto-kill** on/off and pick the **kill-after age** (1/6/12/24/48/72h).
@@ -257,7 +257,8 @@ official installer above, sync its current managed ports under source `porto`,
 and invoke cleanup. Cleanup remains conservative: if auto-kill is disabled, or a
 candidate has not crossed the saved age threshold, it is not terminated. Processes
 that fail the saved runtime, indicator, ownership, system, or exclusion checks are
-not candidates.
+not candidates. Porto-managed `limactl hostagent` processes are hard-protected
+across every KillSwitch termination path, independent of editable exclusions.
 
 ## Uninstall
 

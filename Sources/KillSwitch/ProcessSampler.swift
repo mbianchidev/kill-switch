@@ -216,8 +216,32 @@ enum ProcessSampler {
     /// Terminate a process with SIGTERM, falling back to SIGKILL.
     @discardableResult
     static func terminate(pid: Int32) -> Bool {
+        guard let command = commandLine(pid: pid) else {
+            fputs(
+                "KillSwitch refused to terminate PID \(pid): its command line could not be inspected.\n",
+                stderr
+            )
+            return false
+        }
+        if let reason = ProcessTerminationPolicy.protectionReason(for: command) {
+            fputs("KillSwitch refused to terminate PID \(pid): \(reason)\n", stderr)
+            return false
+        }
         if kill(pid, SIGTERM) == 0 { return true }
         return kill(pid, SIGKILL) == 0
+    }
+
+    private static func commandLine(pid: Int32) -> String? {
+        guard pid > 0,
+              let output = runProcess(
+                  "/bin/ps",
+                  ["-ww", "-p", String(pid), "-o", "command="]
+              )
+        else {
+            return nil
+        }
+        let command = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return command.isEmpty ? nil : command
     }
 
     // MARK: - Native notifications
