@@ -144,6 +144,7 @@ public final class DevCleanupService {
                 let runtime = Self.devRuntime(process.command, runtimes: configuration.runtimes),
                 Self.isDevServer(process.command, indicators: configuration.indicators),
                 !Self.isSystemProcess(process.command),
+                !ProcessTerminationPolicy.isProtected(command: process.command),
                 !Self.isExcluded(process.command, exclusions: configuration.exclusions)
             else {
                 continue

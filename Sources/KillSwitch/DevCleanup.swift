@@ -326,7 +326,7 @@ struct DevCleanupTab: View {
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.4))
             }
-            Text("Protected: other users, system, Copilot, MCP servers, IDEs and non-dev apps.")
+            Text("Protected: Porto Lima hostagents, other users, system, Copilot, MCP servers, IDEs and non-dev apps.")
                 .font(.system(size: 11))
                 .foregroundColor(.white.opacity(0.4))
         }
@@ -558,7 +558,14 @@ struct DevCleanupTab: View {
                         .foregroundColor(isCopied ? .green.opacity(0.9) : .white.opacity(0.7))
                         .help(isCopied ? "Command copied" : "Copy full command")
                         .accessibilityLabel(isCopied ? "Command copied" : "Copy full command")
-                        KillButton(pid: proc.pid) { monitor.killPort(pid: proc.pid) }
+                        if let reason = ProcessTerminationPolicy.protectionReason(for: proc.command) {
+                            Image(systemName: "lock.fill")
+                                .foregroundColor(.white.opacity(0.45))
+                                .help(reason)
+                                .accessibilityLabel("Protected process: \(reason)")
+                        } else {
+                            KillButton(pid: proc.pid) { monitor.killPort(pid: proc.pid) }
+                        }
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
