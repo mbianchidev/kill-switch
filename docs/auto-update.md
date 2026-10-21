@@ -43,7 +43,7 @@ below). Versions are compared component-wise as integers, ignoring a leading `v`
 PR and push to `main`, and uploads it as the **KillSwitch-macOS** artifact.
 
 The bundle uses the stable identifier `io.killswitch.app`, requires macOS 13+,
-and includes an AppKit-rendered icon matching the menu bar's bolt symbol. It is
+and includes an original AppKit-rendered monogram icon. It is
 not sandboxed, Developer ID signed, or notarized. Ad-hoc signing allows local
 execution but does not establish an Apple-verified publisher identity.
 

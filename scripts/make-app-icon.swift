@@ -39,11 +39,20 @@ func renderIcon(pixels: Int, to destination: URL) throws {
         yRadius: 196
     ).fill()
 
-    guard let symbol = NSImage(systemSymbolName: "bolt.slash", accessibilityDescription: nil)?
-        .withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [.white])) else {
-        throw IconError.generation("The KillSwitch bolt symbol is unavailable.")
+    let monogram = NSBezierPath()
+    monogram.move(to: NSPoint(x: 288, y: 252))
+    for point in [
+        NSPoint(x: 400, y: 252), NSPoint(x: 400, y: 438),
+        NSPoint(x: 584, y: 252), NSPoint(x: 744, y: 252),
+        NSPoint(x: 495, y: 510), NSPoint(x: 724, y: 772),
+        NSPoint(x: 572, y: 772), NSPoint(x: 400, y: 564),
+        NSPoint(x: 400, y: 772), NSPoint(x: 288, y: 772)
+    ] {
+        monogram.line(to: point)
     }
-    symbol.draw(in: NSRect(x: 242, y: 202, width: 540, height: 620))
+    monogram.close()
+    NSColor.white.setFill()
+    monogram.fill()
 
     guard let png = bitmap.representation(using: .png, properties: [:]) else {
         throw IconError.generation("Could not encode the \(pixels)-pixel app icon.")
