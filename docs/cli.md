@@ -4,8 +4,11 @@
 
 ## Setup
 
-The standalone installer creates `~/bin/killswitchctl`. For an app installation,
-create the optional symlink yourself:
+The [Homebrew cask](installation.md#homebrew-cask) links `killswitchctl` into
+Homebrew's `bin` directory; keep Homebrew on `PATH`. The standalone installer
+creates `~/bin/killswitchctl`.
+
+For a manually installed app, create the optional symlink yourself:
 
 ```bash
 mkdir -p "$HOME/bin"
@@ -125,7 +128,7 @@ Errors are JSON on stderr:
 ## Porto and other integrations
 
 Porto is optional, not a prerequisite. An integration can detect
-`killswitchctl`, offer the [official installer](installation.md#standalone-binary-and-cli)
+`killswitchctl`, offer a [supported installation method](installation.md)
 if missing, sync managed ports under its own source name such as `porto`, and
 invoke cleanup. Settings and integration ports use the same preferences for the
 GUI and CLI, including an app-bundle symlink.
