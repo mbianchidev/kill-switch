@@ -17,6 +17,7 @@ struct SystemMetricsChecks {
         checkCPUCalculations()
         checkDiskCapacityCalculations()
         checkSamplingPolicies()
+        checkResourceChartScales()
 
         if failures.isEmpty {
             print("SystemMetricsChecks: \(checkCount) checks passed")
@@ -241,6 +242,79 @@ struct SystemMetricsChecks {
 
         let disk = ResourceSamplingPolicy.forMetric(.disk)
         check(!disk.usesTop && !disk.collectsNetwork, "disk uses native collection")
+    }
+
+    private static func checkResourceChartScales() {
+        let locale = Locale(identifier: "en_US")
+        let disk = ResourceChartScale(metric: .disk, maximumValue: 4 * 1_048_576)
+        check(
+            disk.ticks.map { disk.label(for: $0, locale: locale) }
+                == ["0 MB/s", "2.5 MB/s", "5 MB/s"],
+            "disk chart uses readable byte-rate ticks instead of scientific notation"
+        )
+        check(disk.maximum > 4 * 1_048_576, "disk chart leaves headroom above its peak")
+
+        for metric in [ResourceMetricKind.cpu, .memory] {
+            let scale = ResourceChartScale(metric: metric, maximumValue: 18)
+            check(scale.maximum == 100, "\(metric) chart keeps a fixed percentage scale")
+            check(
+                scale.ticks.map { scale.label(for: $0, locale: locale) }
+                    == ["0%", "50%", "100%"],
+                "\(metric) chart labels every tick as a percentage"
+            )
+        }
+
+        let energy = ResourceChartScale(metric: .energy, maximumValue: 37)
+        check(
+            energy.ticks.map { energy.label(for: $0, locale: locale) }
+                == ["0 pts", "25 pts", "50 pts"],
+            "energy chart identifies relative impact points, not watts"
+        )
+        for value in [0.0, 0.1, 37, 1_000_000, 1_000_000_000_000] {
+            let scale = ResourceChartScale(metric: .energy, maximumValue: value)
+            let labels = scale.ticks.map { scale.label(for: $0, locale: locale) }
+            check(scale.maximum > value, "energy chart includes its peak impact \(value)")
+            check(
+                labels.allSatisfy { $0.hasSuffix(" pts") && !$0.lowercased().contains("e") },
+                "energy chart keeps explicit units without exponent notation for \(value)"
+            )
+        }
+
+        let rates: [(Double, String)] = [
+            (0, "B/s"),
+            (512, "B/s"),
+            (1_024, "KB/s"),
+            (4 * 1_048_576, "MB/s"),
+            (3 * 1_073_741_824, "GB/s"),
+            (2 * 1_099_511_627_776, "TB/s"),
+            (Double(UInt64.max), "TB/s")
+        ]
+        for metric in [ResourceMetricKind.disk, .network] {
+            for (value, unit) in rates {
+                let scale = ResourceChartScale(metric: metric, maximumValue: value)
+                let labels = scale.ticks.map { scale.label(for: $0, locale: locale) }
+                check(scale.maximum > value, "\(metric) chart includes its peak rate \(value)")
+                check(
+                    labels.allSatisfy { $0.hasSuffix(" \(unit)") },
+                    "\(metric) chart uses a consistent rate unit for \(value)"
+                )
+                check(
+                    labels.allSatisfy { !$0.lowercased().contains("e") },
+                    "\(metric) chart never uses exponent notation for \(value)"
+                )
+                check(Set(labels).count == 3, "\(metric) chart tick labels remain distinct")
+            }
+        }
+
+        for metric in ResourceMetricKind.allCases {
+            let scale = ResourceChartScale(metric: metric, maximumValue: 0)
+            check(scale.maximum > 0, "\(metric) empty chart has a nonzero scale")
+            check(scale.ticks.first == 0, "\(metric) chart starts at zero")
+        }
+        check(
+            disk.label(for: disk.maximum / 2, locale: Locale(identifier: "de_DE")) == "2,5 MB/s",
+            "chart tick numbers respect the current locale"
+        )
     }
 
     private static func check(_ condition: @autoclosure () -> Bool, _ message: String) {

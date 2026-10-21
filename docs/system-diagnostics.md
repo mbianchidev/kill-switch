@@ -23,6 +23,16 @@ power collector is heavier. Heavyweight collectors run only for the selected
 metric. Sampling continues with the window hidden if Resources is selected;
 leaving the tab stops it.
 
+Graphs connect measured samples without smoothing. CPU shows separate stacked
+system/user bands on a fixed **0-100%** scale; memory pressure also uses
+percentages. Disk and network use separate labelled traces, with writes/sent
+traffic dashed. Their y-axis labels share a readable **B/s, KB/s, MB/s, GB/s, or
+TB/s** unit rather than scientific notation, using the same 1,024-byte steps as
+the resource summaries. Energy uses relative impact **points (pts)**, not watts.
+Throughput and energy scales start at zero and include the largest value in
+the visible history. Legends identify the series, and time labels mark the
+five-minute window.
+
 KillSwitch uses supported macOS interfaces where available: `top`, Mach VM
 statistics, `libproc`, IOKit storage statistics, `nettop`, `netstat`,
 `memory_pressure`, and `pmset`.
