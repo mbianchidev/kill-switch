@@ -1,25 +1,28 @@
 import Foundation
 
-struct CommandResult {
-    let status: Int32
-    let standardOutput: String
-    let standardError: String
+public struct CommandResult {
+    public let status: Int32
+    public let standardOutput: String
+    public let standardError: String
 
-    var succeeded: Bool { status == 0 }
+    public var succeeded: Bool { status == 0 }
 }
 
-enum CommandRunnerError: LocalizedError {
+public enum CommandRunnerError: LocalizedError {
     case launchFailed(executable: String, underlying: Error)
+    case commandFailed(executable: String, status: Int32, message: String)
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case let .launchFailed(executable, underlying):
             return "Could not launch \(executable): \(underlying.localizedDescription)"
+        case let .commandFailed(executable, status, message):
+            return "\(executable) exited with status \(status): \(message)"
         }
     }
 }
 
-enum CommandRunner {
+public enum CommandRunner {
     private final class DataBox {
         private let lock = NSLock()
         private var data = Data()
@@ -37,7 +40,7 @@ enum CommandRunner {
         }
     }
 
-    static func run(
+    public static func run(
         _ executable: String,
         arguments: [String] = [],
         environment: [String: String] = [:]
@@ -89,11 +92,27 @@ enum CommandRunner {
         )
     }
 
-    static func shellQuote(_ value: String) -> String {
+    @discardableResult
+    public static func runChecked(
+        _ executable: String,
+        arguments: [String] = []
+    ) throws -> CommandResult {
+        let result = try run(executable, arguments: arguments)
+        guard result.succeeded else {
+            throw CommandRunnerError.commandFailed(
+                executable: executable,
+                status: result.status,
+                message: result.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+        return result
+    }
+
+    public static func shellQuote(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
     }
 
-    static func appleScriptLiteral(_ value: String) -> String {
+    public static func appleScriptLiteral(_ value: String) -> String {
         let escaped = value
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")

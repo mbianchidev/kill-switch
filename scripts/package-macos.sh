@@ -20,9 +20,10 @@ mkdir -p "$ROOT/.build" "$DIST"
 STAGE="$(mktemp -d "$ROOT/.build/macos-package.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 APP="$STAGE/image/KillSwitch.app"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Helpers"
 
 BINARIES=()
+HELPERS=()
 for ARCH in arm64 x86_64; do
   echo "Building KillSwitch for $ARCH..."
   swift build --package-path "$ROOT" -c release --product KillSwitch --arch "$ARCH"
@@ -30,11 +31,17 @@ for ARCH in arm64 x86_64; do
   cp "$BIN_DIR/KillSwitch" "$STAGE/KillSwitch-$ARCH"
   lipo "$STAGE/KillSwitch-$ARCH" -verify_arch "$ARCH"
   BINARIES+=("$STAGE/KillSwitch-$ARCH")
+  swift build --package-path "$ROOT" -c release --product KillSwitchUpdateHelper --arch "$ARCH"
+  cp "$BIN_DIR/KillSwitchUpdateHelper" "$STAGE/KillSwitchUpdateHelper-$ARCH"
+  lipo "$STAGE/KillSwitchUpdateHelper-$ARCH" -verify_arch "$ARCH"
+  HELPERS+=("$STAGE/KillSwitchUpdateHelper-$ARCH")
 done
 
 lipo -create "${BINARIES[@]}" -output "$STAGE/KillSwitch"
 codesign --force --sign - --identifier io.killswitch.cli "$STAGE/KillSwitch"
 cp "$STAGE/KillSwitch" "$APP/Contents/MacOS/KillSwitch"
+lipo -create "${HELPERS[@]}" -output "$APP/Contents/Helpers/KillSwitchUpdateHelper"
+codesign --force --sign - --identifier io.killswitch.update-helper "$APP/Contents/Helpers/KillSwitchUpdateHelper"
 cp "$ROOT/packaging/macos/Info.plist" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $BUNDLE_VERSION" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUNDLE_VERSION" "$APP/Contents/Info.plist"

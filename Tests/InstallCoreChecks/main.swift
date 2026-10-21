@@ -19,6 +19,10 @@ struct InstallCoreCheckRunner {
             try checkManagedPathProtection(root: root)
             try checkManagedSymlinkRemovalResults(root: root)
             checkAppDistributions()
+            var bundleChecks = BundleUpdateChecks()
+            for message in try bundleChecks.run(root: root) {
+                fail(message)
+            }
         } catch {
             fail("unexpected setup error: \(error.localizedDescription)")
         }
@@ -145,7 +149,7 @@ struct InstallCoreCheckRunner {
         check(app == .appBundle, "Applications install is recognized as an app bundle")
         check(app.assetName == "KillSwitch.dmg", "app updates select the disk image")
         check(app.checksumAssetName == "KillSwitch.dmg.sha256", "disk image has its own checksum")
-        check(!app.supportsInPlaceUpdates, "app bundles cannot use the standalone binary installer")
+        check(!app.usesStandaloneBinary, "app bundles cannot use the standalone binary installer")
 
         let mountedApp = AppDistribution(
             bundleURL: URL(fileURLWithPath: "/Volumes/KillSwitch/KillSwitch.app")
@@ -156,7 +160,7 @@ struct InstallCoreCheckRunner {
         check(standalone == .standalone, "legacy installs keep the standalone distribution")
         check(standalone.assetName == "KillSwitch", "legacy updates still select the raw binary")
         check(standalone.checksumAssetName == "KillSwitch.sha256", "legacy checksum is unchanged")
-        check(standalone.supportsInPlaceUpdates, "legacy automatic updates remain available")
+        check(standalone.usesStandaloneBinary, "legacy binary updates remain available")
     }
 
     private mutating func check(_ condition: Bool, _ message: String) {

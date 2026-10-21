@@ -13,8 +13,22 @@ Install KillSwitch
 To start at login, add KillSwitch in System Settings > General > Login Items
 (called Login Items & Extensions on newer macOS versions).
 
-To update, download the latest KillSwitch.dmg, quit KillSwitch from its menu bar
-menu, and replace the app in Applications. Repeat the unblock command if needed.
+To update automatically, enable Updates > Update automatically. KillSwitch
+verifies the download, replaces the whole signed app, and restarts itself.
+Download & install runs the same flow manually. Your saved auto-update setting
+is preserved when switching from the standalone installation.
+
+The app and its installation folder must be writable by your account. Use
+~/Applications if /Applications is protected, and adjust the unblock command
+and optional CLI symlink to match. Updates cannot replace an app on this
+read-only disk image.
+
+If an update fails, the Updates tab shows the error and offers a manual retry;
+that version is not retried automatically in a restart loop. Details are in
+~/Library/Logs/killswitch-update.log.
+
+To update manually using a new DMG, quit KillSwitch from its menu bar and replace
+the app in Applications. Repeat the unblock command if macOS blocks that copy.
 
 To uninstall, quit KillSwitch, remove its login item, and move KillSwitch.app
 to the Trash. If you created a killswitchctl symlink, remove that symlink too.

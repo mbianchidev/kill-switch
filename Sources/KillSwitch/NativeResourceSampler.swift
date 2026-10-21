@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import Foundation
+import InstallCore
 import IOKit
 import IOKit.storage
 import SystemMetricsCore

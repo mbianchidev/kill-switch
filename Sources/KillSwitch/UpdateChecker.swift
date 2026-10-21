@@ -35,7 +35,7 @@ enum UpdateError: LocalizedError {
         case .noAsset(let name):  return "Latest release has no \(name) attached."
         case .download(let m):    return "Download failed: \(m)"
         case .invalidBinary:      return "Downloaded file is not a valid macOS executable."
-        case .checksumMismatch:   return "Downloaded binary failed checksum verification."
+        case .checksumMismatch:   return "Downloaded update failed checksum verification."
         case .installFailed(let m): return "Install failed: \(m)"
         case .uninstallFailed(let m): return "Uninstall failed: \(m)"
         }
@@ -56,7 +56,7 @@ enum UpdateState: Equatable {
 // MARK: - UpdateChecker
 
 /// Checks the GitHub Releases API for a newer build, and (when the user asks)
-/// offers a DMG download for app bundles or updates a legacy standalone binary.
+/// installs a complete app bundle or updates a legacy standalone binary.
 ///
 /// Designed to be self-contained: the rest of the app only needs
 /// `UpdateChecker.shared` and `checkForUpdates()`.
@@ -68,6 +68,7 @@ final class UpdateChecker: ObservableObject {
     @Published private(set) var lastChecked: Date?
     @Published private(set) var uninstallError: String?
     @Published private(set) var uninstalling = false
+    @Published private(set) var lastInstallError: String?
     @Published var bannerDismissed = false
 
     /// When on, an available update is downloaded and installed automatically,
@@ -144,6 +145,9 @@ final class UpdateChecker: ObservableObject {
 
     private var periodicTimer: Timer?
     private var periodicChecksStarted = false
+    private var bundleUpdateHelper: Process?
+    private var previousBundleUpdate: AppBundleUpdateResult?
+    private var automaticInstallBlocked = false
 
     var availableRelease: ReleaseInfo? {
         if case .available(let r) = state { return r }
@@ -153,14 +157,31 @@ final class UpdateChecker: ObservableObject {
     private init() {
         let distribution = AppDistribution(bundleURL: Bundle.main.bundleURL)
         self.distribution = distribution
-        autoUpdateEnabled = distribution.supportsInPlaceUpdates
-            && UpdateDefaults.bool(.autoUpdate, default: false)
+        autoUpdateEnabled = UpdateDefaults.bool(.autoUpdate, default: false)
         let storedInterval = UpdateDefaults.int(.checkInterval, default: Self.defaultCheckIntervalSeconds)
         // Guard against missing/corrupt/out-of-range stored values: only accept
         // one of the picker options, otherwise fall back to the default.
         checkIntervalSeconds = Self.checkIntervalOptions.contains { $0.seconds == storedInterval }
             ? storedInterval
             : Self.defaultCheckIntervalSeconds
+        if isAppBundle {
+            do {
+                previousBundleUpdate = try AppBundleUpdateResult.read(from: AppBundleUpdateResult.defaultURL)
+                lastInstallError = previousBundleUpdate?.errorMessage
+            } catch {
+                automaticInstallBlocked = true
+                lastInstallError = "Could not read the last update result. Use Download & install to retry: \(error.localizedDescription)"
+                log(lastInstallError ?? error.localizedDescription)
+            }
+            if let failedVersion = UserDefaults.standard.string(forKey: "KillSwitchFailedUpdateVersion") {
+                let message = previousBundleUpdate?.version == failedVersion
+                    ? previousBundleUpdate?.errorMessage
+                    : nil
+                let failure = message ?? "The update to \(failedVersion) failed. Use Download & install to retry; details are in killswitch-update.log."
+                previousBundleUpdate = AppBundleUpdateResult(version: failedVersion, errorMessage: failure)
+                lastInstallError = failure
+            }
+        }
     }
 
     // MARK: Public entry points
@@ -194,7 +215,7 @@ final class UpdateChecker: ObservableObject {
         }
     }
 
-    /// Download the available release's binary and install it. No-op unless an
+    /// Download the available release and install it. No-op unless an
     /// update is currently available.
     func install() {
         Task { await downloadAndInstall() }
@@ -203,7 +224,9 @@ final class UpdateChecker: ObservableObject {
     /// Kick off an automatic install when the user opted in and an update is
     /// ready. No-op while a download/install is already running.
     private func maybeAutoInstall() {
-        guard distribution.supportsInPlaceUpdates, autoUpdateEnabled, case .available = state else { return }
+        guard autoUpdateEnabled, !automaticInstallBlocked,
+              case .available(let release) = state,
+              previousBundleUpdate?.allowsAutomaticUpdate(to: release.version) != false else { return }
         log("Auto-update enabled; installing latest release")
         install()
     }
@@ -353,30 +376,49 @@ final class UpdateChecker: ObservableObject {
     @MainActor
     private func downloadAndInstall() async {
         guard case .available(let release) = state else { return }
-        if isAppBundle {
-            guard NSWorkspace.shared.open(release.downloadURL) else {
-                let message = "Could not open the DMG download. Download KillSwitch.dmg from the GitHub releases page."
-                log(message)
-                setState(.failed(message))
-                return
-            }
-            log("Opened DMG download for \(release.version); quit the app before replacing it in Applications")
-            return
-        }
+        lastInstallError = nil
+        previousBundleUpdate = nil
+        automaticInstallBlocked = false
         setState(.downloading)
         do {
             let tmp = try await download(release.downloadURL)
-            defer { try? FileManager.default.removeItem(at: tmp) }
-            try validate(tmp)
+            defer {
+                do { try FileManager.default.removeItem(at: tmp) }
+                catch { log("Could not remove the downloaded update: \(error.localizedDescription)") }
+            }
             try await verifyChecksum(of: tmp, release: release)
             setState(.installing)
-            try await Task.detached(priority: .userInitiated) { [self] in
-                try installBinary(from: tmp)
-            }.value
-            log("Installed \(release.version); relaunching")
-            relaunch()
+            if isAppBundle {
+                let appURL = Bundle.main.bundleURL
+                bundleUpdateHelper = try await Task.detached(priority: .userInitiated) { [self] in
+                    try AppBundleUpdater.start(
+                        from: tmp,
+                        version: release.version,
+                        appURL: appURL,
+                        logURL: Self.logURL,
+                        log: { self.log($0) },
+                        onFailure: { [weak self] message in
+                            self?.setState(.failed(message))
+                        }
+                    )
+                }.value
+                log("Prepared \(release.version); quitting for whole-app replacement and restart")
+                // Termination exits without unwinding the download cleanup defer.
+                DispatchQueue.main.async { NSApp.terminate(nil) }
+            } else {
+                try validate(tmp)
+                try await Task.detached(priority: .userInitiated) { [self] in
+                    try installBinary(from: tmp)
+                }.value
+                log("Installed \(release.version); relaunching")
+                relaunch()
+            }
         } catch {
             let message = (error as? UpdateError)?.errorDescription ?? error.localizedDescription
+            if isAppBundle {
+                previousBundleUpdate = AppBundleUpdateResult(version: release.version, errorMessage: message)
+                lastInstallError = message
+            }
             log("Install failed: \(message)")
             setState(.failed(message))
         }
@@ -403,8 +445,7 @@ final class UpdateChecker: ObservableObject {
         }
     }
 
-    /// Reject anything that isn't a plausibly-sized Mach-O executable before we
-    /// hand it to a privileged copy.
+    /// Reject anything that isn't a plausibly-sized Mach-O executable.
     private func validate(_ url: URL) throws {
         let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
         let size = (attrs?[.size] as? Int) ?? 0
@@ -424,10 +465,8 @@ final class UpdateChecker: ObservableObject {
         }
     }
 
-    /// Verify the downloaded binary against the SHA-256 published alongside the
-    /// release. This is an integrity/authenticity gate: without it a tampered
-    /// asset (or compromised release) could be installed as root. Fails closed —
-    /// a missing or mismatched checksum aborts the install.
+    /// Verify the downloaded asset against the SHA-256 from the same release.
+    /// A missing or mismatched checksum aborts installation.
     private func verifyChecksum(of url: URL, release: ReleaseInfo) async throws {
         guard let checksumURL = release.checksumURL else {
             throw UpdateError.checksumMismatch
@@ -463,8 +502,8 @@ final class UpdateChecker: ObservableObject {
     /// the user's home directory, so the LaunchAgent that runs it and the updater
     /// that writes it always agree.
     private func installBinary(from src: URL) throws {
-        guard distribution.supportsInPlaceUpdates else {
-            throw UpdateError.installFailed("App bundles must be updated by replacing the app from the latest DMG.")
+        guard distribution.usesStandaloneBinary else {
+            throw UpdateError.installFailed("App bundles must be replaced as a complete signed app.")
         }
         let fm = FileManager.default
         let targetPath = installPath
@@ -635,7 +674,7 @@ struct UpdateBanner: View {
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.5))
                 Spacer()
-                Button(updater.isAppBundle ? "Download DMG" : "Install") { updater.install() }
+                Button("Install") { updater.install() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                 Button {
@@ -668,6 +707,9 @@ struct UpdatesTab: View {
                 VStack(alignment: .leading, spacing: 16) {
                     versionSection
                     preferencesSection
+                    if let error = updater.lastInstallError, !hasCurrentFailure {
+                        statusLine(icon: "exclamationmark.triangle.fill", color: .orange, text: error)
+                    }
                     statusSection
                     uninstallSection
                 }
@@ -724,24 +766,18 @@ struct UpdatesTab: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.white.opacity(0.7))
 
-            if updater.isAppBundle {
-                Text("App updates use a DMG download. Quit KillSwitch, then replace the app in Applications.")
-                    .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.85))
-            } else {
-                Toggle(isOn: $updater.autoUpdateEnabled) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Update automatically")
-                            .font(.system(size: 12))
-                            .foregroundColor(.white.opacity(0.85))
-                        Text("Download & install new releases as soon as they're found, with no action required.")
-                            .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.4))
-                    }
+            Toggle(isOn: $updater.autoUpdateEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Update automatically")
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.85))
+                    Text("Download, install, and restart when a new release is available.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.4))
                 }
-                .toggleStyle(.switch)
-                .tint(.green)
             }
+            .toggleStyle(.switch)
+            .tint(.green)
 
             HStack(spacing: 8) {
                 Text("Check for updates every")
@@ -793,11 +829,11 @@ struct UpdatesTab: View {
                     .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.25)))
             }
             Button { updater.install() } label: {
-                Label(updater.isAppBundle ? "Download DMG" : "Download & install", systemImage: "square.and.arrow.down")
+                Label("Download & install", systemImage: "square.and.arrow.down")
             }
             .buttonStyle(.borderedProminent)
             Text(updater.isAppBundle
-                 ? "Download the DMG, quit KillSwitch from its menu bar, and drag the new app into Applications. Run the README unblock command again if macOS blocks it."
+                 ? "Verifies the DMG, replaces the entire signed app, and restarts automatically. Install the app in a writable Applications folder first, not on the disk image."
                  : "Installs to the LaunchAgent binary path (typically ~/bin/KillSwitch), then relaunches.")
                 .font(.system(size: 11))
                 .foregroundColor(.white.opacity(0.4))
@@ -878,5 +914,10 @@ struct UpdatesTab: View {
         case .checking, .downloading, .installing: return true
         default: return false
         }
+    }
+
+    private var hasCurrentFailure: Bool {
+        if case .failed = updater.state { return true }
+        return false
     }
 }

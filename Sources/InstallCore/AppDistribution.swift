@@ -16,7 +16,7 @@ public enum AppDistribution: Equatable {
         "\(assetName).sha256"
     }
 
-    public var supportsInPlaceUpdates: Bool {
+    public var usesStandaloneBinary: Bool {
         self == .standalone
     }
 }

@@ -1,8 +1,8 @@
 # Auto-update
 
 KillSwitch ships continuously: every push to `main` is published as a GitHub
-Release. The running app detects new builds; app bundles offer a DMG download,
-while standalone installations can install updates in place.
+Release. Both app bundles and standalone installations can download, verify,
+install, and restart automatically when **Update automatically** is enabled.
 
 ## Versioning
 
@@ -29,12 +29,13 @@ below). Versions are compared component-wise as integers, ignoring a leading `v`
 2. Overwrite `Sources/KillSwitch/Version.swift` with the computed version.
 3. Run `bash scripts/package-macos.sh` with `KILLSWITCH_VERSION` set to the
    computed version. It builds for `arm64` and `x86_64`, combines them with
-   `lipo`, and ad-hoc signs both the standalone executable and native app bundle.
+   `lipo`, and ad-hoc signs the standalone executable, bundled update helper,
+   and native app bundle.
 4. Package five assets: `KillSwitch.dmg`, `KillSwitch.dmg.sha256`, `KillSwitch`,
    `KillSwitch.tar.gz`, and `KillSwitch.sha256`. The DMG contains
    `KillSwitch.app`, an Applications shortcut, and installation instructions.
 5. Run `bash scripts/check-macos-package.sh` to verify both architectures,
-   bundle metadata, icon, signatures, checksums, and headless CLI dispatch
+   bundle metadata, icon, signatures, checksums, update helper, and headless CLI dispatch
    without starting the GUI or installing anything.
 6. `gh release create` publishes the release with all five assets attached and
    the latest commit message as the release notes.
@@ -68,18 +69,42 @@ the app reports `dev` and its numeric bundle version is `0.0.0`.
 
 ### App bundles
 
-App bundles select the `KillSwitch.dmg` release asset. **Download DMG** opens the
-download in the default browser. Quit KillSwitch using its menu bar menu, then
-drag the new app into Applications and replace the old one. Automatic checks
-and release notes remain available, but automatic installation is disabled for
-bundles, even when an old standalone installation had it enabled.
+App bundles select `KillSwitch.dmg` and `KillSwitch.dmg.sha256`. The opt-in
+**Update automatically** setting uses the same saved preference as standalone
+installations. **Download & install** runs the same flow manually:
 
-The legacy installer and uninstaller are explicitly blocked in app bundles,
-including when launched from a read-only DMG. Replacing only a signed app's
-executable would invalidate its signature, and updating `~/bin/KillSwitch`
-would silently update the wrong copy.
+1. Download the DMG and verify its published SHA-256, failing closed for missing
+   or mismatched checksums.
+2. Mount it read-only without opening Finder. Validate the app's bundle identity,
+   release version, executable, native architecture, and complete code signature.
+3. Copy the entire app to a private sibling directory on the installation volume.
+   Verify the staged signature, then remove its quarantine attribute. Unmount the
+   image before proceeding.
+4. Launch a verified copy of the bundled `KillSwitchUpdateHelper` and wait for
+   its readiness acknowledgement. Only then quit the running GUI normally, saving
+   preferences and releasing keep-awake resources.
+5. The helper waits for the old process to exit, revalidates both bundles, and
+   atomically exchanges the new and old app directories. It relaunches the app
+   through LaunchServices, then removes the backup and staging files.
 
-If macOS blocks the downloaded app, copy it to Applications first, quit it,
+A launch failure swaps the previous app back and attempts to reopen it. A failed
+rollback preserves the backup and logs its path instead of deleting it. Helper
+errors are recorded in
+`~/Library/Application Support/KillSwitch/LastUpdate.json` and the update log;
+the relaunched app shows the error. Automatic installation pauses for that failed
+version to prevent restart loops, but **Download & install** retries explicitly,
+and newer versions can still install automatically. An unreadable result file
+also pauses automatic installation with a visible error rather than ignoring it.
+Concurrent helpers use an exclusive lock in the same application-support folder.
+
+The app and its parent directory must be writable by the current account.
+Read-only disk-image copies and protected/root-owned installations are rejected
+with instructions to reinstall in a writable location, such as `~/Applications`.
+The updater does not elevate privileges, prompt for an administrator password,
+replace only a signed app's executable, or create a `~/bin/KillSwitch` copy.
+Existing CLI symlinks and login items keep pointing to the same installed path.
+
+If macOS blocks the initial manually downloaded app, copy it to Applications first, quit it,
 then run:
 
 ```bash
@@ -88,7 +113,8 @@ xattr -dr com.apple.quarantine /Applications/KillSwitch.app
 
 Only do this for a download you trust. It removes this app's quarantine flag,
 not Gatekeeper protection system-wide; it does not sign or notarize the app.
-The DMG's SHA-256 is published separately as `KillSwitch.dmg.sha256`.
+Verified automatic updates remove quarantine from the staged bundle themselves;
+the initial manual install may still require the command above.
 
 App startup is managed through macOS **System Settings > General > Login Items**
 (**Login Items & Extensions** on newer versions), not the legacy LaunchAgent.
@@ -146,5 +172,8 @@ The menu bar / tray can offer "Check for Updates…" by calling:
 UpdateChecker.shared.checkForUpdates()
 ```
 
-All update logic is self-contained in `UpdateChecker.swift` to keep the
-`AppDelegate` thin.
+`UpdateChecker.swift` orchestrates checks, preferences, and downloads.
+`AppBundleUpdater.swift` handles disk-image mounting and the helper handoff;
+`InstallCore/AppBundleUpdate.swift` handles validation, atomic replacement,
+rollback, and update results. `KillSwitchUpdateHelper` waits for process exit and
+relaunches without keeping the old GUI running alongside the new one.

@@ -59,6 +59,16 @@ grep -Fq 'xattr -dr com.apple.quarantine /Applications/KillSwitch.app' "$MOUNT/I
 iconutil --convert iconset --output "$STAGE/AppIcon.iconset" "$APP/Contents/Resources/AppIcon.icns"
 codesign --verify --deep --strict "$APP"
 codesign --verify --strict "$DIST/KillSwitch"
+HELPER="$APP/Contents/Helpers/KillSwitchUpdateHelper"
+codesign --verify --strict "$HELPER"
+for ARCH in arm64 x86_64; do
+  lipo "$HELPER" -verify_arch "$ARCH"
+done
+STATUS=0
+"$HELPER" > "$STAGE/helper-stdout" 2> "$STAGE/helper-stderr" || STATUS=$?
+[ "$STATUS" -eq 2 ] || die "Update helper did not reject invalid arguments."
+grep -Fq 'Usage: KillSwitchUpdateHelper' "$STAGE/helper-stderr" \
+  || die "Update helper did not report argument usage."
 
 INSTALLED_APP="$STAGE/Mock Applications/KillSwitch.app"
 ditto "$APP" "$INSTALLED_APP"

@@ -120,8 +120,10 @@ of fabricated data.
 
 - Shows the running version and the latest published release, with a manual **Check for updates** button.
 - Auto-checks on launch and on a configurable interval (**default every 1 hour**, selectable 15m–24h); when a newer build exists, a banner appears at the top of the window.
-- **App installs:** **Download DMG** opens the latest disk image download. Quit KillSwitch, then replace the app in Applications. The app never runs the legacy binary installer or uninstaller against an app bundle.
-- **Script installs:** the opt-in **Update automatically** toggle and one-click **Download & install** fetch and verify the new binary, replace `~/bin/KillSwitch`, refresh the CLI symlink, reload the LaunchAgent, and relaunch.
+- **Update automatically** works for both app and script installs. The existing opt-in preference is preserved when switching to the app.
+- **App installs:** downloads and verifies the DMG, stages the complete signed app, then uses a bundled helper to replace it and restart after KillSwitch quits. Failed relaunches roll back to the previous app.
+- **Script installs:** fetches and verifies the new binary, replaces `~/bin/KillSwitch`, refreshes the CLI symlink, reloads the LaunchAgent, and relaunches.
+- **Download & install** offers the same installation flow manually, without waiting for automatic checks.
 - **Uninstall:** app installs provide **Show in Finder** and removal instructions; script installs retain the **Uninstall KillSwitch** button.
 - See [docs/auto-update.md](docs/auto-update.md) for the full release + update flow.
 
@@ -171,6 +173,12 @@ Then open KillSwitch again. Only remove quarantine from a download you trust.
 This removes the downloaded-file quarantine attribute for this app only; it does
 not sign or notarize it, or disable Gatekeeper system-wide. The release includes
 `KillSwitch.dmg.sha256` if you want to verify the download's SHA-256.
+
+Automatic updates require the app and its installation folder to be writable by
+your account. A normal user-owned copy in `/Applications` works; use
+`~/Applications` if your account cannot update the system Applications folder.
+Do not run the app directly from the read-only DMG when updating. If you install
+elsewhere, adjust the quarantine command and CLI symlink to match that path.
 
 To run at login, add **KillSwitch** in **System Settings > General > Login Items**
 (**Login Items & Extensions** on newer macOS versions). Closing the window leaves
@@ -224,7 +232,12 @@ embeds the published version.
 
 The package check mounts the DMG read-only without opening Finder, checks the
 bundle, signatures, architectures, checksums, and headless CLI dispatch, then
-ejects it. It does not launch the GUI, install a login item, or run process cleanup.
+ejects it. It also checks the bundled update helper without starting an update.
+It does not launch the GUI, install a login item, or run process cleanup.
+
+`swift run InstallCoreChecks` exercises whole-app replacement and rollback using
+signed mock bundles, including identity/version/signature rejection, quarantine
+handling, installation permissions, and failed-update restart-loop prevention.
 
 If preview Command Line Tools report a missing `SwiftUIMacros` plugin, select a
 compatible installed SDK for the build without changing your global toolchain.
@@ -349,12 +362,26 @@ curl -fsSL https://raw.githubusercontent.com/mbianchidev/kill-switch/main/uninst
 
 ## Updating
 
-**App installation:** use **Download DMG** in the Updates tab or download the
-[latest DMG](https://github.com/mbianchidev/kill-switch/releases/latest/download/KillSwitch.dmg).
-Quit KillSwitch from the menu bar, open the DMG, and replace the app in
-Applications. Repeat the `xattr` command above if macOS blocks the new download.
-Automatic update checks still run, but replacing the app is manual. The app does
-not overwrite its signed executable or create a legacy `~/bin/KillSwitch` install.
+**App installation:** enable **Updates > Update automatically** to download,
+verify, install, and restart automatically, or click **Download & install**.
+The updater checks the DMG's SHA-256 and the app's identity, version, native
+architecture, and code signature. It stages the entire app in a private folder
+beside the installed copy, then a bundled helper waits for KillSwitch to quit,
+atomically replaces the app, and relaunches it. A failed relaunch restores the
+previous app. The existing CLI symlink and login-item path stay valid.
+
+The app and installation folder must be writable. Updates from the read-only
+DMG or a protected installation fail with instructions to reinstall in a
+writable folder, such as `~/Applications`; no administrator helper or `sudo`
+is used. A failed version is not retried automatically in a restart loop:
+the Updates tab shows the error and offers a manual retry. A newer release can
+still update automatically. Details are logged to
+`~/Library/Logs/killswitch-update.log`.
+
+Manual replacement with the [latest DMG](https://github.com/mbianchidev/kill-switch/releases/latest/download/KillSwitch.dmg)
+also remains available. Quit the app before replacing it, and repeat the `xattr`
+command above if macOS blocks that manually downloaded copy. Verified automatic
+updates clear quarantine on the staged bundle without altering its signature.
 
 **Standalone/script installation:** open the **Updates** tab (or wait for the
 launch check) and click **Download & install** when a newer version is offered.
@@ -387,7 +414,7 @@ To exercise the headless mode from a source checkout, invoke the binary through 
 
 - Swift 5.9
 - A shared `DevCleanupCore` target for preferences, integration-port merging, CLI parsing, and cleanup classification
-- A shared `InstallCore` target for tested binary and symlink path safety
+- A shared `InstallCore` target for tested binary/symlink safety, whole-app staging and rollback, and native command execution
 - A shared `ScreenTimeCore` target for tested active-time, idle-break, rollover, and reminder-boundary logic
 - SwiftUI + Swift Charts (live resource graphs)
 - AppKit (`NSWorkspace`) for application icons; `NSStatusItem` for the menu bar (tray) icon
@@ -399,4 +426,5 @@ To exercise the headless mode from a source checkout, invoke the binary through 
 - CodeQL static analysis (advanced setup, manual Swift build) — see
   [docs/ci-security.md](docs/ci-security.md)
 - Native `.app`/DMG packaging with built-in macOS tools, without third-party packaging dependencies
+- A bundled universal `KillSwitchUpdateHelper` for automatic whole-app replacement and relaunch
 - macOS Login Items for app auto-start; LaunchAgent for standalone installations

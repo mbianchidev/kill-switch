@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import DevCleanupCore
+import InstallCore
 
 /// Shared helpers for sampling running processes via `ps` / `lsof`.
 ///
@@ -285,6 +286,8 @@ enum ProcessSampler {
             switch runnerError {
             case .launchFailed(_, let underlying):
                 throw ProcessSamplerError.launchFailed(launchPath, underlying.localizedDescription)
+            case .commandFailed(let executable, let status, let message):
+                throw ProcessSamplerError.commandFailed(executable, status, message)
             }
         } catch {
             throw ProcessSamplerError.launchFailed(launchPath, error.localizedDescription)
