@@ -53,6 +53,7 @@ struct ContentView: View {
             watchdog.start()
             updater.startPeriodicChecks()
             updateResourceMonitoring()
+            AppStartupConfirmation.contentDidAppear()
         }
         .onChange(of: selectedTab) { _ in
             updateResourceMonitoring()

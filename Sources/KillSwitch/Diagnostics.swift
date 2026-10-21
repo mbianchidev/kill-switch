@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import InstallCore
 import SwiftUI
 import UniformTypeIdentifiers
 import os

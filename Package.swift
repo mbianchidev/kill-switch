@@ -42,6 +42,11 @@ let package = Package(
             path: "Sources/KillSwitch"
         ),
         .executableTarget(
+            name: "KillSwitchUpdateHelper",
+            dependencies: ["InstallCore"],
+            path: "Sources/KillSwitchUpdateHelper"
+        ),
+        .executableTarget(
             name: "DiskCleanupCoreChecks",
             dependencies: ["DiskCleanupCore"],
             path: "Tests/DiskCleanupCoreChecks"

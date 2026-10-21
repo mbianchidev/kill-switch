@@ -11,8 +11,8 @@ struct ReleaseInfo: Equatable {
     let version: String   // tag_name, e.g. "v1.1.2"
     let name: String
     let notes: String
-    let binaryURL: URL    // browser_download_url of the raw "KillSwitch" asset
-    let checksumURL: URL? // browser_download_url of the "KillSwitch.sha256" asset
+    let downloadURL: URL
+    let checksumURL: URL?
 }
 
 /// Errors surfaced by the update flow. All are user-presentable.
@@ -20,7 +20,7 @@ enum UpdateError: LocalizedError {
     case network(String)
     case decoding(String)
     case noRelease
-    case noAsset
+    case noAsset(String)
     case download(String)
     case invalidBinary
     case checksumMismatch
@@ -32,10 +32,10 @@ enum UpdateError: LocalizedError {
         case .network(let m):     return "Network error: \(m)"
         case .decoding(let m):    return "Could not read release info: \(m)"
         case .noRelease:          return "No published release found."
-        case .noAsset:            return "Latest release has no KillSwitch binary attached."
+        case .noAsset(let name):  return "Latest release has no \(name) attached."
         case .download(let m):    return "Download failed: \(m)"
         case .invalidBinary:      return "Downloaded file is not a valid macOS executable."
-        case .checksumMismatch:   return "Downloaded binary failed checksum verification."
+        case .checksumMismatch:   return "Downloaded update failed checksum verification."
         case .installFailed(let m): return "Install failed: \(m)"
         case .uninstallFailed(let m): return "Uninstall failed: \(m)"
         }
@@ -56,9 +56,7 @@ enum UpdateState: Equatable {
 // MARK: - UpdateChecker
 
 /// Checks the GitHub Releases API for a newer build, and (when the user asks)
-/// downloads the new binary and installs it over the user-owned
-/// `~/bin/KillSwitch`. The install path is user-writable, so no privilege
-/// escalation (admin password) is required.
+/// installs a complete app bundle or updates a legacy standalone binary.
 ///
 /// Designed to be self-contained: the rest of the app only needs
 /// `UpdateChecker.shared` and `checkForUpdates()`.
@@ -70,6 +68,7 @@ final class UpdateChecker: ObservableObject {
     @Published private(set) var lastChecked: Date?
     @Published private(set) var uninstallError: String?
     @Published private(set) var uninstalling = false
+    @Published private(set) var lastInstallError: String?
     @Published var bannerDismissed = false
 
     /// When on, an available update is downloaded and installed automatically,
@@ -91,6 +90,8 @@ final class UpdateChecker: ObservableObject {
 
     let currentVersion = AppVersion.current
 
+    var isAppBundle: Bool { distribution == .appBundle }
+
     /// Picker options for the automatic-check cadence.
     static let checkIntervalOptions: [(label: String, seconds: Int)] = [
         ("15m", 15 * 60), ("30m", 30 * 60), ("1h", 60 * 60),
@@ -103,8 +104,7 @@ final class UpdateChecker: ObservableObject {
     }
 
     private let releasesURL = URL(string: "https://api.github.com/repos/mbianchidev/kill-switch/releases/latest")!
-    private let assetName = "KillSwitch"
-    private let checksumAssetName = "KillSwitch.sha256"
+    private let distribution: AppDistribution
     private let agentPlistPath = FileManager.default
         .homeDirectoryForCurrentUser
         .appendingPathComponent("Library/LaunchAgents/io.killswitch.agent.plist").path
@@ -145,6 +145,9 @@ final class UpdateChecker: ObservableObject {
 
     private var periodicTimer: Timer?
     private var periodicChecksStarted = false
+    private var bundleUpdateHelper: Process?
+    private var previousBundleUpdate: AppBundleUpdateResult?
+    private var automaticInstallBlocked = false
 
     var availableRelease: ReleaseInfo? {
         if case .available(let r) = state { return r }
@@ -152,6 +155,8 @@ final class UpdateChecker: ObservableObject {
     }
 
     private init() {
+        let distribution = AppDistribution(bundleURL: Bundle.main.bundleURL)
+        self.distribution = distribution
         autoUpdateEnabled = UpdateDefaults.bool(.autoUpdate, default: false)
         let storedInterval = UpdateDefaults.int(.checkInterval, default: Self.defaultCheckIntervalSeconds)
         // Guard against missing/corrupt/out-of-range stored values: only accept
@@ -159,9 +164,44 @@ final class UpdateChecker: ObservableObject {
         checkIntervalSeconds = Self.checkIntervalOptions.contains { $0.seconds == storedInterval }
             ? storedInterval
             : Self.defaultCheckIntervalSeconds
+        if isAppBundle, AppBundleStartupRequest.isRequested(in: ProcessInfo.processInfo.environment) {
+            automaticInstallBlocked = true
+        } else if isAppBundle {
+            do {
+                previousBundleUpdate = try AppBundleUpdateResult.read(from: AppBundleUpdateResult.defaultURL)
+                lastInstallError = previousBundleUpdate?.errorMessage
+            } catch {
+                automaticInstallBlocked = true
+                lastInstallError = "Could not read the last update result. Use Download & install to retry: \(error.localizedDescription)"
+                log(lastInstallError ?? error.localizedDescription)
+            }
+            if let failedVersion = UserDefaults.standard.string(forKey: "KillSwitchFailedUpdateVersion") {
+                let message = previousBundleUpdate?.version == failedVersion
+                    ? previousBundleUpdate?.errorMessage
+                    : nil
+                let failure = message ?? "The update to \(failedVersion) failed. Use Download & install to retry; details are in killswitch-update.log."
+                previousBundleUpdate = AppBundleUpdateResult(version: failedVersion, errorMessage: failure)
+                lastInstallError = failure
+            }
+        }
     }
 
     // MARK: Public entry points
+
+    @MainActor
+    func confirmBundleStartup() {
+        automaticInstallBlocked = false
+        previousBundleUpdate = nil
+        lastInstallError = nil
+    }
+
+    @MainActor
+    func reportBundleStartupFailure(_ message: String) {
+        automaticInstallBlocked = true
+        lastInstallError = message
+        log("Startup confirmation failed: \(message)")
+        setState(.failed(message))
+    }
 
     /// Fire-and-forget update check. Safe to call from any thread / the UI.
     func checkForUpdates() {
@@ -192,7 +232,7 @@ final class UpdateChecker: ObservableObject {
         }
     }
 
-    /// Download the available release's binary and install it. No-op unless an
+    /// Download the available release and install it. No-op unless an
     /// update is currently available.
     func install() {
         Task { await downloadAndInstall() }
@@ -201,7 +241,9 @@ final class UpdateChecker: ObservableObject {
     /// Kick off an automatic install when the user opted in and an update is
     /// ready. No-op while a download/install is already running.
     private func maybeAutoInstall() {
-        guard autoUpdateEnabled, case .available = state else { return }
+        guard autoUpdateEnabled, !automaticInstallBlocked,
+              case .available(let release) = state,
+              previousBundleUpdate?.allowsAutomaticUpdate(to: release.version) != false else { return }
         log("Auto-update enabled; installing latest release")
         install()
     }
@@ -231,6 +273,11 @@ final class UpdateChecker: ObservableObject {
     /// removal failures are surfaced so the user isn't told it worked when it
     /// didn't.
     private func performUninstall() throws {
+        guard !isAppBundle else {
+            throw UpdateError.uninstallFailed(
+                "Quit KillSwitch, remove its login item in System Settings, and move the app to Trash in Finder."
+            )
+        }
         let fm = FileManager.default
 
         if fm.fileExists(atPath: agentPlistPath) {
@@ -328,16 +375,17 @@ final class UpdateChecker: ObservableObject {
         let name = (obj["name"] as? String) ?? tag
         let notes = (obj["body"] as? String) ?? ""
         let assets = (obj["assets"] as? [[String: Any]]) ?? []
-        guard let asset = assets.first(where: { ($0["name"] as? String) == assetName }),
+        guard let asset = assets.first(where: { ($0["name"] as? String) == distribution.assetName }),
               let urlStr = asset["browser_download_url"] as? String,
-              let url = URL(string: urlStr) else {
-            throw UpdateError.noAsset
+              let url = URL(string: urlStr),
+              url.scheme == "https", url.host == "github.com" else {
+            throw UpdateError.noAsset(distribution.assetName)
         }
         let checksumURL = assets
-            .first(where: { ($0["name"] as? String) == checksumAssetName })
+            .first(where: { ($0["name"] as? String) == distribution.checksumAssetName })
             .flatMap { $0["browser_download_url"] as? String }
             .flatMap { URL(string: $0) }
-        return ReleaseInfo(version: tag, name: name, notes: notes, binaryURL: url, checksumURL: checksumURL)
+        return ReleaseInfo(version: tag, name: name, notes: notes, downloadURL: url, checksumURL: checksumURL)
     }
 
     // MARK: Install
@@ -345,20 +393,49 @@ final class UpdateChecker: ObservableObject {
     @MainActor
     private func downloadAndInstall() async {
         guard case .available(let release) = state else { return }
+        lastInstallError = nil
+        previousBundleUpdate = nil
+        automaticInstallBlocked = false
         setState(.downloading)
         do {
-            let tmp = try await download(release.binaryURL)
-            defer { try? FileManager.default.removeItem(at: tmp) }
-            try validate(tmp)
+            let tmp = try await download(release.downloadURL)
+            defer {
+                do { try FileManager.default.removeItem(at: tmp) }
+                catch { log("Could not remove the downloaded update: \(error.localizedDescription)") }
+            }
             try await verifyChecksum(of: tmp, release: release)
             setState(.installing)
-            try await Task.detached(priority: .userInitiated) { [self] in
-                try installBinary(from: tmp)
-            }.value
-            log("Installed \(release.version); relaunching")
-            relaunch()
+            if isAppBundle {
+                let appURL = Bundle.main.bundleURL
+                bundleUpdateHelper = try await Task.detached(priority: .userInitiated) { [self] in
+                    try AppBundleUpdater.start(
+                        from: tmp,
+                        version: release.version,
+                        appURL: appURL,
+                        logURL: Self.logURL,
+                        log: { self.log($0) },
+                        onFailure: { [weak self] message in
+                            self?.setState(.failed(message))
+                        }
+                    )
+                }.value
+                log("Prepared \(release.version); quitting for whole-app replacement and restart")
+                // Termination exits without unwinding the download cleanup defer.
+                DispatchQueue.main.async { NSApp.terminate(nil) }
+            } else {
+                try validate(tmp)
+                try await Task.detached(priority: .userInitiated) { [self] in
+                    try installBinary(from: tmp)
+                }.value
+                log("Installed \(release.version); relaunching")
+                relaunch()
+            }
         } catch {
             let message = (error as? UpdateError)?.errorDescription ?? error.localizedDescription
+            if isAppBundle {
+                previousBundleUpdate = AppBundleUpdateResult(version: release.version, errorMessage: message)
+                lastInstallError = message
+            }
             log("Install failed: \(message)")
             setState(.failed(message))
         }
@@ -385,8 +462,7 @@ final class UpdateChecker: ObservableObject {
         }
     }
 
-    /// Reject anything that isn't a plausibly-sized Mach-O executable before we
-    /// hand it to a privileged copy.
+    /// Reject anything that isn't a plausibly-sized Mach-O executable.
     private func validate(_ url: URL) throws {
         let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
         let size = (attrs?[.size] as? Int) ?? 0
@@ -406,10 +482,8 @@ final class UpdateChecker: ObservableObject {
         }
     }
 
-    /// Verify the downloaded binary against the SHA-256 published alongside the
-    /// release. This is an integrity/authenticity gate: without it a tampered
-    /// asset (or compromised release) could be installed as root. Fails closed —
-    /// a missing or mismatched checksum aborts the install.
+    /// Verify the downloaded asset against the SHA-256 from the same release.
+    /// A missing or mismatched checksum aborts installation.
     private func verifyChecksum(of url: URL, release: ReleaseInfo) async throws {
         guard let checksumURL = release.checksumURL else {
             throw UpdateError.checksumMismatch
@@ -445,6 +519,9 @@ final class UpdateChecker: ObservableObject {
     /// the user's home directory, so the LaunchAgent that runs it and the updater
     /// that writes it always agree.
     private func installBinary(from src: URL) throws {
+        guard distribution.usesStandaloneBinary else {
+            throw UpdateError.installFailed("App bundles must be replaced as a complete signed app.")
+        }
         let fm = FileManager.default
         let targetPath = installPath
         let dir = (targetPath as NSString).deletingLastPathComponent
@@ -647,6 +724,9 @@ struct UpdatesTab: View {
                 VStack(alignment: .leading, spacing: 16) {
                     versionSection
                     preferencesSection
+                    if let error = updater.lastInstallError, !hasCurrentFailure {
+                        statusLine(icon: "exclamationmark.triangle.fill", color: .orange, text: error)
+                    }
                     statusSection
                     uninstallSection
                 }
@@ -708,7 +788,7 @@ struct UpdatesTab: View {
                     Text("Update automatically")
                         .font(.system(size: 12))
                         .foregroundColor(.white.opacity(0.85))
-                    Text("Download & install new releases as soon as they're found — no action required.")
+                    Text("Download, install, and restart when a new release is available.")
                         .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.4))
                 }
@@ -769,7 +849,9 @@ struct UpdatesTab: View {
                 Label("Download & install", systemImage: "square.and.arrow.down")
             }
             .buttonStyle(.borderedProminent)
-            Text("Installs to the LaunchAgent binary path (typically ~/bin/KillSwitch), then relaunches.")
+            Text(updater.isAppBundle
+                 ? "Verifies the DMG, replaces the entire signed app, and restarts automatically. Install the app in a writable Applications folder first, not on the disk image."
+                 : "Installs to the LaunchAgent binary path (typically ~/bin/KillSwitch), then relaunches.")
                 .font(.system(size: 11))
                 .foregroundColor(.white.opacity(0.4))
         }
@@ -787,17 +869,26 @@ struct UpdatesTab: View {
                     .foregroundColor(.white.opacity(0.85))
                 Spacer()
             }
-            Text("Removes the KillSwitch binary and the login LaunchAgent, then quits. Reinstall any time with the install script.")
+            Text(updater.isAppBundle
+                 ? "Quit KillSwitch, remove its login item in System Settings, and move KillSwitch.app to Trash. Remove your killswitchctl symlink too if you created one."
+                 : "Removes the KillSwitch binary and the login LaunchAgent, then quits. Reinstall any time with the install script.")
                 .font(.system(size: 11))
                 .foregroundColor(.white.opacity(0.4))
             if let error = updater.uninstallError {
                 statusLine(icon: "exclamationmark.triangle.fill", color: .orange, text: error)
             }
-            Button(role: .destructive) { showUninstallConfirm = true } label: {
-                Label(updater.uninstalling ? "Uninstalling…" : "Uninstall KillSwitch", systemImage: "trash")
+            if updater.isAppBundle {
+                Button("Show in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
+                }
+                .buttonStyle(.bordered)
+            } else {
+                Button(role: .destructive) { showUninstallConfirm = true } label: {
+                    Label(updater.uninstalling ? "Uninstalling…" : "Uninstall KillSwitch", systemImage: "trash")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isBusy || updater.uninstalling)
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(isBusy || updater.uninstalling)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
@@ -840,5 +931,10 @@ struct UpdatesTab: View {
         case .checking, .downloading, .installing: return true
         default: return false
         }
+    }
+
+    private var hasCurrentFailure: Bool {
+        if case .failed = updater.state { return true }
+        return false
     }
 }

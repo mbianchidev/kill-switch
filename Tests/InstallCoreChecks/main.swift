@@ -18,6 +18,15 @@ struct InstallCoreCheckRunner {
             try checkDanglingSymlinkReplacement(root: root)
             try checkManagedPathProtection(root: root)
             try checkManagedSymlinkRemovalResults(root: root)
+            checkAppDistributions()
+            var bundleChecks = BundleUpdateChecks()
+            for message in try bundleChecks.run(root: root) {
+                fail(message)
+            }
+            var startupChecks = BundleStartupChecks()
+            for message in try startupChecks.run(root: root) {
+                fail(message)
+            }
         } catch {
             fail("unexpected setup error: \(error.localizedDescription)")
         }
@@ -137,6 +146,25 @@ struct InstallCoreCheckRunner {
             (try? FileManager.default.destinationOfSymbolicLink(atPath: dangling.path)) == nil,
             "dangling managed symlink is removed"
         )
+    }
+
+    private mutating func checkAppDistributions() {
+        let app = AppDistribution(bundleURL: URL(fileURLWithPath: "/Applications/KillSwitch.app"))
+        check(app == .appBundle, "Applications install is recognized as an app bundle")
+        check(app.assetName == "KillSwitch.dmg", "app updates select the disk image")
+        check(app.checksumAssetName == "KillSwitch.dmg.sha256", "disk image has its own checksum")
+        check(!app.usesStandaloneBinary, "app bundles cannot use the standalone binary installer")
+
+        let mountedApp = AppDistribution(
+            bundleURL: URL(fileURLWithPath: "/Volumes/KillSwitch/KillSwitch.app")
+        )
+        check(mountedApp == .appBundle, "read-only disk image installs use the app update flow")
+
+        let standalone = AppDistribution(bundleURL: URL(fileURLWithPath: "/mock-home/bin"))
+        check(standalone == .standalone, "legacy installs keep the standalone distribution")
+        check(standalone.assetName == "KillSwitch", "legacy updates still select the raw binary")
+        check(standalone.checksumAssetName == "KillSwitch.sha256", "legacy checksum is unchanged")
+        check(standalone.usesStandaloneBinary, "legacy binary updates remain available")
     }
 
     private mutating func check(_ condition: Bool, _ message: String) {
