@@ -1,156 +1,38 @@
 # KillSwitch
 
-A macOS resource manager with automation useful for the AI era. It provides Activity Monitor-style system resources, guided disk cleanup, one-click process termination, developer cleanup, CPU alerts, active screen-time tracking, keep-awake controls, and native diagnostic collection.
+A native macOS resource manager and menu-bar utility for monitoring processes,
+reclaiming disk space, and managing long-running developer workloads. Use the
+SwiftUI app for live monitoring and cleanup, or the optional `killswitchctl` CLI
+for headless developer-tool integrations.
 
-<img width="1710" height="1066" alt="image" src="docs/image.png" />
+<img width="1710" height="1066" alt="KillSwitch application window" src="docs/image.png" />
 
 ## Features
 
-- Activity Monitor-style CPU, memory, energy, disk, and network process views
-- Defaults to the logged-in user's processes; switch to all processes to include root and other users
-- Live five-minute graphs plus system-wide summary counters for every resource mode
-- Low-overhead native CPU, memory, and disk sampling; heavyweight collectors run only for the selected metric
-- Shows application icons and full executable names where macOS exposes them
-- Filter by process, PID, or user and sort by the active resource
-- One-click process termination (SIGTERM, falls back to SIGKILL), with fail-closed managed-process protection
-- Guided disk cleanup for large files, temporary data, caches, and large folders
-- Generates privileged 10-second spindump reports with preview, save, and reveal actions
-- Runs full macOS `sysdiagnose` from the app or with **Shift-Command-D**
-- Native macOS notifications when a process sustains high CPU for an extended period
-- Tracks active screen time for the current day and continuous work stretch
-- Optional native break reminders with a configurable 1–12 hour interval
-- Menu bar (tray) icon — closing the window keeps the app running in the menu bar
-- Keeps the Mac awake indefinitely or for a selected duration, with optional display sleep
-- Advanced keep-awake settings for default duration, display sleep, and launch activation
-- Runs at login via macOS Login Items for the app, or a LaunchAgent for script installs
-- Headless `killswitchctl` integration for syncing managed dev ports and invoking the same cleanup logic as the UI
-- Dark, translucent UI inspired by Raycast
+- **Live resource monitoring:** CPU, memory, energy, disk, and network process
+  views with five-minute graphs, system summaries, filtering, and kill controls.
+- **Guided disk cleanup:** inspect large files, temporary data, caches, and large
+  folders before moving selected items to Trash.
+- **Developer cleanup and alerts:** configurable dev-server cleanup, CPU watchdog
+  notifications, and JSON CLI commands for syncing integration ports.
+- **Screen time and keep-awake controls:** local active-time tracking, optional
+  break reminders, and timed or indefinite sleep prevention.
+- **Native diagnostics and updates:** spindump/sysdiagnose collection, menu-bar
+  access, and opt-in automatic updates for app and standalone installations.
 
-## Tabs
-
-### Resources
-
-One dense, live process table with five modes:
-
-- **CPU** — % CPU, CPU time, threads, idle wakeups, architecture kind, PID, and user, plus a stacked user/system CPU graph.
-- **Memory** — physical footprint, threads, open files, PID, and user, plus memory pressure, physical memory, app memory, cached files, wired memory, compression, and swap.
-- **Energy** — current energy impact, rolling power history, sleep prevention, battery charge, and power-source status.
-- **Disk** — per-process bytes read/written, free/occupied capacity, system operation totals, and live read/write throughput.
-- **Network** — per-process bytes and packets sent/received, system totals, and live inbound/outbound throughput.
-
-CPU, memory, disk, and network views sample every six seconds; Energy samples every
-15 seconds because macOS requires a substantially heavier power collector. Sampling
-continues while the main window is hidden so live data and history keep flowing.
-**My processes** is the default scope; choose **All processes** to include system and
-other-user processes. macOS can restrict disk, architecture, open-file, GPU, and App
-Nap values for protected processes, so unavailable fields display an em dash instead
-of fabricated data.
-
-### Disk cleanup
-
-- Opens on the **largest individual files first**, sorted by the disk space they
-  currently use.
-- Switch between **Largest files**, **Temporary**, **Caches**, and **Large folders**.
-- Switching app tabs, cleanup categories, or browsed folders does not cancel
-  scans already in progress. Completed locations remain cached, and **Rescan**
-  keeps current rows visible while applying only added, updated, and removed items.
-- Browse folder contents with breadcrumbs, filter by name or path, reveal any item
-  in Finder, and select one or more cleanup candidates.
-- Every cleanup requires confirmation and uses the macOS Trash; KillSwitch never
-  permanently deletes an item.
-- Standard home folders such as Documents, Downloads, Pictures, and Movies must be
-  opened before their contents can be selected, preventing accidental removal of
-  the whole anchor folder. `~/Library`, hidden home configuration, and the cleanup
-  roots themselves are protected.
-- iCloud-synced items are excluded because moving one to Trash can remove it from
-  every synced device.
-- macOS privacy controls can block Desktop, Documents, Downloads, and other
-  locations. The tab reports partial scans and links to **Full Disk Access**
-  settings. Updating the standalone binary or ad-hoc-signed app can require
-  granting access again.
-
-### Dev cleanup
-
-- Lists processes **listening on notable dev ports** (defaults: 3000–3003, 4000, 4200, 5000/5001, 5173/5174, 5555, 6006, 8000/8001, 8080/8081, 8090, 8443, 8888, 9000/9090/9091), showing PID, command, and port, each with a kill button.
-- **Auto-kills** stale dev servers (node, python, java/mvn, rust/cargo, go, ruby, deno, bun, …) owned by the current user that have been running past the configured age (default **12 hours**).
-- Never touches: Porto-managed Lima hostagents, processes owned by other users or the system, Copilot CLI / SDK, node-based MCP servers (github, context7, work_iq, fabric, seismic, azure, kusto, revenue, …), IDEs (VS Code, Obsidian, Chrome, Slack, Teams, OrbStack) or non-dev apps (Spotify, Handy, …). Detection is conservative — when in doubt it does **not** kill.
-- Re-scans ports and re-runs cleanup on configurable intervals (defaults: every 5s / 10 min), plus a manual "Run cleanup now" button, and shows a summary of what was found and cleaned.
-- **Fully configurable from the Settings card** — every detection input is exposed and editable, with changes persisted across launches:
-  - Toggle **auto-kill** on/off and pick the **kill-after age** (1/6/12/24/48/72h).
-  - Pick the **cleanup** and **port-scan** intervals.
-  - Add/remove watched **ports**, dev **runtimes**, dev-server **indicators** (command-line signatures), and **protected** substrings (never killed).
-  - **Reset to defaults** restores every value and clears synced integration ports
-    until the integration syncs them again.
-
-
-### CPU Watchdog
-
-- Watches for processes (parent-collapsed) sustaining CPU above a threshold and fires **native macOS notifications** when one stays hot for several consecutive checks — mirroring the `cpu-watchdog.sh` / `cpu-hog-monitor.sh` shell scripts.
-- Defaults: **90%** threshold, alert after **3** consecutive checks, every **5 min** (~15 min sustained). Threshold (80/85/90/95%), interval, and consecutive-check count are all configurable.
-- After alerting, the per-process counter resets to avoid spam (it re-alerts after the same number of further consecutive sightings).
-- Shows currently-offending processes with their consecutive count and a kill button, plus an in-app recent-alerts history.
-- Appends to `~/Library/Logs/cpu-watchdog.log`, trimmed to the last 500 lines.
-
-### Screen time
-
-- Tracks active Mac use for the current day and the current continuous stretch.
-- Counts only while keyboard or pointer input has occurred within the last **5 minutes**.
-- Pauses counting after 5 minutes idle and ends the current stretch after **10 minutes** idle, screen lock, display sleep, system sleep, or a long monitoring gap.
-- Optionally sends a native **Touch grass** break reminder every **1–12 active hours** (default interval: **2 hours** when enabled).
-- Changing the interval schedules the next future boundary instead of immediately firing an overdue reminder.
-- Persists today's total, current stretch, settings, and last reminder across launches. Daily totals reset at local midnight without ending an active stretch.
-- Stores only aggregate durations on the Mac — no app, website, keystroke, or pointer history is collected.
-
-### Diagnostics
-
-- **Generate Spindump** samples user and kernel call stacks for 10 seconds, previews the report in-app, and supports Save/Reveal.
-- **Run System Diagnostics** creates a full macOS `sysdiagnose` archive. Use the button, the menu-bar item, or **Shift-Command-D** while KillSwitch is active.
-- macOS also provides the global sysdiagnose chord **Control-Option-Shift-Command-Period**.
-- Reports are stored in `~/Downloads/KillSwitch Diagnostics/`; both actions request administrator authorization.
-- See [docs/system-diagnostics.md](docs/system-diagnostics.md) for data sources, permissions, and limitations.
-
-### Keep awake
-
-- Start or stop a keep-awake session from the main window and see its active duration and mode.
-- Choose the default duration used by the tab and optional launch activation.
-- Keep the display on, or allow it to sleep while the Mac stays awake for background work.
-- Optionally activate keep-awake automatically when KillSwitch launches. Preferences persist across launches.
-
-### Updates
-
-- Shows the running version and the latest published release, with a manual **Check for updates** button.
-- Auto-checks on launch and on a configurable interval (**default every 1 hour**, selectable 15m–24h); when a newer build exists, a banner appears at the top of the window.
-- **Update automatically** works for both app and script installs. The existing opt-in preference is preserved when switching to the app.
-- **App installs:** downloads and verifies the DMG, stages the complete signed app, then uses a bundled helper to replace it and restart after KillSwitch quits. Failed relaunches roll back to the previous app.
-- **Script installs:** fetches and verifies the new binary, replaces `~/bin/KillSwitch`, refreshes the CLI symlink, reloads the LaunchAgent, and relaunches.
-- **Download & install** offers the same installation flow manually, without waiting for automatic checks.
-- **Uninstall:** app installs provide **Show in Finder** and removal instructions; script installs retain the **Uninstall KillSwitch** button.
-- See [docs/auto-update.md](docs/auto-update.md) for the full release + update flow.
-
-## Menu bar (tray)
-
-KillSwitch lives in the macOS menu bar like Caffeine. A status item (⚡ icon) sits in
-the top menu bar with a dropdown:
-
-- **Keep Mac Awake** — prevents idle system sleep indefinitely, for 5/10/15/30
-  minutes, or for 1/2/5 hours. It can also prevent display sleep when enabled in
-  the **Keep awake** tab. The active duration is checkmarked; choose
-  **Deactivate** to restore normal sleep behavior.
-- **Show KillSwitch** — brings the window back to the front (restores the Dock icon).
-- **Quit KillSwitch** — fully exits the app.
-
-Closing the main window with the red close button does **not** quit the app — it hides
-the window and drops the Dock icon, leaving only the menu bar icon. Re-open it from the
-menu bar item (or by clicking the Dock icon if visible). To fully quit, use **Quit
-KillSwitch** from the menu bar. CPU watchdog and screen-time monitoring continue while
-the window is hidden, as does an active Resources sampler.
+[Install](#install) | [Usage](#usage) | [CLI](#headless-cli-and-porto-integration) |
+[Development](#development) | [Documentation](#documentation)
 
 ## Requirements
 
-- macOS 13+ (Ventura or later)
-- Apple Silicon or Intel Mac; the DMG includes a universal app
-- Swift 5.9+ and Xcode Command Line Tools **only when building from source**
-- An administrator account for spindump and sysdiagnose collection
+- **macOS 13+ (Ventura or later)** on Apple Silicon or Intel. The release DMG
+  includes a universal app; Windows and Linux are not supported.
+- **No developer tools are needed for prebuilt releases.** Building from source
+  requires Git, Swift 5.9+, and Xcode Command Line Tools or Xcode.
+- **Administrator authorization** is required for spindump and sysdiagnose.
+  Ordinary monitoring runs as your user; installation needs a writable folder.
+- Disk scans may require **Full Disk Access** for protected folders. macOS can
+  still restrict individual process metrics.
 
 ## Install
 
@@ -172,7 +54,8 @@ xattr -dr com.apple.quarantine /Applications/KillSwitch.app
 Then open KillSwitch again. Only remove quarantine from a download you trust.
 This removes the downloaded-file quarantine attribute for this app only; it does
 not sign or notarize it, or disable Gatekeeper system-wide. The release includes
-`KillSwitch.dmg.sha256` if you want to verify the download's SHA-256.
+[KillSwitch.dmg.sha256](https://github.com/mbianchidev/kill-switch/releases/latest/download/KillSwitch.dmg.sha256)
+if you want to verify the download's SHA-256.
 
 Automatic updates require the app and its installation folder to be writable by
 your account. A normal user-owned copy in `/Applications` works; use
@@ -181,88 +64,33 @@ Do not run the app directly from the read-only DMG when updating. If you install
 elsewhere, adjust the quarantine command and CLI symlink to match that path.
 
 To run at login, add **KillSwitch** in **System Settings > General > Login Items**
-(**Login Items & Extensions** on newer macOS versions). Closing the window leaves
-the app running in the menu bar; choose **Quit KillSwitch** there to fully exit.
+(**Login Items & Extensions** on newer macOS versions). App installs do not add a
+login item automatically.
 
 If you previously installed with the script, quit the old copy and run its
 [uninstaller](#uninstall) before switching. Otherwise its LaunchAgent can start a
 second copy. Saved preferences and synced integration ports are retained.
 
-The DMG does not modify your shell or install the CLI automatically. To enable
-`killswitchctl` for Porto or other integrations:
-
-```bash
-mkdir -p "$HOME/bin"
-ln -s /Applications/KillSwitch.app/Contents/MacOS/KillSwitch "$HOME/bin/killswitchctl"
-```
-
-Ensure `~/bin` is on `PATH`. `ln -s` deliberately refuses to overwrite an existing
-`killswitchctl`; remove the old script installation first.
+The DMG does not modify your shell or install the CLI automatically. See
+[Headless CLI and Porto integration](#headless-cli-and-porto-integration) for the
+optional symlink.
 
 ### Standalone binary and CLI
 
-One line downloads the latest prebuilt binary and sets it up to run at login
-(no `sudo`, no source checkout needed):
+From outside a source checkout, this downloads the latest prebuilt binary,
+starts the GUI immediately, and sets it up to run at login. No `sudo` or
+developer tools are needed. Review the script before running it:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mbianchidev/kill-switch/main/install.sh | bash
 ```
 
-This downloads the latest `KillSwitch` binary, verifies its SHA-256, installs it
-to `~/bin/KillSwitch`, creates `~/bin/killswitchctl` as a symlink to that same
-binary, and loads a LaunchAgent so the GUI starts at login. Re-running it upgrades
-an existing install and refreshes the CLI symlink — handy if you're stuck on an
-old build (see [Updating](#updating)).
-
-### Build the app and DMG from source
-
-From a checkout on macOS:
-
-```bash
-bash scripts/package-macos.sh
-bash scripts/check-macos-package.sh
-```
-
-This builds both Apple Silicon and Intel executables, creates a native
-`KillSwitch.app` with its icon and version metadata, ad-hoc signs it, and packages
-it in **`dist/KillSwitch.dmg`** with an Applications shortcut and installation
-instructions. It also writes the standalone binary, tarball, and SHA-256 files
-used by the legacy installer. Local builds report `dev`; the release workflow
-embeds the published version.
-
-The package check mounts the DMG read-only without opening Finder, checks the
-bundle, signatures, architectures, checksums, and headless CLI dispatch, then
-ejects it. It also checks the bundled update helper without starting an update.
-It does not launch the GUI, install a login item, or run process cleanup.
-
-`swift run InstallCoreChecks` exercises whole-app replacement and rollback using
-signed mock bundles, including identity/version/signature rejection, quarantine
-handling, installation permissions, and failed-update restart-loop prevention.
-
-If preview Command Line Tools report a missing `SwiftUIMacros` plugin, select a
-compatible installed SDK for the build without changing your global toolchain.
-For example, with the macOS 26.5 SDK installed:
-
-```bash
-SDKROOT="$(xcrun --sdk macosx26.5 --show-sdk-path)" bash scripts/package-macos.sh
-```
-
-### Build the standalone installation from source
-
-From a checkout, `install.sh` builds with Swift automatically:
-
-```bash
-chmod +x install.sh uninstall.sh
-./install.sh            # builds with Swift when run inside the repo
-```
-
-Force a mode with `KILLSWITCH_INSTALL_MODE=source` or `KILLSWITCH_INSTALL_MODE=release`.
-
-This will:
-1. Build (or download) the release binary
-2. Copy it to `~/bin/KillSwitch` (no `sudo` required)
-3. Link `~/bin/killswitchctl` to the same release binary
-4. Install a LaunchAgent so the GUI starts at login
+The installer verifies the binary's SHA-256, installs it to `~/bin/KillSwitch`,
+creates `~/bin/killswitchctl` as a symlink to that same
+binary, and loads `~/Library/LaunchAgents/io.killswitch.agent.plist`. Re-running
+it upgrades an existing install and refreshes the CLI symlink. From a checkout
+with Swift available, it builds locally instead; override with
+`KILLSWITCH_INSTALL_MODE=source` or `KILLSWITCH_INSTALL_MODE=release`.
 
 Ensure `~/bin` is on `PATH` before invoking `killswitchctl`.
 Install, update, and uninstall refuse to replace or remove `~/bin/KillSwitch`
@@ -270,26 +98,176 @@ when it is a real directory. Existing binary files and symlinks are replaced or
 removed safely. The `~/bin/killswitchctl` path is app-owned only when it is a
 symlink; regular files and directories at that path are preserved.
 
+### First run
+
+The app opens on **Resources** with **My processes** selected. A live process
+table and a KillSwitch menu-bar icon confirm it is running. Select
+**All processes** to include system and other-user processes.
+
+**Before opening Dev cleanup:** automatic termination is **enabled by default**
+for qualifying dev servers older than **12 hours**. Opening that tab runs a
+cleanup immediately. Age means total process lifetime, not inactivity; read
+[Safety and limitations](#safety-and-limitations) before using it.
+
+Closing the window hides it and removes the Dock icon; it does **not** quit.
+Use **Show KillSwitch** in the menu bar to reopen it, or **Quit KillSwitch** to
+exit. The watchdog, screen-time tracker, and any active keep-awake session
+continue while the window is hidden. Resource sampling continues if Resources
+remains the selected tab.
+
+## Usage
+
+### Resources
+
+Filter by process name, PID, or user and sort by the selected resource. Application
+icons and executable names are shown where macOS exposes them.
+
+| Mode | Process data and system summaries |
+| --- | --- |
+| CPU | CPU usage/time, threads, idle wakeups, architecture, PID, user, and user/system CPU graph |
+| Memory | Physical footprint, threads, open files, pressure, physical/app/cached/wired/compressed memory, and swap |
+| Energy | Current impact, rolling power history, sleep prevention, battery charge, and power source |
+| Disk | Process bytes read/written, capacity, system operation totals, and live throughput |
+| Network | Process bytes/packets sent and received, system totals, and live throughput |
+
+CPU, memory, disk, and network sample every **6 seconds**; Energy samples every
+**15 seconds** because its collector is heavier. Heavyweight collectors run only
+for the selected metric, and leaving the Resources tab stops sampling.
+Protected-process fields, GPU counters, and App Nap data may be unavailable
+and display a dash rather than fabricated values.
+
+### Disk cleanup
+
+- Opens on **Largest files**, sorted by occupied disk space. Switch to
+  **Temporary**, **Caches**, or **Large folders** as needed.
+- Browse with breadcrumbs, filter by name or path, reveal items in Finder, and
+  select cleanup candidates. Scans continue across tab/folder changes; completed
+  locations are cached, and **Rescan** updates rows without clearing them first.
+- Every removal requires confirmation and moves items to the macOS Trash.
+  KillSwitch does not permanently delete them.
+- Standard home folders such as Documents, Downloads, Pictures, and Movies
+  must be opened before selecting their contents. Home Library/configuration
+  locations and cleanup roots are protected; iCloud-synced items are excluded
+  to avoid deleting data from other devices.
+- Partial scans report permission problems and link to **Full Disk Access**.
+  Updating an ad-hoc-signed app or standalone binary may require granting access
+  again.
+
+### Dev cleanup
+
+Lists PID, command, and port for watched listeners and recognized dev servers.
+Default watched ports are 3000-3003, 4000, 4200, 5000/5001, 5173/5174, 5555,
+6006, 8000/8001, 8080/8081, 8090, 8443, 8888, and 9000/9090/9091.
+
+Automatic cleanup considers processes owned by the current user that match
+both a configured runtime and dev-server command signature. Default exclusions
+protect Copilot, MCP servers, IDEs, language servers, and other listed apps;
+commands under `/System/` are skipped. Porto-managed Lima hostagents are protected
+independently of editable exclusions.
+
+The **Settings** card persists these controls across launches:
+
+| Setting | Default / choices |
+| --- | --- |
+| Auto-kill | Enabled; can be disabled without removing manual kill buttons |
+| Kill-after age | 12 hours; choose 1, 6, 12, 24, 48, or 72 hours |
+| Port refresh | Every 5 seconds; choose 5/10/30 seconds or 1 minute |
+| Cleanup pass | Every 10 minutes; configurable interval |
+| Detection | Editable ports, runtimes, dev-server indicators, and protected substrings |
+
+**Run cleanup now** uses the saved auto-kill and age settings and shows candidate
+and termination counts. **Reset to defaults** re-enables auto-kill, restores all
+values, clears synced integration ports, and immediately runs cleanup.
+
+### CPU watchdog
+
+The **Watchdog** tab watches parent-collapsed process CPU and sends native
+notifications after consecutive high-CPU observations. Defaults are **90% CPU**,
+**3 checks**, and a **5-minute** interval. Threshold (80/85/90/95%), interval, and
+check count are configurable for the current app session.
+
+The per-process counter resets after each alert. Current offenders have kill
+buttons, recent alerts appear in the app, and
+`~/Library/Logs/cpu-watchdog.log` retains the last 500 lines.
+
+### Screen time
+
+Tracks today's active use and the current continuous stretch. Counting pauses
+after **5 minutes** without keyboard/pointer input; **10 minutes** idle, screen
+lock, display/system sleep, or a long monitoring gap ends the stretch.
+
+Optional **Touch grass** reminders are off by default, with a **2-hour** interval
+when enabled (configurable from **1 to 12 active hours**). Changing the interval
+schedules the next future boundary, not an immediate overdue reminder.
+
+Today's total, current stretch, settings, and last reminder persist across
+launches. Daily totals reset at local midnight without ending an active stretch.
+Only aggregate durations are stored locally, not app, website, keystroke, or
+pointer histories.
+
+### Diagnostics
+
+**Generate Spindump** samples user/kernel stacks for 10 seconds, previews the
+report, and offers Save/Reveal. **Run System Diagnostics** creates a full
+`sysdiagnose` archive; use the tab, menu bar, or **Shift-Command-D** while the
+app is active. macOS also provides **Control-Option-Shift-Command-Period**.
+
+Both actions request administrator authorization and write to
+`~/Downloads/KillSwitch Diagnostics/`. Collection may take several minutes.
+Review diagnostic reports for sensitive data before sharing them. See
+[Resources and system diagnostics](docs/system-diagnostics.md).
+
+### Keep awake
+
+Start or stop a session from the tab or **Keep Mac Awake** menu. Choose
+indefinitely, 5/10/15/30 minutes, or 1/2/5 hours; select **Deactivate** to restore
+normal sleep behavior.
+
+Settings persist the default duration, whether the display may sleep, and
+optional activation at launch. Defaults are indefinite duration, keeping the
+display on, and **no activation at launch**. An active session prevents idle
+system sleep; it is not a guarantee against lid-close or forced sleep.
+
+### Safety and limitations
+
+- **Cleanup is age-based, not idle detection.** A busy dev server can qualify.
+  Watched ports control discovery/listing, not which processes automatic cleanup
+  may terminate; matching servers on other ports can qualify too.
+- **Manual kill buttons are separate from auto-kill settings.** Disabling
+  auto-kill or adding an exclusion does not disable those buttons. Termination
+  sends SIGTERM, with SIGKILL as a fallback if sending SIGTERM fails, and can
+  lose unsaved work. Uninspectable processes and Porto hostagents are refused.
+- macOS permissions still apply to process access, disk scans, and diagnostics.
+  **All processes** does not grant administrator privileges.
+- Releases are ad-hoc signed, not Apple-notarized. SHA-256 verification checks
+  integrity against the published checksum, not an Apple-verified publisher
+  identity. Keep-awake sessions and monitoring stop when the app quits.
+
 ## Headless CLI and Porto integration
 
-The `killswitchctl` symlink runs either the app bundle's executable or the
-standalone KillSwitch release binary in headless mode. Basename dispatch happens before SwiftUI starts, so CLI
-invocations never open the app window or menu bar item. Running the same binary as
-`KillSwitch` preserves the existing GUI behavior.
+The standalone installer creates `~/bin/killswitchctl`. For an app installation,
+create the optional symlink yourself:
+
+```bash
+mkdir -p "$HOME/bin"
+ln -s /Applications/KillSwitch.app/Contents/MacOS/KillSwitch "$HOME/bin/killswitchctl"
+export PATH="$HOME/bin:$PATH"
+```
+
+Adjust the app path for a custom location. `ln -s` deliberately refuses to
+overwrite an existing alias; remove the old script installation first. Add
+`~/bin` to your shell configuration to keep it on `PATH`.
+
+The executable basename selects headless mode before SwiftUI starts: CLI calls
+never open the window or menu-bar item. Running the binary as `KillSwitch`
+starts the GUI instead. Verify the CLI without terminating processes:
 
 ```bash
 killswitchctl dev-cleanup status --json
-killswitchctl dev-cleanup sync-ports --source porto --ports 41000,41001 --json
-killswitchctl dev-cleanup sync-ports --source porto --ports='' --json
-killswitchctl dev-cleanup cleanup --json
 ```
 
-`sync-ports` stores each integration's ports separately from the user-edited Dev
-cleanup ports. Passing an empty value (`--ports=''` or `--ports=`) clears that
-source. User ports are never overwritten; every UI scan and cleanup merges the
-latest persisted integration ports, so a running app does not need to restart.
-
-`status` and successful `sync-ports` calls return:
+It returns the version, saved auto-kill mode, user ports, integration ports, and
+merged effective ports. For example, with a customized single user port:
 
 ```json
 {
@@ -306,9 +284,27 @@ latest persisted integration ports, so a running app does not need to restart.
 `autoKillEnabled` is the saved KillSwitch Dev cleanup mode, so integrations can
 show whether a subsequent cleanup call is allowed to terminate candidates.
 
-`cleanup` uses the same classification and termination service as **Run cleanup
-now**, including the persisted auto-kill, age threshold, runtime, dev-indicator,
-and exclusion settings:
+To persist or clear an integration's watched ports:
+
+```bash
+killswitchctl dev-cleanup sync-ports --source porto --ports 41000,41001 --json
+killswitchctl dev-cleanup sync-ports --source porto --ports='' --json
+```
+
+`sync-ports` returns the same response shape as `status`. Each source is stored
+separately; an empty value (`--ports=''` or `--ports=`) clears it. User-edited
+ports are never overwritten, and the running app merges the latest persisted
+integration ports without restarting.
+
+**The following command can terminate processes.** It uses the same service as
+**Run cleanup now**, including saved auto-kill, age, runtime, dev-indicator, and
+exclusion settings:
+
+```bash
+killswitchctl dev-cleanup cleanup --json
+```
+
+Example response (values are illustrative, not current process data):
 
 ```json
 {
@@ -334,12 +330,11 @@ JSON on stderr:
 {"error":{"code":"invalid_arguments","message":"..."}}
 ```
 
-Porto can treat a missing `killswitchctl` as an optional integration, run the
-official installer above, sync its current managed ports under source `porto`,
-and invoke cleanup. Cleanup remains conservative: if auto-kill is disabled, or a
-candidate has not crossed the saved age threshold, it is not terminated. Processes
-that fail the saved runtime, indicator, ownership, system, or exclusion checks are
-not candidates. Porto-managed `limactl hostagent` processes are hard-protected
+Porto is optional, not a prerequisite. An integration can detect `killswitchctl`,
+sync managed ports under its own source name, and invoke cleanup. If auto-kill is
+disabled, or a candidate has not crossed the saved age threshold, it is not
+terminated. Processes that fail the saved runtime, indicator, ownership, system,
+or exclusion checks are not candidates. Porto-managed `limactl hostagent` processes are hard-protected
 across every KillSwitch termination path, independent of editable exclusions.
 
 ## Uninstall
@@ -362,26 +357,22 @@ curl -fsSL https://raw.githubusercontent.com/mbianchidev/kill-switch/main/uninst
 
 ## Updating
 
-**App installation:** enable **Updates > Update automatically** to download,
-verify, install, and restart automatically, or click **Download & install**.
-The updater checks the DMG's SHA-256 and the app's identity, version, native
-architecture, and code signature. It stages the entire app in a private folder
-beside the installed copy, then a bundled helper waits for KillSwitch to quit,
-atomically replaces the app, and starts it with a one-time startup token. The new
-GUI must acknowledge both application launch and root-view startup within
-30 seconds, with a matching PID, version, and token. Only then is the update
-recorded as successful and the previous app removed. A failed or unresponsive
-replacement is stopped before rollback. The existing CLI symlink and login-item
-path stay valid. Architecture validation uses Foundation, so updates do not
-require Xcode or Command Line Tools.
+The **Updates** tab shows the installed/latest versions, release notes, and
+**Check for updates**. Checks run at launch and every **hour** by default;
+choose an interval from **15 minutes to 24 hours**. Automatic installation is
+**off by default**: enable **Update automatically** or use **Download & install**.
 
-The app and installation folder must be writable. Updates from the read-only
-DMG or a protected installation fail with instructions to reinstall in a
-writable folder, such as `~/Applications`; no administrator helper or `sudo`
-is used. A failed version is not retried automatically in a restart loop:
-the Updates tab shows the error and offers a manual retry. A newer release can
-still update automatically. Details are logged to
-`~/Library/Logs/killswitch-update.log`.
+**App installation:** the updater verifies the DMG's SHA-256 and the app's
+identity, version, native architecture, and signature. A bundled helper stages
+and replaces the whole app, confirms startup, and rolls back failed relaunches.
+The existing CLI symlink and login-item path stay valid. The app and its parent
+folder must be writable; updating from the read-only DMG is not supported.
+No `sudo` or developer tools are needed.
+
+A failed version pauses automatic installation to prevent restart loops; the
+tab shows the error and offers manual retry. Details are logged to
+`~/Library/Logs/killswitch-update.log`. See [Auto-update](docs/auto-update.md)
+for validation, startup confirmation, rollback, and release details.
 
 Manual replacement with the [latest DMG](https://github.com/mbianchidev/kill-switch/releases/latest/download/KillSwitch.dmg)
 also remains available. Quit the app before replacing it, and repeat the `xattr`
@@ -393,43 +384,98 @@ launch check) and click **Download & install** when a newer version is offered.
 The updater overwrites whatever binary the LaunchAgent launches and refreshes the
 `~/bin/killswitchctl` symlink, so the GUI and CLI always use the same release.
 
-Every push to `main` is automatically published as a GitHub Release
-(auto-incrementing semver, e.g. `v1.1.1`) with the universal DMG and legacy binary
-assets attached, and
-the running app compares its embedded version against the latest release. See
-[docs/auto-update.md](docs/auto-update.md) for details.
+The release workflow publishes auto-incremented semver releases from pushes to
+`main`, including the universal DMG and standalone binary assets.
 
-To update a source checkout manually instead:
+## Development
+
+KillSwitch uses Swift, SwiftUI, Swift Charts, AppKit, and native macOS
+process/power APIs. Shared SwiftPM targets isolate dev cleanup, disk cleanup,
+installation/update safety, keep-awake control, screen time, and system-metric
+logic. There are no third-party Swift package dependencies.
+
+### Build and run without installing
+
+On macOS with the [source prerequisites](#requirements):
 
 ```bash
-./update.sh
-```
-
-## Run without installing
-
-```bash
+git clone https://github.com/mbianchidev/kill-switch.git
+cd kill-switch
 swift build -c release --product KillSwitch
 .build/release/KillSwitch
 ```
 
-To exercise the headless mode from a source checkout, invoke the binary through a
-`killswitchctl` symlink; the executable basename selects CLI mode.
+This starts the GUI without creating a login item. Local builds report `dev`;
+any published release is considered newer by the updater. Headless calls still
+require a `killswitchctl` symlink; passing CLI arguments directly to a binary
+named `KillSwitch` does not select CLI mode.
 
-## Tech Stack
+To install the standalone build from the checkout, run
+`KILLSWITCH_INSTALL_MODE=source bash install.sh`. To update that installation,
+run `bash update.sh` from the checkout; it pulls/rebases the current branch,
+builds, replaces the binary, and reloads the LaunchAgent.
 
-- Swift 5.9
-- A shared `DevCleanupCore` target for preferences, integration-port merging, CLI parsing, and cleanup classification
-- A shared `InstallCore` target for tested binary/symlink safety, whole-app staging and rollback, and native command execution
-- A shared `ScreenTimeCore` target for tested active-time, idle-break, rollover, and reminder-boundary logic
-- SwiftUI + Swift Charts (live resource graphs)
-- AppKit (`NSWorkspace`) for application icons; `NSStatusItem` for the menu bar (tray) icon
-- CoreGraphics idle-input timing plus `NSWorkspace` sleep, display, and session notifications for screen-time tracking
-- Native macOS process and resource APIs (`libproc`, Mach CPU/VM statistics, IOKit), with `top`, `nettop`, `netstat`, and `pmset` activated only for metrics that require them
-- `osascript` for native notifications and privileged diagnostics
-- `URLSession` (async/await) + GitHub Releases API for in-app updates
-- GitHub Actions for continuous releases on every push to `main`
-- CodeQL static analysis (advanced setup, manual Swift build) — see
-  [docs/ci-security.md](docs/ci-security.md)
-- Native `.app`/DMG packaging with built-in macOS tools, without third-party packaging dependencies
-- A bundled universal `KillSwitchUpdateHelper` for automatic whole-app replacement and relaunch
-- macOS Login Items for app auto-start; LaunchAgent for standalone installations
+### Build and verify the app and DMG
+
+```bash
+bash scripts/package-macos.sh
+bash scripts/check-macos-package.sh
+```
+
+Packaging builds Apple Silicon and Intel executables, creates and ad-hoc signs
+`KillSwitch.app` and its update helper, and writes **`dist/KillSwitch.dmg`** with
+an Applications shortcut. It also writes the standalone binary, tarball, and
+SHA-256 files used by the script installer. The release workflow embeds the
+published version; local bundles default to `dev` (`0.0.0`).
+
+The package check mounts the DMG read-only without opening Finder, verifies
+bundle metadata, signatures, architectures, checksums, and headless CLI dispatch,
+then ejects it. It exercises a copied app and the update helper without launching
+the GUI, installing a login item, or running process cleanup.
+
+### Run checks
+
+The test targets are executable checks, not an XCTest suite. Run the same checks
+as [CI](.github/workflows/ci.yml):
+
+```bash
+swift run DevCleanupCoreChecks
+swift run DiskCleanupCoreChecks
+swift run InstallCoreChecks
+swift run SystemMetricsChecks
+swift run ScreenTimeCoreChecks
+```
+
+Install checks use signed mock bundles to exercise path safety, whole-app
+replacement, rollback, quarantine handling, permissions, and restart-loop
+prevention.
+
+If preview Command Line Tools report a missing `SwiftUIMacros` plugin, select a
+compatible **installed** SDK before rerunning the build/check commands, without
+changing the global toolchain. For example, with the macOS 26.5 SDK installed:
+
+```bash
+export SDKROOT="$(xcrun --sdk macosx26.5 --show-sdk-path)"
+```
+
+## Documentation
+
+- [Resources and system diagnostics](docs/system-diagnostics.md): metric sources,
+  permissions, and report collection.
+- [Auto-update](docs/auto-update.md): release versioning, packaging, verification,
+  and update recovery.
+- [CI and security scanning](docs/ci-security.md): CodeQL configuration and
+  build-cache constraints.
+- [Releases](https://github.com/mbianchidev/kill-switch/releases): published DMGs,
+  standalone binaries, and checksums.
+
+## Contributing
+
+[Bug reports](https://github.com/mbianchidev/kill-switch/issues) and pull requests
+are welcome. Include your macOS version, CPU architecture, and reproduction
+steps. For code changes, run the core checks and package verification above.
+Use mock data in tests and review logs or diagnostic reports before sharing.
+
+## License
+
+KillSwitch is available under the [MIT License](LICENSE).
