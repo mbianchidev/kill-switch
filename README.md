@@ -3,7 +3,7 @@
 A native macOS resource manager and menu-bar utility for monitoring processes,
 reclaiming disk space, and managing long-running developer workloads. Use the
 SwiftUI app for live monitoring and cleanup, or the optional `killswitchctl` CLI
-for headless developer-tool integrations.
+for headless developer-tool integrations, including AI-assisted development.
 
 <img width="1710" height="1066" alt="KillSwitch application window" src="docs/image.png" />
 
@@ -109,11 +109,16 @@ for qualifying dev servers older than **12 hours**. Opening that tab runs a
 cleanup immediately. Age means total process lifetime, not inactivity; read
 [Safety and limitations](#safety-and-limitations) before using it.
 
+<a id="menu-bar-tray"></a>
+
 Closing the window hides it and removes the Dock icon; it does **not** quit.
 Use **Show KillSwitch** in the menu bar to reopen it, or **Quit KillSwitch** to
 exit. The watchdog, screen-time tracker, and any active keep-awake session
 continue while the window is hidden. Resource sampling continues if Resources
-remains the selected tab.
+remains the selected tab. See [Menu-bar behavior](docs/development.md#ui-and-menu-bar)
+for the status icon, active-duration checkmarks, and menu actions.
+
+<a id="tabs"></a>
 
 ## Usage
 
@@ -124,10 +129,10 @@ icons and executable names are shown where macOS exposes them.
 
 | Mode | Process data and system summaries |
 | --- | --- |
-| CPU | CPU usage/time, threads, idle wakeups, architecture, PID, user, and user/system CPU graph |
-| Memory | Physical footprint, threads, open files, pressure, physical/app/cached/wired/compressed memory, and swap |
+| CPU | CPU usage/time, threads, idle wakeups, architecture, PID, user, and stacked user/system CPU graph |
+| Memory | Physical footprint, threads, open files, PID, user, pressure, physical/app/cached/wired/compressed memory, and swap |
 | Energy | Current impact, rolling power history, sleep prevention, battery charge, and power source |
-| Disk | Process bytes read/written, capacity, system operation totals, and live throughput |
+| Disk | Process bytes read/written, free/occupied capacity, system operation totals, and live throughput |
 | Network | Process bytes/packets sent and received, system totals, and live throughput |
 
 CPU, memory, disk, and network sample every **6 seconds**; Energy samples every
@@ -164,6 +169,9 @@ both a configured runtime and dev-server command signature. Default exclusions
 protect Copilot, MCP servers, IDEs, language servers, and other listed apps;
 commands under `/System/` are skipped. Porto-managed Lima hostagents are protected
 independently of editable exclusions.
+
+See [Developer cleanup defaults](docs/development.md#developer-cleanup-defaults)
+for the runtime families and named protection examples.
 
 The **Settings** card persists these controls across launches:
 
@@ -355,6 +363,8 @@ curl -fsSL https://raw.githubusercontent.com/mbianchidev/kill-switch/main/uninst
 ./uninstall.sh
 ```
 
+<a id="updates"></a>
+
 ## Updating
 
 The **Updates** tab shows the installed/latest versions, release notes, and
@@ -387,12 +397,20 @@ The updater overwrites whatever binary the LaunchAgent launches and refreshes th
 The release workflow publishes auto-incremented semver releases from pushes to
 `main`, including the universal DMG and standalone binary assets.
 
+<a id="tech-stack"></a>
+
 ## Development
 
 KillSwitch uses Swift, SwiftUI, Swift Charts, AppKit, and native macOS
 process/power APIs. Shared SwiftPM targets isolate dev cleanup, disk cleanup,
 installation/update safety, keep-awake control, screen time, and system-metric
 logic. There are no third-party Swift package dependencies.
+
+The [development and implementation reference](docs/development.md) preserves
+the full tech stack, native integrations, cleanup defaults, and alternative
+source-installation commands.
+
+<a id="run-without-installing"></a>
 
 ### Build and run without installing
 
@@ -410,10 +428,16 @@ any published release is considered newer by the updater. Headless calls still
 require a `killswitchctl` symlink; passing CLI arguments directly to a binary
 named `KillSwitch` does not select CLI mode.
 
+<a id="build-the-standalone-installation-from-source"></a>
+
 To install the standalone build from the checkout, run
 `KILLSWITCH_INSTALL_MODE=source bash install.sh`. To update that installation,
 run `bash update.sh` from the checkout; it pulls/rebases the current branch,
-builds, replaces the binary, and reloads the LaunchAgent.
+builds, replaces the binary, and reloads the LaunchAgent. See
+[Source installation](docs/development.md#standalone-source-installation) for
+the executable-script alternative and installation steps.
+
+<a id="build-the-app-and-dmg-from-source"></a>
 
 ### Build and verify the app and DMG
 
@@ -460,6 +484,9 @@ export SDKROOT="$(xcrun --sdk macosx26.5 --show-sdk-path)"
 
 ## Documentation
 
+- [Development and implementation](docs/development.md): full tech stack,
+  native integrations, developer-cleanup defaults, menu behavior, and source
+  installation alternatives.
 - [Resources and system diagnostics](docs/system-diagnostics.md): metric sources,
   permissions, and report collection.
 - [Auto-update](docs/auto-update.md): release versioning, packaging, verification,
