@@ -164,7 +164,9 @@ final class UpdateChecker: ObservableObject {
         checkIntervalSeconds = Self.checkIntervalOptions.contains { $0.seconds == storedInterval }
             ? storedInterval
             : Self.defaultCheckIntervalSeconds
-        if isAppBundle {
+        if isAppBundle, AppBundleStartupRequest.isRequested(in: ProcessInfo.processInfo.environment) {
+            automaticInstallBlocked = true
+        } else if isAppBundle {
             do {
                 previousBundleUpdate = try AppBundleUpdateResult.read(from: AppBundleUpdateResult.defaultURL)
                 lastInstallError = previousBundleUpdate?.errorMessage
@@ -185,6 +187,21 @@ final class UpdateChecker: ObservableObject {
     }
 
     // MARK: Public entry points
+
+    @MainActor
+    func confirmBundleStartup() {
+        automaticInstallBlocked = false
+        previousBundleUpdate = nil
+        lastInstallError = nil
+    }
+
+    @MainActor
+    func reportBundleStartupFailure(_ message: String) {
+        automaticInstallBlocked = true
+        lastInstallError = message
+        log("Startup confirmation failed: \(message)")
+        setState(.failed(message))
+    }
 
     /// Fire-and-forget update check. Safe to call from any thread / the UI.
     func checkForUpdates() {

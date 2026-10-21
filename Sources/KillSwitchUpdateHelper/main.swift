@@ -37,8 +37,14 @@ do {
     try AppBundleUpdate.waitForProcessExit(pid: parentPID)
     parentExited = true
     try prepared.install(relaunch: {
-        try AppBundleUpdateResult(version: prepared.version, errorMessage: nil).write(to: resultURL)
-        try CommandRunner.runChecked("/usr/bin/open", arguments: ["-n", prepared.destination.path])
+        try AppBundleRelauncher.launchAndConfirm(
+            bundleURL: prepared.destination,
+            version: prepared.version,
+            directory: prepared.directory,
+            onConfirmed: {
+                try AppBundleUpdateResult(version: prepared.version, errorMessage: nil).write(to: resultURL)
+            }
+        )
     }, log: log)
     log("Installed \(prepared.version) and relaunched \(prepared.destination.path)")
     close(lockFD)
@@ -47,11 +53,7 @@ do {
     log(error.localizedDescription)
     if ready, let update {
         let preserveBackup: Bool
-        if let updateError = error as? AppBundleUpdateError, case .rollback = updateError {
-            preserveBackup = true
-        } else {
-            preserveBackup = false
-        }
+        preserveBackup = (error as? AppBundleUpdateError)?.preservesBackup == true
         if !preserveBackup {
             do { try update.discard() }
             catch { log("Could not clean the failed staged update: \(error.localizedDescription)") }
@@ -62,7 +64,13 @@ do {
         } catch {
             log("Could not record the failed update: \(error.localizedDescription)")
         }
-        if parentExited {
+        let replacementStillRunning: Bool
+        if let updateError = error as? AppBundleUpdateError, case .replacementStillRunning = updateError {
+            replacementStillRunning = true
+        } else {
+            replacementStillRunning = false
+        }
+        if parentExited, !replacementStillRunning {
             do {
                 try CommandRunner.runChecked("/usr/bin/open", arguments: [
                     "-n", update.destination.path, "--args", "-KillSwitchFailedUpdateVersion", update.version

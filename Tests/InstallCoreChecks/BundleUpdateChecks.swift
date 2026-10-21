@@ -8,6 +8,7 @@ struct BundleUpdateChecks {
     mutating func run(root: URL) throws -> [String] {
         try checkWholeBundleReplacement(root: root)
         try checkRollback(root: root)
+        try checkPreservedBackup(root: root)
         try checkInvalidDownloads(root: root)
         try checkProtectedDestinations(root: root)
         try checkChangedDestination(root: root)
@@ -94,6 +95,25 @@ struct BundleUpdateChecks {
             } catch {
                 check(try version(at: installed) == "v3.0.0", "invalid updates leave the installed app untouched")
             }
+        }
+    }
+
+    private mutating func checkPreservedBackup(root: URL) throws {
+        let installed = try fixture(in: root, name: "Live-replacement", version: "v8.0.0")
+        let downloaded = try fixture(in: root, name: "Live-replacement-download", version: "v8.0.1")
+        let update = try AppBundleUpdate.prepare(from: downloaded, replacing: installed, version: "v8.0.1")
+        defer {
+            do { try update.discard() }
+            catch { fputs("Could not clean the mock preserved backup: \(error)\n", stderr) }
+        }
+        do {
+            try update.install(relaunch: {
+                throw AppBundleUpdateError.replacementStillRunning(424242)
+            }, log: { _ in })
+            failures.append("a replacement that could not be stopped was reported as successful")
+        } catch {
+            check(try version(at: installed) == "v8.0.1", "a live replacement is not swapped out underneath its process")
+            check(try version(at: update.stagedBundle) == "v8.0.0", "the previous app is preserved for manual recovery")
         }
     }
 

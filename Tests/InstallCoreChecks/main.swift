@@ -23,6 +23,10 @@ struct InstallCoreCheckRunner {
             for message in try bundleChecks.run(root: root) {
                 fail(message)
             }
+            var startupChecks = BundleStartupChecks()
+            for message in try startupChecks.run(root: root) {
+                fail(message)
+            }
         } catch {
             fail("unexpected setup error: \(error.localizedDescription)")
         }

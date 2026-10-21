@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         DispatchQueue.main.async { [weak self] in
             self?.captureMainWindow()
+            AppStartupConfirmation.applicationDidFinishLaunching()
         }
     }
 

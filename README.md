@@ -367,8 +367,13 @@ verify, install, and restart automatically, or click **Download & install**.
 The updater checks the DMG's SHA-256 and the app's identity, version, native
 architecture, and code signature. It stages the entire app in a private folder
 beside the installed copy, then a bundled helper waits for KillSwitch to quit,
-atomically replaces the app, and relaunches it. A failed relaunch restores the
-previous app. The existing CLI symlink and login-item path stay valid.
+atomically replaces the app, and starts it with a one-time startup token. The new
+GUI must acknowledge both application launch and root-view startup within
+30 seconds, with a matching PID, version, and token. Only then is the update
+recorded as successful and the previous app removed. A failed or unresponsive
+replacement is stopped before rollback. The existing CLI symlink and login-item
+path stay valid. Architecture validation uses Foundation, so updates do not
+require Xcode or Command Line Tools.
 
 The app and installation folder must be writable. Updates from the read-only
 DMG or a protected installation fail with instructions to reinstall in a

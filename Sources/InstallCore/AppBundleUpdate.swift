@@ -6,7 +6,15 @@ public enum AppBundleUpdateError: LocalizedError {
     case unwritable(String)
     case replacement(String)
     case rollback(String)
+    case replacementStillRunning(Int32)
     case parentStillRunning
+
+    public var preservesBackup: Bool {
+        switch self {
+        case .rollback, .replacementStillRunning: return true
+        default: return false
+        }
+    }
 
     public var errorDescription: String? {
         switch self {
@@ -18,6 +26,8 @@ public enum AppBundleUpdateError: LocalizedError {
             return "App replacement failed: \(message)"
         case .rollback(let message):
             return "App rollback failed: \(message)"
+        case .replacementStillRunning(let pid):
+            return "The replacement app (PID \(pid)) could not be stopped. The previous bundle was preserved; rollback and relaunch were not attempted."
         case .parentStillRunning:
             return "KillSwitch is still running. The update was not installed."
         }
@@ -32,7 +42,7 @@ public struct AppBundleUpdate: Codable {
 
     public var directory: URL { stagedBundle.deletingLastPathComponent() }
 
-    private static let directoryPrefix = ".KillSwitch-update-"
+    private static let directoryPrefix = AppUpdateStaging.directoryPrefix
 
     public static func prepare(from source: URL, replacing destination: URL, version: String) throws -> Self {
         let current = try validateApp(at: destination)
@@ -115,6 +125,12 @@ public struct AppBundleUpdate: Codable {
         do {
             try relaunch()
         } catch {
+            if let updateError = error as? AppBundleUpdateError,
+               case .replacementStillRunning = updateError {
+                preserveBackup = true
+                log("Replacement still running; previous app preserved at \(stagedBundle.path).")
+                throw updateError
+            }
             do {
                 try swapBundles()
             } catch let rollbackError {
@@ -155,24 +171,14 @@ public struct AppBundleUpdate: Codable {
     }
 
     private func validateLayout() throws {
-        let suffix = String(directory.lastPathComponent.dropFirst(Self.directoryPrefix.count))
         guard destination.isFileURL, stagedBundle.isFileURL,
               destination == destination.standardizedFileURL,
               stagedBundle == stagedBundle.standardizedFileURL,
               destination.pathExtension.lowercased() == "app",
-              stagedBundle.lastPathComponent == "KillSwitch.app",
-              directory.lastPathComponent.hasPrefix(Self.directoryPrefix),
-              UUID(uuidString: suffix) != nil,
-              directory.deletingLastPathComponent() == destination.deletingLastPathComponent() else {
+              stagedBundle.lastPathComponent == "KillSwitch.app" else {
             throw AppBundleUpdateError.invalid("The staged app is not a private sibling of the installed app.")
         }
-        let attributes = try FileManager.default.attributesOfItem(atPath: directory.path)
-        guard attributes[.type] as? FileAttributeType == .typeDirectory,
-              (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == geteuid(),
-              let permissions = attributes[.posixPermissions] as? NSNumber,
-              permissions.intValue & 0o077 == 0 else {
-            throw AppBundleUpdateError.invalid("The staging directory is not private to the current user.")
-        }
+        try AppUpdateStaging.validate(directory: directory, beside: destination)
     }
 
     private func swapBundles() throws {
@@ -221,11 +227,15 @@ public struct AppBundleUpdate: Codable {
         }
         try CommandRunner.runChecked("/usr/bin/codesign", arguments: ["--verify", "--deep", "--strict", url.path])
         #if arch(arm64)
-        let architecture = "arm64"
+        let architecture = CPU_TYPE_ARM64
         #else
-        let architecture = "x86_64"
+        let architecture = CPU_TYPE_X86_64
         #endif
-        try CommandRunner.runChecked("/usr/bin/lipo", arguments: [executable.path, "-verify_arch", architecture])
+        guard Bundle(url: url)?.executableArchitectures?.contains(where: {
+            $0.int32Value == architecture
+        }) == true else {
+            throw AppBundleUpdateError.invalid("The app does not include an executable compatible with this Mac.")
+        }
         return metadata
     }
 
@@ -240,6 +250,29 @@ public struct AppBundleUpdate: Codable {
             case packageType = "CFBundlePackageType"
             case executable = "CFBundleExecutable"
             case version = "KillSwitchVersion"
+        }
+    }
+}
+
+enum AppUpdateStaging {
+    static let directoryPrefix = ".KillSwitch-update-"
+
+    static func validate(directory: URL, beside bundle: URL) throws {
+        let suffix = String(directory.lastPathComponent.dropFirst(directoryPrefix.count))
+        guard directory.isFileURL, bundle.isFileURL,
+              directory == directory.standardizedFileURL,
+              directory.lastPathComponent.hasPrefix(directoryPrefix),
+              UUID(uuidString: suffix) != nil,
+              directory.deletingLastPathComponent().resolvingSymlinksInPath()
+                == bundle.deletingLastPathComponent().resolvingSymlinksInPath() else {
+            throw AppBundleUpdateError.invalid("The update directory is not a private sibling of the app.")
+        }
+        let attributes = try FileManager.default.attributesOfItem(atPath: directory.path)
+        guard attributes[.type] as? FileAttributeType == .typeDirectory,
+              (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == geteuid(),
+              let permissions = attributes[.posixPermissions] as? NSNumber,
+              permissions.intValue & 0o077 == 0 else {
+            throw AppBundleUpdateError.invalid("The staging directory is not private to the current user.")
         }
     }
 }

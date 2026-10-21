@@ -84,11 +84,21 @@ installations. **Download & install** runs the same flow manually:
    its readiness acknowledgement. Only then quit the running GUI normally, saving
    preferences and releasing keep-awake resources.
 5. The helper waits for the old process to exit, revalidates both bundles, and
-   atomically exchanges the new and old app directories. It relaunches the app
-   through LaunchServices, then removes the backup and staging files.
+   atomically exchanges the new and old app directories. It starts the new
+   bundle's executable with a fresh startup token and private receipt location,
+   retaining its exact process handle.
+6. The GUI acknowledges only after its application delegate and root view
+   finish startup. The helper verifies the acknowledgement's token, process ID,
+   bundle path, and version, and briefly monitors the live process. Only then
+   does it record success and remove the backup. Startup confirmation has a
+   30-second deadline.
 
-A launch failure swaps the previous app back and attempts to reopen it. A failed
-rollback preserves the backup and logs its path instead of deleting it. Helper
+A launch failure, early crash, invalid acknowledgement, or startup timeout stops
+the replacement before swapping the previous app back and attempting to reopen
+it. An unresponsive replacement is terminated using its exact owned process
+handle, with a bounded SIGKILL fallback. If it cannot be stopped, neither rollback
+nor reopening the old app is attempted; the backup is preserved. A failed
+rollback also preserves the backup and logs its path instead of deleting it. Helper
 errors are recorded in
 `~/Library/Application Support/KillSwitch/LastUpdate.json` and the update log;
 the relaunched app shows the error. Automatic installation pauses for that failed
@@ -96,6 +106,11 @@ version to prevent restart loops, but **Download & install** retries explicitly,
 and newer versions can still install automatically. An unreadable result file
 also pauses automatic installation with a visible error rather than ignoring it.
 Concurrent helpers use an exclusive lock in the same application-support folder.
+
+Executable architectures are read through Foundation's
+`Bundle.executableArchitectures`; no Xcode or Command Line Tools are required at
+runtime. Signing verification and disk-image operations use tools included with
+macOS itself.
 
 The app and its parent directory must be writable by the current account.
 Read-only disk-image copies and protected/root-owned installations are rejected
@@ -175,5 +190,8 @@ UpdateChecker.shared.checkForUpdates()
 `UpdateChecker.swift` orchestrates checks, preferences, and downloads.
 `AppBundleUpdater.swift` handles disk-image mounting and the helper handoff;
 `InstallCore/AppBundleUpdate.swift` handles validation, atomic replacement,
-rollback, and update results. `KillSwitchUpdateHelper` waits for process exit and
-relaunches without keeping the old GUI running alongside the new one.
+rollback, and update results. `InstallCore/AppBundleStartup.swift` handles
+startup acknowledgements and supervised relaunch. `KillSwitchUpdateHelper` waits
+for process exit and relaunches without keeping the old GUI running alongside
+the new one. `AppStartupConfirmation.swift` joins the delegate and root-view
+startup signals before acknowledging the replacement.
