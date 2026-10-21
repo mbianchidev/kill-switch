@@ -1,24 +1,27 @@
 # CI & security scanning
 
+[Documentation index](README.md) | [Development checks](development.md#run-checks)
+
 KillSwitch runs three GitHub Actions workflows:
 
 | Workflow | File | Trigger | Purpose |
 | --- | --- | --- | --- |
-| CI | [`ci.yml`](../.github/workflows/ci.yml) | push / PR to `main` | `swift build -c release` smoke build |
-| Release | [`release.yml`](../.github/workflows/release.yml) | push to `main` | Auto-semver release + binary (see [auto-update.md](auto-update.md)) |
+| CI | [`ci.yml`](../.github/workflows/ci.yml) | push / PR to `main` | Five core-check executables, universal app/DMG packaging, package verification, and DMG artifact upload |
+| Release | [`release.yml`](../.github/workflows/release.yml) | push to `main` | Auto-semver release with universal DMG, standalone binary, tarball, and checksums (see [auto-update.md](auto-update.md)) |
 | CodeQL | [`codeql.yml`](../.github/workflows/codeql.yml) | push / PR to `main`, weekly | Static analysis for `swift` and `actions` |
 
 ## CodeQL
 
 CodeQL uses **advanced setup** (a committed workflow) rather than GitHub's
-default setup, so the slow part — building Swift — is under our control.
+default setup, so the slow part (building Swift) is under our control.
 
 ### Why advanced setup
 
 Default setup uses the CodeQL **autobuilder** for Swift. The autobuilder probes
 for build systems and over-builds: on this ~3k-line package it took **~13 min**,
 while the actual analysis was only **~1 min**. The build, not the analysis, was
-the bottleneck.
+the bottleneck. These are historical tuning observations, not a benchmark of
+the current package size or hosted-runner performance.
 
 ### What the workflow does
 
@@ -32,7 +35,7 @@ the bottleneck.
 
 > **Do not cache `.build`.** CodeQL only extracts code it observes being
 > compiled. A warm incremental build skips unchanged files, producing a partial
-> database. Each run must compile clean — only dependency checkouts are reused.
+> database. Each run must compile clean; only dependency checkouts are reused.
 
 ### Enabling it (one-time)
 

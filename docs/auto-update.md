@@ -1,8 +1,49 @@
 # Auto-update
 
+[Documentation index](README.md) | [Installation](installation.md) |
+[Development](development.md)
+
 KillSwitch ships continuously: every push to `main` is published as a GitHub
 Release. Both app bundles and standalone installations can download, verify,
 install, and restart automatically when **Update automatically** is enabled.
+
+## Using updates
+
+The **Updates** tab shows the running/latest versions and release notes.
+**Check for updates** runs manually; checks also run at launch and on the saved
+interval. A newer release appears in a banner at the top of the main window.
+
+| Setting or action | Behavior |
+| --- | --- |
+| Check interval | 1 hour by default; choose 15/30 minutes or 1/3/6/12/24 hours |
+| Update automatically | Off by default; downloads, verifies, installs, and restarts when enabled |
+| Download & install | Runs the same installation flow manually |
+| Show in Finder | Reveals an app installation for manual replacement or removal |
+| Uninstall KillSwitch | Removes a standalone install and its CLI/login agent, then quits |
+
+Update preferences persist, including the automatic-install opt-in when
+switching from a standalone install to the app.
+
+**App installs:** the bundled helper stages and replaces the entire verified
+app and confirms startup. The app and its parent folder must be writable; do
+not update a copy running from the read-only DMG. Existing CLI symlinks and
+login-item paths stay valid. Failed launches roll back and pause automatic
+installation of that version, with a visible error and manual retry.
+
+**Standalone installs:** the updater verifies the binary, replaces the path
+launched by the LaunchAgent, refreshes `~/bin/killswitchctl`, reloads the agent,
+and relaunches. Re-running the installer can also upgrade an older installation.
+
+Manual replacement with the
+[latest DMG](https://github.com/mbianchidev/kill-switch/releases/latest/download/KillSwitch.dmg)
+remains available. Quit before replacing it, and follow the
+[trusted-app opening guidance](troubleshooting.md#opening-the-downloaded-app) if
+macOS blocks the manually downloaded copy. Verified automatic updates handle
+quarantine on their staged bundle without altering its signature.
+
+Details are logged to `~/Library/Logs/killswitch-update.log`. The following
+sections document versioning, packaging, validation, startup confirmation, and
+recovery rather than additional user configuration.
 
 ## Versioning
 
@@ -119,22 +160,14 @@ The updater does not elevate privileges, prompt for an administrator password,
 replace only a signed app's executable, or create a `~/bin/KillSwitch` copy.
 Existing CLI symlinks and login items keep pointing to the same installed path.
 
-If macOS blocks the initial manually downloaded app, copy it to Applications first, quit it,
-then run:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/KillSwitch.app
-```
-
-Only do this for a download you trust. It removes this app's quarantine flag,
-not Gatekeeper protection system-wide; it does not sign or notarize the app.
-Verified automatic updates remove quarantine from the staged bundle themselves;
-the initial manual install may still require the command above.
+For the initial manually downloaded copy, follow the
+[trusted-app opening and legacy app-specific quarantine guidance](troubleshooting.md#opening-the-downloaded-app).
+Verified automatic updates remove quarantine from their staged bundle themselves.
 
 App startup is managed through macOS **System Settings > General > Login Items**
 (**Login Items & Extensions** on newer versions), not the legacy LaunchAgent.
-Uninstall by quitting, removing the login item, and moving the app to Trash.
-Remove the optional `~/bin/killswitchctl` symlink if you created one.
+Follow the [uninstall guide](installation.md#uninstall) to remove the app, login
+item, and optional CLI symlink while retaining preferences.
 
 Bundled GUI preferences fall back to the existing `KillSwitch` defaults domain,
 so switching from the standalone install retains saved settings. Dev cleanup
@@ -158,7 +191,7 @@ including when invoked through the app's optional CLI symlink.
 - **Install:** downloads the new binary, validates it is a non-trivial Mach-O
   executable, and verifies its SHA-256 against the release's `KillSwitch.sha256`
   asset (failing closed if the checksum is missing or mismatched), then copies it
-  over the binary the LaunchAgent actually launches — read from the agent plist's
+  over the binary the LaunchAgent actually launches, read from the agent plist's
   `ProgramArguments` (falling back to `~/bin/KillSwitch`). Targeting the agent's
   own launch path guarantees the relaunched binary is the one we just wrote, so
   the install and relaunch can never disagree (the cause of the pre-1.1.2 update

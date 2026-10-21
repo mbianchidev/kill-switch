@@ -1,18 +1,27 @@
 # Resources and system diagnostics
 
+[Documentation index](README.md) | [Usage and configuration](usage.md)
+
 ## Resources
 
-The **Resources** tab refreshes every six seconds and defaults to processes owned
-by the logged-in user. Select **All processes** to include root, service accounts,
-and other users.
+The **Resources** tab defaults to the logged-in user's processes. Select
+**All processes** to include root, service accounts, and other users.
+Filter by process name, PID, or user and sort by the selected resource.
+Application icons and executable names appear where macOS exposes them.
 
 | Mode | Process data | System graph and summary |
 | --- | --- | --- |
-| CPU | CPU, CPU time, threads, idle wakeups, architecture, PID, user | User/system/idle load, process and thread counts |
-| Memory | Physical footprint, threads, ports, PID, user | Memory pressure, app/cached/wired/compressed memory, swap |
+| CPU | CPU, CPU time, threads, idle wakeups, architecture, PID, user | Stacked user/system CPU graph, idle load, process and thread counts |
+| Memory | Physical footprint, threads, open files, PID, user | Memory pressure, physical/app/cached/wired/compressed memory, swap |
 | Energy | Current and rolling power, sleep prevention, PID, user | Total impact and battery/power-source status |
-| Disk | Lifetime bytes read and written | Read/write operations, totals, and rates |
+| Disk | Lifetime bytes read and written | Free/occupied capacity, read/write operations, totals, and live rates |
 | Network | Bytes and packets sent/received | Inbound/outbound totals and rates |
+
+Live graphs retain five minutes of history. CPU, memory, disk, and network
+sample every **6 seconds**; Energy samples every **15 seconds** because its
+power collector is heavier. Heavyweight collectors run only for the selected
+metric. Sampling continues with the window hidden if Resources is selected;
+leaving the tab stops it.
 
 KillSwitch uses supported macOS interfaces where available: `top`, Mach VM
 statistics, `libproc`, IOKit storage statistics, `nettop`, `netstat`,
@@ -20,8 +29,9 @@ statistics, `libproc`, IOKit storage statistics, `nettop`, `netstat`,
 
 macOS denies some `libproc` data for protected or other-user processes. Those
 rows remain visible in **All processes**, but restricted disk or architecture
-fields show `—`. Per-process GPU and App Nap counters are also not exposed by a
+fields show a dash. Per-process GPU and App Nap counters are also not exposed by a
 supported public interface, so KillSwitch does not invent values for them.
+The **All processes** scope does not grant administrator privileges.
 
 ## Spindump
 
@@ -35,7 +45,7 @@ The complete text report is stored in:
 ~/Downloads/KillSwitch Diagnostics/
 ```
 
-KillSwitch previews the first 2 MB in the app. Use **Save…** or **Reveal** to work
+KillSwitch previews the first 2 MB in the app. Use **Save** or **Reveal** to work
 with the full report.
 
 ## System Diagnostics
@@ -54,3 +64,7 @@ Available entry points:
 
 The generated archive is stored under `~/Downloads/KillSwitch Diagnostics/` and
 revealed in Finder when collection completes.
+
+Both kinds of report can contain sensitive logs, paths, command lines, and
+system state. Review and redact reports before sharing them. Do not collect
+privileged diagnostics as a routine build or documentation check.
