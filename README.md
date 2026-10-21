@@ -5,7 +5,7 @@ reclaiming disk space, and managing long-running developer workloads. Use the
 SwiftUI app for live monitoring and cleanup, or the optional `killswitchctl` CLI
 for headless developer-tool integrations, including AI-assisted development.
 
-<img width="1710" height="1066" alt="KillSwitch application window" src="docs/image.png" />
+<img width="1280" height="935" alt="Killswitch screenshot" src="https://github.com/user-attachments/assets/c8b4883a-df7f-4934-b977-b372cff3deb0" />
 
 ## Features
 
