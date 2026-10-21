@@ -7,7 +7,7 @@ import Foundation
 /// real release version (e.g. `"v1.1.2"`) so the running app knows its own
 /// version and can compare it against the latest GitHub release.
 enum AppVersion {
-    static let current = "dev"
+    static let current = Bundle.main.object(forInfoDictionaryKey: "KillSwitchVersion") as? String ?? "dev"
 
     /// True when running a local/unreleased build (no version was injected).
     static var isDev: Bool { current == "dev" }

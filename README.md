@@ -22,7 +22,7 @@ A macOS resource manager with automation useful for the AI era. It provides Acti
 - Menu bar (tray) icon — closing the window keeps the app running in the menu bar
 - Keeps the Mac awake indefinitely or for a selected duration, with optional display sleep
 - Advanced keep-awake settings for default duration, display sleep, and launch activation
-- Runs at login via LaunchAgent
+- Runs at login via macOS Login Items for the app, or a LaunchAgent for script installs
 - Headless `killswitchctl` integration for syncing managed dev ports and invoking the same cleanup logic as the UI
 - Dark, translucent UI inspired by Raycast
 
@@ -66,7 +66,7 @@ of fabricated data.
   every synced device.
 - macOS privacy controls can block Desktop, Documents, Downloads, and other
   locations. The tab reports partial scans and links to **Full Disk Access**
-  settings. Replacing the standalone KillSwitch binary during an update can require
+  settings. Updating the standalone binary or ad-hoc-signed app can require
   granting access again.
 
 ### Dev cleanup
@@ -120,9 +120,9 @@ of fabricated data.
 
 - Shows the running version and the latest published release, with a manual **Check for updates** button.
 - Auto-checks on launch and on a configurable interval (**default every 1 hour**, selectable 15m–24h); when a newer build exists, a banner appears at the top of the window.
-- **Update automatically** toggle: when enabled, new releases are downloaded and installed as soon as they're found, so you're always on the latest version with no action required.
-- One-click **Download & install**: fetches the new binary, validates it, replaces the user-owned `~/bin/KillSwitch` (no admin prompt — the install path is in your home directory), reloads the LaunchAgent, and relaunches.
-- **Uninstall KillSwitch** button: removes the binary and login LaunchAgent (same as `uninstall.sh`), then quits — no terminal needed.
+- **App installs:** **Download DMG** opens the latest disk image download. Quit KillSwitch, then replace the app in Applications. The app never runs the legacy binary installer or uninstaller against an app bundle.
+- **Script installs:** the opt-in **Update automatically** toggle and one-click **Download & install** fetch and verify the new binary, replace `~/bin/KillSwitch`, refresh the CLI symlink, reload the LaunchAgent, and relaunch.
+- **Uninstall:** app installs provide **Show in Finder** and removal instructions; script installs retain the **Uninstall KillSwitch** button.
 - See [docs/auto-update.md](docs/auto-update.md) for the full release + update flow.
 
 ## Menu bar (tray)
@@ -146,13 +146,54 @@ the window is hidden, as does an active Resources sampler.
 ## Requirements
 
 - macOS 13+ (Ventura or later)
-- Swift 5.9+
-- Xcode Command Line Tools
+- Apple Silicon or Intel Mac; the DMG includes a universal app
+- Swift 5.9+ and Xcode Command Line Tools **only when building from source**
 - An administrator account for spindump and sysdiagnose collection
 
 ## Install
 
-One line — downloads the latest prebuilt release and sets it up to run at login
+### macOS app (recommended)
+
+1. Download [KillSwitch.dmg](https://github.com/mbianchidev/kill-switch/releases/latest/download/KillSwitch.dmg)
+   from the [latest release](https://github.com/mbianchidev/kill-switch/releases/latest).
+2. Open the DMG and drag **KillSwitch.app** onto the **Applications** shortcut.
+3. Eject the DMG, then open **KillSwitch** from `/Applications`.
+
+The app is ad-hoc signed, but **not Developer ID signed or notarized by Apple**.
+If macOS blocks it, quit KillSwitch and run this exact command in Terminal after
+copying it to Applications:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/KillSwitch.app
+```
+
+Then open KillSwitch again. Only remove quarantine from a download you trust.
+This removes the downloaded-file quarantine attribute for this app only; it does
+not sign or notarize it, or disable Gatekeeper system-wide. The release includes
+`KillSwitch.dmg.sha256` if you want to verify the download's SHA-256.
+
+To run at login, add **KillSwitch** in **System Settings > General > Login Items**
+(**Login Items & Extensions** on newer macOS versions). Closing the window leaves
+the app running in the menu bar; choose **Quit KillSwitch** there to fully exit.
+
+If you previously installed with the script, quit the old copy and run its
+[uninstaller](#uninstall) before switching. Otherwise its LaunchAgent can start a
+second copy. Saved preferences and synced integration ports are retained.
+
+The DMG does not modify your shell or install the CLI automatically. To enable
+`killswitchctl` for Porto or other integrations:
+
+```bash
+mkdir -p "$HOME/bin"
+ln -s /Applications/KillSwitch.app/Contents/MacOS/KillSwitch "$HOME/bin/killswitchctl"
+```
+
+Ensure `~/bin` is on `PATH`. `ln -s` deliberately refuses to overwrite an existing
+`killswitchctl`; remove the old script installation first.
+
+### Standalone binary and CLI
+
+One line downloads the latest prebuilt binary and sets it up to run at login
 (no `sudo`, no source checkout needed):
 
 ```bash
@@ -165,7 +206,35 @@ binary, and loads a LaunchAgent so the GUI starts at login. Re-running it upgrad
 an existing install and refreshes the CLI symlink — handy if you're stuck on an
 old build (see [Updating](#updating)).
 
-### Build from source instead
+### Build the app and DMG from source
+
+From a checkout on macOS:
+
+```bash
+bash scripts/package-macos.sh
+bash scripts/check-macos-package.sh
+```
+
+This builds both Apple Silicon and Intel executables, creates a native
+`KillSwitch.app` with its icon and version metadata, ad-hoc signs it, and packages
+it in **`dist/KillSwitch.dmg`** with an Applications shortcut and installation
+instructions. It also writes the standalone binary, tarball, and SHA-256 files
+used by the legacy installer. Local builds report `dev`; the release workflow
+embeds the published version.
+
+The package check mounts the DMG read-only without opening Finder, checks the
+bundle, signatures, architectures, checksums, and headless CLI dispatch, then
+ejects it. It does not launch the GUI, install a login item, or run process cleanup.
+
+If preview Command Line Tools report a missing `SwiftUIMacros` plugin, select a
+compatible installed SDK for the build without changing your global toolchain.
+For example, with the macOS 26.5 SDK installed:
+
+```bash
+SDKROOT="$(xcrun --sdk macosx26.5 --show-sdk-path)" bash scripts/package-macos.sh
+```
+
+### Build the standalone installation from source
 
 From a checkout, `install.sh` builds with Swift automatically:
 
@@ -190,8 +259,8 @@ symlink; regular files and directories at that path are preserved.
 
 ## Headless CLI and Porto integration
 
-The installed `killswitchctl` symlink runs the existing KillSwitch release binary
-in headless mode. Basename dispatch happens before SwiftUI starts, so CLI
+The `killswitchctl` symlink runs either the app bundle's executable or the
+standalone KillSwitch release binary in headless mode. Basename dispatch happens before SwiftUI starts, so CLI
 invocations never open the app window or menu bar item. Running the same binary as
 `KillSwitch` preserves the existing GUI behavior.
 
@@ -262,7 +331,14 @@ across every KillSwitch termination path, independent of editable exclusions.
 
 ## Uninstall
 
-From the app, open the **Updates** tab and click **Uninstall KillSwitch** (removes
+**App installation:** choose **Quit KillSwitch** in the menu bar, remove its
+login item in System Settings if you added one, then move
+`/Applications/KillSwitch.app` to Trash. The Updates tab's **Show in Finder**
+button reveals your app. Remove the `~/bin/killswitchctl` symlink too if you
+created it. Preferences are retained.
+
+**Standalone/script installation:** open the **Updates** tab and click
+**Uninstall KillSwitch** (removes
 the binary, `killswitchctl` symlink, and login LaunchAgent, then quits). Or from a terminal:
 
 ```bash
@@ -273,13 +349,21 @@ curl -fsSL https://raw.githubusercontent.com/mbianchidev/kill-switch/main/uninst
 
 ## Updating
 
-Released builds update themselves: open the **Updates** tab (or wait for the
+**App installation:** use **Download DMG** in the Updates tab or download the
+[latest DMG](https://github.com/mbianchidev/kill-switch/releases/latest/download/KillSwitch.dmg).
+Quit KillSwitch from the menu bar, open the DMG, and replace the app in
+Applications. Repeat the `xattr` command above if macOS blocks the new download.
+Automatic update checks still run, but replacing the app is manual. The app does
+not overwrite its signed executable or create a legacy `~/bin/KillSwitch` install.
+
+**Standalone/script installation:** open the **Updates** tab (or wait for the
 launch check) and click **Download & install** when a newer version is offered.
 The updater overwrites whatever binary the LaunchAgent launches and refreshes the
 `~/bin/killswitchctl` symlink, so the GUI and CLI always use the same release.
 
 Every push to `main` is automatically published as a GitHub Release
-(auto-incrementing semver, e.g. `v1.1.1`) with the compiled binary attached, and
+(auto-incrementing semver, e.g. `v1.1.1`) with the universal DMG and legacy binary
+assets attached, and
 the running app compares its embedded version against the latest release. See
 [docs/auto-update.md](docs/auto-update.md) for details.
 
@@ -309,9 +393,10 @@ To exercise the headless mode from a source checkout, invoke the binary through 
 - AppKit (`NSWorkspace`) for application icons; `NSStatusItem` for the menu bar (tray) icon
 - CoreGraphics idle-input timing plus `NSWorkspace` sleep, display, and session notifications for screen-time tracking
 - Native macOS process and resource APIs (`libproc`, Mach CPU/VM statistics, IOKit), with `top`, `nettop`, `netstat`, and `pmset` activated only for metrics that require them
-- `osascript` for native notifications, privileged diagnostics, and privileged self-update
+- `osascript` for native notifications and privileged diagnostics
 - `URLSession` (async/await) + GitHub Releases API for in-app updates
 - GitHub Actions for continuous releases on every push to `main`
 - CodeQL static analysis (advanced setup, manual Swift build) — see
   [docs/ci-security.md](docs/ci-security.md)
-- LaunchAgent for auto-start
+- Native `.app`/DMG packaging with built-in macOS tools, without third-party packaging dependencies
+- macOS Login Items for app auto-start; LaunchAgent for standalone installations

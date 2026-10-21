@@ -35,5 +35,17 @@ jobs:
       - name: Test screen time tracking
         run: swift run ScreenTimeCoreChecks
 
-      - name: Build (release)
-        run: swift build -c release --product KillSwitch
+      - name: Package universal app and DMG
+        run: bash scripts/package-macos.sh
+
+      - name: Verify macOS package
+        run: bash scripts/check-macos-package.sh
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: KillSwitch-macOS
+          path: |
+            dist/KillSwitch.dmg
+            dist/KillSwitch.dmg.sha256
+          if-no-files-found: error

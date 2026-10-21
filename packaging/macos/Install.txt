@@ -1,0 +1,28 @@
+Install KillSwitch
+
+1. Drag KillSwitch.app onto the Applications shortcut.
+2. Eject the disk image and open KillSwitch from Applications.
+3. This build is not Developer ID signed or notarized. If macOS blocks it,
+   quit KillSwitch and run:
+
+   xattr -dr com.apple.quarantine /Applications/KillSwitch.app
+
+   Then open KillSwitch again. Only remove quarantine from a download you trust.
+   This command does not sign or notarize the app.
+
+To start at login, add KillSwitch in System Settings > General > Login Items
+(called Login Items & Extensions on newer macOS versions).
+
+To update, download the latest KillSwitch.dmg, quit KillSwitch from its menu bar
+menu, and replace the app in Applications. Repeat the unblock command if needed.
+
+To uninstall, quit KillSwitch, remove its login item, and move KillSwitch.app
+to the Trash. If you created a killswitchctl symlink, remove that symlink too.
+
+Existing script installation:
+Quit the old copy and run its uninstall.sh before switching to the app, so its
+LaunchAgent does not start a second copy. Dev cleanup preferences and synced
+integration ports are shared with the CLI.
+
+Downloads and full instructions:
+https://github.com/mbianchidev/kill-switch
