@@ -2,7 +2,7 @@
 
 A macOS resource manager with automation useful for the AI era. It provides Activity Monitor-style system resources, guided disk cleanup, one-click process termination, developer cleanup, CPU alerts, active screen-time tracking, keep-awake controls, and native diagnostic collection.
 
-<img width="1710" height="1066" alt="image" src="docs/image.png" />
+<img width="1280" height="935" alt="Killswitch screenshot" src="https://github.com/user-attachments/assets/c8b4883a-df7f-4934-b977-b372cff3deb0" />
 
 ## Features
 
