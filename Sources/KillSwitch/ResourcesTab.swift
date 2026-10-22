@@ -149,7 +149,7 @@ struct ResourcesTab: View {
                     history: monitor.history[metric] ?? [],
                     pressure: monitor.memory.pressurePercent
                 )
-                    .frame(minWidth: 320, idealWidth: 390, maxWidth: 440, minHeight: 105, maxHeight: 105)
+                    .frame(minWidth: 320, idealWidth: 390, maxWidth: 440, minHeight: 132, maxHeight: 132)
             }
 
             Divider()
@@ -546,44 +546,65 @@ private struct ResourceHistoryChart: View {
     let pressure: Double?
 
     var body: some View {
-        Group {
-            if isStartingUp {
-                startupChart
-            } else {
-                chart
+        let scale = chartScale
+        let domain = timeDomain
+
+        return VStack(alignment: .leading, spacing: 6) {
+            Group {
+                if isStartingUp {
+                    startupChart
+                } else {
+                    chart
+                }
+            }
+            .chartXScale(domain: domain)
+            .chartYScale(domain: 0...scale.maximum)
+            .chartXAxis {
+                AxisMarks(values: [domain.lowerBound, domain.upperBound]) { value in
+                    AxisValueLabel(anchor: value.index == 0 ? .topLeading : .topTrailing) {
+                        Text(value.index == 0 ? "5m ago" : "Now")
+                            .font(.system(size: 9))
+                            .foregroundStyle(Color.white.opacity(0.5))
+                    }
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading, values: scale.ticks) { value in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                        .foregroundStyle(Color.white.opacity(0.12))
+                    AxisValueLabel {
+                        if let number = value.as(Double.self) {
+                            Text(scale.label(for: number))
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(Color.white.opacity(0.6))
+                                .fixedSize()
+                        }
+                    }
+                }
+            }
+            .chartPlotStyle { plotArea in
+                plotArea
+                    .background(accentColor.opacity(0.025))
+                    .clipped()
+            }
+            .accessibilityLabel("\(metric.rawValue) history over the last five minutes")
+            .overlay {
+                if isStartingUp {
+                    startupStatus
+                        .transition(.opacity)
+                }
+            }
+
+            HStack(spacing: 12) {
+                legend
             }
         }
-        .chartXScale(domain: timeDomain)
-        .chartXAxis(.hidden)
-        .chartYAxis {
-            AxisMarks(position: .leading) {
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
-                    .foregroundStyle(Color.white.opacity(0.08))
-                AxisValueLabel()
-                    .foregroundStyle(Color.white.opacity(0.4))
-            }
-        }
-        .chartPlotStyle { plotArea in
-            plotArea.background(
-                LinearGradient(
-                    colors: [.clear, accentColor.opacity(0.045)],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-        }
-        .padding(8)
+        .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.black.opacity(0.22))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border))
         )
-        .overlay {
-            if isStartingUp {
-                startupStatus
-                    .transition(.opacity)
-            }
-        }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: isStartingUp)
     }
 
@@ -595,84 +616,112 @@ private struct ResourceHistoryChart: View {
                 AreaMark(
                     x: .value("Time", point.date),
                     yStart: .value("Start", 0),
-                    yEnd: .value("System", point.primary)
+                    yEnd: .value("System CPU (%)", point.primary),
+                    series: .value("CPU series", "System")
                 )
-                .foregroundStyle(Theme.cpuSystem.opacity(0.62))
-                .interpolationMethod(.monotone)
+                .foregroundStyle(Theme.cpuSystem.opacity(0.45))
+                .interpolationMethod(.linear)
 
                 AreaMark(
                     x: .value("Time", point.date),
                     yStart: .value("System", point.primary),
-                    yEnd: .value("User", point.primary + (point.secondary ?? 0))
+                    yEnd: .value("Total CPU (%)", point.primary + (point.secondary ?? 0)),
+                    series: .value("CPU series", "User")
                 )
-                .foregroundStyle(Theme.cpuUser.opacity(0.62))
-                .interpolationMethod(.monotone)
+                .foregroundStyle(Theme.cpuUser.opacity(0.4))
+                .interpolationMethod(.linear)
+
+                LineMark(
+                    x: .value("Time", point.date),
+                    y: .value("System CPU (%)", point.primary),
+                    series: .value("CPU boundary", "System")
+                )
+                .foregroundStyle(Theme.cpuSystem)
+                .lineStyle(StrokeStyle(lineWidth: 1))
+                .interpolationMethod(.linear)
+
+                LineMark(
+                    x: .value("Time", point.date),
+                    y: .value("Total CPU (%)", point.primary + (point.secondary ?? 0)),
+                    series: .value("CPU boundary", "Total")
+                )
+                .foregroundStyle(Theme.cpuUser)
+                .lineStyle(StrokeStyle(lineWidth: 1.5))
+                .interpolationMethod(.linear)
             }
-            .chartYScale(domain: 0...100)
         case .memory:
             Chart(history) { point in
                 AreaMark(
                     x: .value("Time", point.date),
-                    y: .value("Pressure", point.primary)
+                    y: .value("Pressure (%)", point.primary)
                 )
-                .foregroundStyle(memoryColor.opacity(0.55))
-                .interpolationMethod(.monotone)
+                .foregroundStyle(memoryColor.opacity(0.3))
+                .interpolationMethod(.linear)
 
                 LineMark(
                     x: .value("Time", point.date),
-                    y: .value("Pressure", point.primary)
+                    y: .value("Pressure (%)", point.primary)
                 )
                 .foregroundStyle(memoryColor)
-                .interpolationMethod(.monotone)
+                .lineStyle(StrokeStyle(lineWidth: 1.5))
+                .interpolationMethod(.linear)
             }
-            .chartYScale(domain: 0...100)
         case .energy:
             Chart(history) { point in
                 AreaMark(
                     x: .value("Time", point.date),
-                    y: .value("Energy", point.primary)
+                    y: .value("Energy impact (pts)", point.primary)
                 )
-                .foregroundStyle(Theme.energy.opacity(0.4))
-                .interpolationMethod(.monotone)
+                .foregroundStyle(Theme.energy.opacity(0.25))
+                .interpolationMethod(.linear)
 
                 LineMark(
                     x: .value("Time", point.date),
-                    y: .value("Energy", point.primary)
+                    y: .value("Energy impact (pts)", point.primary)
                 )
                 .foregroundStyle(Theme.energy)
-                .interpolationMethod(.monotone)
+                .lineStyle(StrokeStyle(lineWidth: 1.5))
+                .interpolationMethod(.linear)
             }
         case .disk:
             Chart(history) { point in
                 LineMark(
                     x: .value("Time", point.date),
-                    y: .value("Read", point.primary)
+                    y: .value("Read (bytes/s)", point.primary),
+                    series: .value("Disk series", "Read")
                 )
                 .foregroundStyle(Theme.inbound)
-                .interpolationMethod(.monotone)
+                .lineStyle(StrokeStyle(lineWidth: 1.5))
+                .interpolationMethod(.linear)
 
                 LineMark(
                     x: .value("Time", point.date),
-                    y: .value("Write", point.secondary ?? 0)
+                    y: .value("Write (bytes/s)", point.secondary ?? 0),
+                    series: .value("Disk series", "Write")
                 )
                 .foregroundStyle(Theme.outbound)
-                .interpolationMethod(.monotone)
+                .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                .interpolationMethod(.linear)
             }
         case .network:
             Chart(history) { point in
                 LineMark(
                     x: .value("Time", point.date),
-                    y: .value("Received", point.primary)
+                    y: .value("Received (bytes/s)", point.primary),
+                    series: .value("Network series", "Received")
                 )
                 .foregroundStyle(Theme.inbound)
-                .interpolationMethod(.monotone)
+                .lineStyle(StrokeStyle(lineWidth: 1.5))
+                .interpolationMethod(.linear)
 
                 LineMark(
                     x: .value("Time", point.date),
-                    y: .value("Sent", point.secondary ?? 0)
+                    y: .value("Sent (bytes/s)", point.secondary ?? 0),
+                    series: .value("Network series", "Sent")
                 )
                 .foregroundStyle(Theme.outbound)
-                .interpolationMethod(.monotone)
+                .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                .interpolationMethod(.linear)
             }
         }
     }
@@ -688,63 +737,98 @@ private struct ResourceHistoryChart: View {
                 case .cpu:
                     PointMark(
                         x: .value("Time", point.date),
-                        y: .value("System", point.primary)
+                        y: .value("System CPU (%)", point.primary)
                     )
                     .foregroundStyle(Theme.cpuSystem)
                     .symbolSize(34)
 
                     PointMark(
                         x: .value("Time", point.date),
-                        y: .value("User", point.primary + (point.secondary ?? 0))
+                        y: .value("Total CPU (%)", point.primary + (point.secondary ?? 0))
                     )
                     .foregroundStyle(Theme.cpuUser)
                     .symbolSize(34)
                 case .memory:
                     PointMark(
                         x: .value("Time", point.date),
-                        y: .value("Pressure", point.primary)
+                        y: .value("Pressure (%)", point.primary)
                     )
                     .foregroundStyle(memoryColor)
                     .symbolSize(34)
                 case .energy:
                     PointMark(
                         x: .value("Time", point.date),
-                        y: .value("Energy", point.primary)
+                        y: .value("Energy impact (pts)", point.primary)
                     )
                     .foregroundStyle(Theme.energy)
                     .symbolSize(34)
                 case .disk:
                     PointMark(
                         x: .value("Time", point.date),
-                        y: .value("Read", point.primary)
+                        y: .value("Read (bytes/s)", point.primary)
                     )
                     .foregroundStyle(Theme.inbound)
                     .symbolSize(34)
 
                     PointMark(
                         x: .value("Time", point.date),
-                        y: .value("Write", point.secondary ?? 0)
+                        y: .value("Write (bytes/s)", point.secondary ?? 0)
                     )
                     .foregroundStyle(Theme.outbound)
                     .symbolSize(34)
                 case .network:
                     PointMark(
                         x: .value("Time", point.date),
-                        y: .value("Received", point.primary)
+                        y: .value("Received (bytes/s)", point.primary)
                     )
                     .foregroundStyle(Theme.inbound)
                     .symbolSize(34)
 
                     PointMark(
                         x: .value("Time", point.date),
-                        y: .value("Sent", point.secondary ?? 0)
+                        y: .value("Sent (bytes/s)", point.secondary ?? 0)
                     )
                     .foregroundStyle(Theme.outbound)
                     .symbolSize(34)
                 }
             }
         }
-        .chartYScale(domain: 0...startupYMaximum)
+    }
+
+    @ViewBuilder
+    private var legend: some View {
+        switch metric {
+        case .cpu:
+            legendItem("System", color: Theme.cpuSystem)
+            legendItem("User", color: Theme.cpuUser)
+        case .memory:
+            legendItem("Pressure", color: memoryColor)
+        case .energy:
+            legendItem("Relative impact", color: Theme.energy)
+                .help("Energy impact is a relative score in points, not power in watts.")
+        case .disk:
+            legendItem("Read", color: Theme.inbound)
+            legendItem("Write", color: Theme.outbound, dashed: true)
+        case .network:
+            legendItem("Received", color: Theme.inbound)
+            legendItem("Sent", color: Theme.outbound, dashed: true)
+        }
+    }
+
+    private func legendItem(_ title: String, color: Color, dashed: Bool = false) -> some View {
+        HStack(spacing: 4) {
+            Path { path in
+                path.move(to: CGPoint(x: 0, y: 2))
+                path.addLine(to: CGPoint(x: 14, y: 2))
+            }
+            .stroke(color, style: StrokeStyle(lineWidth: 2, dash: dashed ? [3, 2] : []))
+            .frame(width: 14, height: 4)
+            .accessibilityHidden(true)
+
+            Text(title)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(.white.opacity(0.65))
+        }
     }
 
     private var startupStatus: some View {
@@ -783,20 +867,11 @@ private struct ResourceHistoryChart: View {
         return end.addingTimeInterval(-historyWindow)...end
     }
 
-    private var startupYMaximum: Double {
-        switch metric {
-        case .cpu, .memory:
-            return 100
-        case .energy:
-            return max(10, latestValue * 1.25)
-        case .disk, .network:
-            return max(1_024, latestValue * 1.25)
-        }
-    }
-
-    private var latestValue: Double {
-        guard let point = history.last else { return 0 }
-        return max(point.primary, point.secondary ?? 0)
+    private var chartScale: ResourceChartScale {
+        ResourceChartScale(
+            metric: metric,
+            maximumValue: history.map { max($0.primary, $0.secondary ?? 0) }.max() ?? 0
+        )
     }
 
     private var accentColor: Color {
