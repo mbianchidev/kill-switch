@@ -15,6 +15,35 @@
 - Disk scans may need **Full Disk Access** for protected folders. macOS can
   still restrict individual process metrics.
 
+## Homebrew cask
+
+With [Homebrew](https://brew.sh) installed, use the
+[`mbianchidev/tap`](https://github.com/mbianchidev/homebrew-tap) cask:
+
+```bash
+brew install --cask mbianchidev/tap/killswitch
+```
+
+The cask installs the universal prebuilt app as `/Applications/KillSwitch.app`
+and links `killswitchctl` into Homebrew's `bin` directory. Keep Homebrew on
+`PATH`; no manual CLI symlink or Swift build is needed. Installation does not
+launch the app or create a login item. Open **KillSwitch** yourself, following
+the [trusted-app opening guidance](#macos-app) below.
+
+For another app location, pass `--appdir="$HOME/Applications"` when installing.
+The CLI link follows that location. See
+[installation location and login startup](#installation-location-and-login-startup)
+for writable-folder and login-item requirements.
+
+Homebrew refuses an existing app or conflicting CLI alias. Quit and move aside
+an older manually installed app, and inspect an existing `killswitchctl` before
+removing any obsolete symlink. If switching from a script installation, follow
+the [standalone migration steps](#switching-from-a-script-installation) first.
+Do not force an overwrite of an unrelated file.
+
+Use the [Homebrew update commands](#updates) and
+[Homebrew uninstaller](#uninstall) to keep the installation tracked.
+
 ## macOS app
 
 1. Download [KillSwitch.dmg](https://github.com/mbianchidev/kill-switch/releases/latest/download/KillSwitch.dmg)
@@ -100,6 +129,19 @@ exit. See [menu-bar behavior](usage.md#menu-bar-tray) for background activity.
 
 ## Updates
 
+**Homebrew installation:** leave **Update automatically** off and prefer
+Homebrew for version management:
+
+```bash
+brew update
+brew upgrade --cask --greedy mbianchidev/tap/killswitch
+```
+
+The cask declares a built-in updater, so `--greedy` includes it in Homebrew
+upgrades. In-app updates remain available, but do not update Homebrew's
+installed-version record.
+
+**Manual app and standalone installations:**
 The app checks at launch and on a saved interval; automatic installation is
 opt-in. Use **Updates > Download & install**, enable **Update automatically**, or
 replace the app manually with a trusted release. See
@@ -108,7 +150,16 @@ types and their requirements.
 
 ## Uninstall
 
-**App installation:** choose **Quit KillSwitch** in the menu bar, remove its
+**Homebrew installation:** choose **Quit KillSwitch** in the menu bar, remove
+any login item you added in System Settings, then run:
+
+```bash
+brew uninstall --cask mbianchidev/tap/killswitch
+```
+
+Homebrew removes its app and `killswitchctl` link. Preferences are retained.
+
+**Manual app installation:** choose **Quit KillSwitch** in the menu bar, remove its
 login item in System Settings if you added one, then move
 `/Applications/KillSwitch.app` to Trash. **Updates > Show in Finder** reveals
 the installed app. Remove `~/bin/killswitchctl` too if you created that symlink.

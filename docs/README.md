@@ -8,7 +8,7 @@ complete setup, configuration, and development instructions.
 
 | Guide | What it covers |
 | --- | --- |
-| [Installation](installation.md) | Requirements, app and standalone installs, login startup, first run, migration, and uninstall |
+| [Installation](installation.md) | Requirements, Homebrew/app/standalone installs, login startup, first run, migration, and uninstall |
 | [Usage and configuration](usage.md) | Menu-bar behavior, every tab, editable defaults, persistence, and cleanup safety |
 | [Headless CLI and Porto integration](cli.md) | CLI setup, commands, JSON examples, port syncing, and exit codes |
 | [Resources and system diagnostics](system-diagnostics.md) | Resource counters, sampling, macOS restrictions, spindump, and sysdiagnose |

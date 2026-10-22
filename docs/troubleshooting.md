@@ -63,8 +63,10 @@ unrelated login items or processes.
 
 ## CLI is missing or opens the GUI
 
-The app does not install a shell alias automatically. Follow [CLI setup](cli.md#setup),
-check that `~/bin` is on `PATH`, and verify with
+The Homebrew cask links `killswitchctl` into Homebrew's `bin` directory; check
+that Homebrew is on `PATH`. A manually downloaded app does not install the alias
+automatically. Follow [CLI setup](cli.md#setup), including `~/bin` on `PATH`
+for manual symlinks or standalone installs, and verify with
 `killswitchctl dev-cleanup status --json`.
 
 The executable must be invoked with basename **`killswitchctl`**. Calling

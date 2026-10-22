@@ -27,6 +27,16 @@ sleep from one app, with optional headless developer-tool integration.
 Requires **macOS 13+** on Apple Silicon or Intel. The universal release needs no
 developer tools; Windows and Linux are not supported.
 
+With [Homebrew](https://brew.sh) installed:
+
+```bash
+brew install --cask mbianchidev/tap/killswitch
+```
+
+This installs the app and `killswitchctl`. Open **KillSwitch** from `/Applications`.
+See [Homebrew installation and updates](docs/installation.md#homebrew-cask).
+Or install manually:
+
 1. Download [KillSwitch.dmg](https://github.com/mbianchidev/kill-switch/releases/latest/download/KillSwitch.dmg).
 2. Open it, drag **KillSwitch.app** to **Applications**, and eject the DMG.
 3. Open **KillSwitch** from `/Applications`. A live Resources table and menu-bar
@@ -106,7 +116,7 @@ The [documentation index](docs/README.md) separates user and developer guides.
 
 | Guide | Coverage |
 | --- | --- |
-| [Installation](docs/installation.md) | Requirements, install types, first run, login startup, and uninstall |
+| [Installation](docs/installation.md) | Homebrew, app/standalone installs, first run, login startup, and uninstall |
 | [Usage and configuration](docs/usage.md) | All tabs, settings, defaults, safety, and persistence |
 | [CLI](docs/cli.md) | Setup, Porto integration, JSON examples, and exit codes |
 | [Resources and diagnostics](docs/system-diagnostics.md) | Counters, sampling, permissions, and report collection |

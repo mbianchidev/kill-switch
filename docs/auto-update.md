@@ -24,6 +24,11 @@ interval. A newer release appears in a banner at the top of the main window.
 Update preferences persist, including the automatic-install opt-in when
 switching from a standalone install to the app.
 
+**Homebrew installs:** prefer the
+[Homebrew upgrade commands](installation.md#updates) and leave **Update
+automatically** off. The in-app updater can replace the app, but does not update
+Homebrew's installed-version record.
+
 **App installs:** the bundled helper stages and replaces the entire verified
 app and confirms startup. The app and its parent folder must be writable; do
 not update a copy running from the read-only DMG. Existing CLI symlinks and
