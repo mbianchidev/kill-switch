@@ -146,6 +146,14 @@ dist/KillSwitch.sha256
 dist/KillSwitch.tar.gz
 ```
 
+CI and releases use `bash scripts/package-macos.sh --universal-build` to build
+both architectures together in one SwiftPM build graph per product, with the
+worker count set to the logical CPU count. This mode explicitly selects the
+SwiftBuild backend and requires a SwiftBuild-capable toolchain (Swift 6.3+).
+The default command above retains sequential architecture builds for older
+Swift and Command Line Tools compatibility. Both paths produce and verify the
+same asset formats and supported architectures.
+
 The DMG contains `KillSwitch.app`, an Applications shortcut, and installation
 instructions. Local app bundles default to `dev` (`0.0.0`). To label a local
 app bundle, use the supported environment variable:

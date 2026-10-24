@@ -59,7 +59,7 @@ jobs:
       - name: Package universal app and DMG
         env:
           KILLSWITCH_VERSION: ${{ steps.version.outputs.version }}
-        run: bash scripts/package-macos.sh
+        run: bash scripts/package-macos.sh --universal-build
 
       - name: Verify macOS package
         run: bash scripts/check-macos-package.sh

@@ -73,10 +73,12 @@ below). Versions are compared component-wise as integers, ignoring a leading `v`
 1. Compute the next version by bumping the patch of the latest release
    (`gh release view`), e.g. `v1.1.0` → `v1.1.1`.
 2. Overwrite `Sources/KillSwitch/Version.swift` with the computed version.
-3. Run `bash scripts/package-macos.sh` with `KILLSWITCH_VERSION` set to the
-   computed version. It builds for `arm64` and `x86_64`, combines them with
-   `lipo`, and ad-hoc signs the standalone executable, bundled update helper,
-   and native app bundle.
+3. Run `bash scripts/package-macos.sh --universal-build` with
+   `KILLSWITCH_VERSION` set to the computed version. SwiftPM's SwiftBuild
+   backend builds `arm64` and `x86_64` together in one build graph per product,
+   with its worker count set to the runner's logical CPU count. Packaging
+   verifies both architectures and ad-hoc signs the standalone executable,
+   bundled update helper, and native app bundle.
 4. Package five assets: `KillSwitch.dmg`, `KillSwitch.dmg.sha256`, `KillSwitch`,
    `KillSwitch.tar.gz`, and `KillSwitch.sha256`. The DMG contains
    `KillSwitch.app`, an Applications shortcut, and installation instructions.
@@ -87,7 +89,9 @@ below). Versions are compared component-wise as integers, ignoring a leading `v`
    the latest commit message as the release notes.
 
 `.github/workflows/ci.yml` also builds and verifies the universal DMG on every
-PR and push to `main`, and uploads it as the **KillSwitch-macOS** artifact.
+PR and push to `main` using the same `--universal-build` path, and uploads it as
+the **KillSwitch-macOS** artifact. This changes build scheduling, not the five
+release assets, archive formats, signing, checksums, or verification steps.
 
 The bundle uses the stable identifier `io.killswitch.app`, requires macOS 13+,
 and includes an original AppKit-rendered monogram icon. It is
