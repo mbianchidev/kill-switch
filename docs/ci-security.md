@@ -10,6 +10,17 @@ KillSwitch runs three GitHub Actions workflows:
 | Release | [`release.yml`](../.github/workflows/release.yml) | push to `main` | Auto-semver release with universal DMG, standalone binary, tarball, and checksums (see [auto-update.md](auto-update.md)) |
 | CodeQL | [`codeql.yml`](../.github/workflows/codeql.yml) | push / PR to `main`, weekly | Static analysis for `swift` and `actions` |
 
+## CI runtime
+
+New commits to a PR cancel its older CI runs, avoiding obsolete core checks and
+universal packaging. Different PRs and individual pushes to `main` use separate
+concurrency groups, so they do not cancel one another. The release workflow
+retains its separate, non-canceling publication group.
+
+CI still runs all five core checks and package verification for draft and ready
+PRs and pushes to `main`. The DMG artifact disables upload compression because
+the packaging script already creates a compressed UDZO disk image.
+
 ## CodeQL
 
 CodeQL uses **advanced setup** (a committed workflow) rather than GitHub's
@@ -26,16 +37,19 @@ the current package size or hosted-runner performance.
 ### What the workflow does
 
 - **Manual build mode** (`build-mode: manual`) for Swift. Instead of autobuild we
-  run a plain debug `swift build` (~2 min). CodeQL traces that compile to build
-  its database. A release build would only add optimization time with no
-  analysis benefit, so debug is used.
+  run a clean debug `swift build` of all targets, with the worker count set to
+  the runner's logical CPU count. CodeQL traces that compile to build its
+  database. A release build would only add optimization time with no analysis
+  benefit, so debug is used.
 - **`build-mode: none`** for `actions` (no compilation needed).
-- **Dependency caching** of `~/Library/Caches/org.swift.swiftpm`, keyed on
-  `Package.swift` / `Package.resolved`.
+- **No SwiftPM dependency cache:** this package has no third-party dependencies,
+  so restoring and saving a dependency cache adds work without reusing any
+  dependency downloads.
 
 > **Do not cache `.build`.** CodeQL only extracts code it observes being
 > compiled. A warm incremental build skips unchanged files, producing a partial
-> database. Each run must compile clean; only dependency checkouts are reused.
+> database. Each run must compile clean after CodeQL initialization, including
+> the app, update helper, shared core targets, and check executables.
 
 ### Enabling it (one-time)
 

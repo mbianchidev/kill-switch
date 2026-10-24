@@ -39,34 +39,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
-      # Cache resolved SwiftPM dependencies. The build output (.build) is
-      # intentionally NOT cached: CodeQL only extracts code it observes being
-      # compiled, so a warm incremental build would skip files and produce a
-      # partial database. Every run compiles clean; only dependency checkouts
-      # are reused.
-      - name: Cache SwiftPM
-        if: matrix.language == 'swift'
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: ~/Library/Caches/org.swift.swiftpm
-          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
-          restore-keys: |
-            swiftpm-${{ runner.os }}-
-
       - name: Initialize CodeQL
         uses: github/codeql-action/init@1a818fd5f97ed0ee9a823421bd5b171add01227f # v4.36.2
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix['build-mode'] }}
 
-      # Manual build mode: a plain debug `swift build` is far cheaper than the
-      # CodeQL autobuilder, which probes build systems and over-builds (~13 min
-      # for this package vs. a couple of minutes here). CodeQL traces this
-      # compile to build the database; a release build adds optimization time
-      # with no analysis benefit, so debug is used.
+      # Trace a clean debug build of every target. Cached build outputs would
+      # skip extraction; release optimization adds cost without analysis benefit.
       - name: Build Swift
         if: matrix['build-mode'] == 'manual'
-        run: swift build
+        run: swift build --jobs "$(sysctl -n hw.logicalcpu)"
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@1a818fd5f97ed0ee9a823421bd5b171add01227f # v4.36.2
