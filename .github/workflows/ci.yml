@@ -40,7 +40,7 @@ jobs:
         run: swift run ScreenTimeCoreChecks
 
       - name: Package universal app and DMG
-        run: bash scripts/package-macos.sh
+        run: bash scripts/package-macos.sh --universal-build
 
       - name: Verify macOS package
         run: bash scripts/check-macos-package.sh
