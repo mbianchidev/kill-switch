@@ -246,7 +246,8 @@ struct StartupCoreChecks {
             let fakeState = directory.appendingPathComponent("fake-crontab.txt")
             try Data(original.utf8).write(to: fakeState)
             let fakeTool = directory.appendingPathComponent("fake-crontab")
-            let fakeLog = directory.appendingPathComponent("fake-crontab-input-path")
+            let privateCopies = directory.appendingPathComponent("authorized-copies", isDirectory: true)
+            try FileManager.default.createDirectory(at: privateCopies, withIntermediateDirectories: true)
             let fakeScript = """
             #!/bin/sh
             set -eu
@@ -254,7 +255,6 @@ struct StartupCoreChecks {
             if [ "$1" = "-l" ]; then
                 /bin/cat \(CommandRunner.shellQuote(fakeState.path))
             else
-                printf '%s' "$1" > \(CommandRunner.shellQuote(fakeLog.path))
                 /bin/cp "$1" \(CommandRunner.shellQuote(fakeState.path))
             fi
             """
@@ -262,6 +262,7 @@ struct StartupCoreChecks {
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeTool.path)
             runner.fakeCronTool = fakeTool
             runner.fakeCronState = fakeState
+            runner.fakeCronPrivateDirectory = privateCopies
             let document = CronDocument(text: original)
             guard let job = document.jobs.first else { check(false, "synthetic cron job exists"); return }
             let item = StartupItem(
@@ -278,8 +279,7 @@ struct StartupCoreChecks {
             check(runner.commands.allSatisfy { !$0.arguments.joined().contains("synthetic-secret") && !$0.arguments.joined().contains(job.command) }, "no cron contents enter shell or osascript arguments")
             check(runner.stagedInputModes == [0o600], "cron staging input is private before the command runs")
             check(runner.stagedInputs.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) }, "caller-owned cron staging input is cleaned up")
-            let immutableInput = try String(contentsOf: fakeLog, encoding: .utf8)
-            check(!FileManager.default.fileExists(atPath: URL(fileURLWithPath: immutableInput).deletingLastPathComponent().path), "authorized immutable staging copy is cleaned up")
+            check(try FileManager.default.contentsOfDirectory(at: privateCopies, includingPropertiesForKeys: nil).isEmpty, "authorized immutable staging copy is cleaned up")
             check(try String(contentsOf: fakeState, encoding: .utf8) == runner.installedCron, "the safe fake-crontab harness installs the expected replacement")
             let backup = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
                 .first { $0.lastPathComponent.hasPrefix("cron-system-") }
@@ -310,6 +310,7 @@ struct StartupCoreChecks {
             }
             check(try String(contentsOf: fakeState, encoding: .utf8) == installedText, "a changed staging file never overwrites the current crontab")
             check(runner.stagedInputs.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) }, "failed cron staging input is cleaned up")
+            check(try FileManager.default.contentsOfDirectory(at: privateCopies, includingPropertiesForKeys: nil).isEmpty, "failed authorized staging copy is cleaned up")
             runner.tamperCronInput = false
 
             let login = LegacyLoginItem(name: "Example \"quoted\" app", path: "/Applications/Example's app.app", hidden: true)
@@ -374,6 +375,7 @@ private final class MockStartupRunner: StartupCommandRunning {
     var backgroundOutput = ""
     var fakeCronTool: URL?
     var fakeCronState: URL?
+    var fakeCronPrivateDirectory: URL?
     var stagedInputs: [URL] = []
     var stagedInputModes: [Int] = []
     var tamperCronInput = false
@@ -391,7 +393,7 @@ private final class MockStartupRunner: StartupCommandRunning {
             return StartupCommandResult(status: 0, output: cronText, error: "")
         }
         if command.executable == "/bin/sh" {
-            if let fakeCronTool {
+            if let fakeCronTool, let fakeCronPrivateDirectory {
                 let input = URL(fileURLWithPath: command.arguments[3])
                 stagedInputs.append(input)
                 let attributes = try FileManager.default.attributesOfItem(atPath: input.path)
@@ -403,6 +405,9 @@ private final class MockStartupRunner: StartupCommandRunning {
                 var arguments = command.arguments
                 arguments[1] = arguments[1].replacingOccurrences(
                     of: "/usr/bin/crontab", with: CommandRunner.shellQuote(fakeCronTool.path)
+                ).replacingOccurrences(
+                    of: "/private/tmp/killswitch-cron.XXXXXXXX",
+                    with: CommandRunner.shellQuote(fakeCronPrivateDirectory.appendingPathComponent("killswitch-cron.XXXXXXXX").path)
                 )
                 let result = try CommandRunner.run("/bin/sh", arguments: arguments)
                 return StartupCommandResult(status: result.status, output: result.standardOutput, error: result.standardError)
