@@ -12,6 +12,13 @@ public struct ActivityProcessIdentity: Hashable, Codable, Sendable {
         self.pid = pid
         self.startTime = startTime
     }
+
+    public static func verified(
+        pid: Int32, before: [Int32: Self], after: [Int32: Self], current: Self?
+    ) -> Self? {
+        guard let original = before[pid], after[pid] == original, current == original else { return nil }
+        return original
+    }
 }
 
 public struct ActivityProcessDescriptor: Identifiable, Equatable, Sendable {
@@ -267,26 +274,31 @@ public struct ActivityAccumulator {
 }
 
 public struct ActivityWriteBuffer {
-    private var snapshots: [ActivitySnapshot] = []
-    public var count: Int { snapshots.count }
+    private struct Entry {
+        let snapshot: ActivitySnapshot
+        let queuedAt: Date
+    }
+    private var entries: [Entry] = []
+    public var count: Int { entries.count }
     public init() {}
 
     @discardableResult
     public mutating func append(_ snapshot: ActivitySnapshot, now: Date) -> Int {
-        snapshots.removeAll { $0.date == snapshot.date }
-        snapshots.append(snapshot)
-        snapshots.sort { $0.date < $1.date }
-        let previousCount = snapshots.count
+        let queuedAt = entries.first { $0.snapshot.date == snapshot.date }?.queuedAt ?? now
+        entries.removeAll { $0.snapshot.date == snapshot.date }
+        entries.append(Entry(snapshot: snapshot, queuedAt: queuedAt))
+        entries.sort { $0.snapshot.date < $1.snapshot.date }
+        let previousCount = entries.count
         let cutoff = now.addingTimeInterval(-300)
-        snapshots.removeAll { $0.date < cutoff }
-        if snapshots.count > 6 { snapshots.removeFirst(snapshots.count - 6) }
-        return previousCount - snapshots.count
+        entries.removeAll { $0.queuedAt < cutoff }
+        if entries.count > 6 { entries.removeFirst(entries.count - 6) }
+        return previousCount - entries.count
     }
 
     public mutating func flush(save: (ActivitySnapshot) throws -> Void) throws {
-        while let snapshot = snapshots.first {
-            try save(snapshot)
-            snapshots.removeFirst()
+        while let entry = entries.first {
+            try save(entry.snapshot)
+            entries.removeFirst()
         }
     }
 }

@@ -83,6 +83,9 @@ retries unavailable history storage.
 Failed writes are retried automatically and by **Refresh**. Up to five minutes
 of unsaved minute buckets are retained in memory; longer storage outages display
 a separate data-loss notice rather than growing memory without a bound.
+That retry window starts when a completed bucket is queued, not when its
+measurements were taken, so a healthy resume after sleep can still save the
+pre-sleep bucket.
 
 ## Connections and open files
 

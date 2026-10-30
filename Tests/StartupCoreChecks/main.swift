@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import InstallCore
 import StartupCore
 
 @main
@@ -72,6 +73,7 @@ struct StartupCoreChecks {
             let enable = try StartupCommandPlanner.launchService(user, enabled: true, currentUID: 501)
             check(enable.arguments.first == "enable", "service disabling is reversible")
             check(!disable.arguments.contains("bootout"), "disabling startup never terminates a running service")
+            check(!StartupCommandPlanner.serviceOverrides(.system).administrator, "system override verification never requests another authorization")
         } catch { check(false, "launchctl planning: \(error.localizedDescription)") }
 
         for label in ["com.apple.example", "../other", "example/other", "-option", "example\ninjection"] {
@@ -106,6 +108,22 @@ struct StartupCoreChecks {
             """)
             check(parsed["org.example.disabled"] == true, "launchctl disabled overrides are parsed")
             check(parsed["org.example.enabled"] == false, "explicit enabled overrides are parsed")
+            let ventura = try StartupParsers.disabledServices("""
+            system = {
+                services = {
+                    "ignored" => malformed
+                }
+                disabled services = {
+                    "org.example.enabled" => enabled
+                    "org.example.disabled" => disabled
+                }
+                unrelated section = {
+                    "ignored" => malformed
+                }
+            }
+            """)
+            check(ventura["org.example.disabled"] == true, "Ventura disabled values are parsed")
+            check(ventura["org.example.enabled"] == false && ventura.count == 2, "Ventura parser reads only the disabled-services block")
         } catch { check(false, "disabled services parser: \(error.localizedDescription)") }
         do {
             _ = try StartupParsers.disabledServices("authorization denied")
@@ -139,6 +157,15 @@ struct StartupCoreChecks {
         check(items.first?.state == .enabled, "enabled background item disposition is explicit")
         check(items.last?.state == .disabled, "disabled background item disposition is explicit")
         check(items.allSatisfy { $0.restriction != nil }, "modern background items stay managed by macOS settings")
+        let saved = LegacyLoginItem(name: "Example", path: "/Applications/Example.app", hidden: true)
+        let unknown = StartupParsers.loginItems(saved: [saved], live: nil, currentUID: 501)
+        check(unknown.first?.state == .unknown && unknown.first?.restriction != nil, "saved login metadata is not proof of a disabled registration")
+        let disabled = StartupParsers.loginItems(saved: [saved], live: [], currentUID: 501)
+        check(disabled.first?.state == .disabled && disabled.first?.restriction == nil, "a live inventory confirms a saved login registration is absent")
+        let changed = LegacyLoginItem(name: saved.name, path: saved.path, hidden: false)
+        let enabled = StartupParsers.loginItems(saved: [saved, changed], live: [changed], currentUID: 501)
+        check(enabled.count == 1 && enabled[0].state == .enabled, "login inventory deduplicates backups by registration identity")
+        check(enabled.first?.source == .loginItem(changed), "live login metadata supersedes old hidden-state backups")
     }
 
     private static func checkServiceOperations() {
@@ -214,8 +241,27 @@ struct StartupCoreChecks {
                 catch { check(false, "remove startup mock state: \(error.localizedDescription)") }
             }
             let runner = MockStartupRunner()
-            let service = StartupService(home: directory, currentUID: 501, stateDirectory: directory, runner: runner)
-            let original = "# Synthetic fixture\n@reboot /usr/bin/printf '%s' 'example job'\n"
+            let service = StartupService(home: directory, currentUID: getuid(), stateDirectory: directory, runner: runner)
+            let original = "# Synthetic fixture\nEXAMPLE_CRON_SECRET=synthetic-secret\n@reboot /usr/bin/printf '%s' 'example job'\n"
+            let fakeState = directory.appendingPathComponent("fake-crontab.txt")
+            try Data(original.utf8).write(to: fakeState)
+            let fakeTool = directory.appendingPathComponent("fake-crontab")
+            let fakeLog = directory.appendingPathComponent("fake-crontab-input-path")
+            let fakeScript = """
+            #!/bin/sh
+            set -eu
+            if [ "$1" = "-u" ]; then shift 2; fi
+            if [ "$1" = "-l" ]; then
+                /bin/cat \(CommandRunner.shellQuote(fakeState.path))
+            else
+                printf '%s' "$1" > \(CommandRunner.shellQuote(fakeLog.path))
+                /bin/cp "$1" \(CommandRunner.shellQuote(fakeState.path))
+            fi
+            """
+            try Data(fakeScript.utf8).write(to: fakeTool)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeTool.path)
+            runner.fakeCronTool = fakeTool
+            runner.fakeCronState = fakeState
             let document = CronDocument(text: original)
             guard let job = document.jobs.first else { check(false, "synthetic cron job exists"); return }
             let item = StartupItem(
@@ -227,8 +273,14 @@ struct StartupCoreChecks {
             try service.setEnabled(false, item: item)
             let change = runner.commands.first { $0.executable == "/bin/sh" }
             check(change?.administrator == true, "root cron updates require administrator approval")
-            check(change?.arguments.last?.contains("/usr/bin/crontab -u root -") == true, "root cron updates target root explicitly")
-            check(change?.arguments.last?.contains("The crontab changed") == true, "cron installation rechecks concurrent changes")
+            check(change?.arguments[1].contains("/usr/bin/crontab -u root ") == true, "root cron updates target root explicitly")
+            check(change?.arguments[1].contains("The crontab changed") == true, "cron installation rechecks concurrent changes")
+            check(runner.commands.allSatisfy { !$0.arguments.joined().contains("synthetic-secret") && !$0.arguments.joined().contains(job.command) }, "no cron contents enter shell or osascript arguments")
+            check(runner.stagedInputModes == [0o600], "cron staging input is private before the command runs")
+            check(runner.stagedInputs.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) }, "caller-owned cron staging input is cleaned up")
+            let immutableInput = try String(contentsOf: fakeLog, encoding: .utf8)
+            check(!FileManager.default.fileExists(atPath: URL(fileURLWithPath: immutableInput).deletingLastPathComponent().path), "authorized immutable staging copy is cleaned up")
+            check(try String(contentsOf: fakeState, encoding: .utf8) == runner.installedCron, "the safe fake-crontab harness installs the expected replacement")
             let backup = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
                 .first { $0.lastPathComponent.hasPrefix("cron-system-") }
             check(try backup.map { try String(contentsOf: $0, encoding: .utf8) } == original, "cron updates preserve a complete backup")
@@ -243,12 +295,28 @@ struct StartupCoreChecks {
             } catch {
                 check(runner.commands.filter { $0.executable == "/bin/sh" }.count == count, "stale cron entries do not execute an update")
             }
+            let installedText = try String(contentsOf: fakeState, encoding: .utf8)
+            let installedJob = CronDocument(text: installedText).jobs[0]
+            let enableCron = StartupItem(
+                id: "synthetic-cron-enable", name: installedJob.schedule, kind: .cron, domain: .system,
+                command: installedJob.command, origin: "root crontab", state: .disabled, source: .cron(installedJob, .system)
+            )
+            runner.tamperCronInput = true
+            do {
+                try service.setEnabled(true, item: enableCron)
+                check(false, "changed private cron staging input must be rejected")
+            } catch {
+                check(error.localizedDescription.contains("staging input changed"), "changed cron staging is reported before installation")
+            }
+            check(try String(contentsOf: fakeState, encoding: .utf8) == installedText, "a changed staging file never overwrites the current crontab")
+            check(runner.stagedInputs.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) }, "failed cron staging input is cleaned up")
+            runner.tamperCronInput = false
 
             let login = LegacyLoginItem(name: "Example \"quoted\" app", path: "/Applications/Example's app.app", hidden: true)
             runner.loginItems = [login]
             runner.loginToRestore = login
             let loginItem = StartupItem(
-                id: login.id, name: login.name, kind: .loginApp, domain: .gui(501),
+                id: login.id, name: login.name, kind: .loginApp, domain: .gui(getuid()),
                 command: login.path, origin: "Synthetic login item", state: .enabled, source: .loginItem(login)
             )
             try service.setEnabled(false, item: loginItem)
@@ -258,12 +326,39 @@ struct StartupCoreChecks {
             )
             check(saved == [login], "login backups preserve path, name, and hidden state")
             let disabled = StartupItem(
-                id: login.id, name: login.name, kind: .loginApp, domain: .gui(501),
+                id: login.id, name: login.name, kind: .loginApp, domain: .gui(getuid()),
                 command: login.path, origin: "Synthetic login item", state: .disabled, source: .loginItem(login)
             )
             try service.setEnabled(true, item: disabled)
             check(runner.loginItems == [login], "login app disabling is reversible")
+            runner.failLoginDeletion = true
+            do {
+                try service.setEnabled(false, item: loginItem)
+                check(false, "failed login deletion must report failure")
+            } catch {
+                check(runner.loginItems == [login], "failed login deletion does not change the live registration")
+            }
+            let failedBackup = try JSONDecoder().decode(
+                [LegacyLoginItem].self, from: Data(contentsOf: directory.appendingPathComponent("disabled-login-apps.json"))
+            )
+            check(StartupParsers.loginItems(saved: failedBackup, live: nil, currentUID: getuid()).first?.state == .unknown, "failed deletion backups cannot be advertised as disabled")
+            runner.failLoginDeletion = false
+            let changed = LegacyLoginItem(name: login.name, path: login.path, hidden: false)
+            runner.loginItems = [changed]
+            runner.loginToRestore = changed
+            let changedItem = StartupItem(
+                id: changed.id, name: changed.name, kind: .loginApp, domain: .gui(getuid()),
+                command: changed.path, origin: "Synthetic login item", state: .enabled, source: .loginItem(changed)
+            )
+            try service.setEnabled(false, item: changedItem)
+            let replaced = try JSONDecoder().decode(
+                [LegacyLoginItem].self, from: Data(contentsOf: directory.appendingPathComponent("disabled-login-apps.json"))
+            )
+            check(replaced == [changed], "re-registering an app replaces the old hidden-state backup instead of duplicating its ID")
             check(runner.commands.filter { $0.executable == "/usr/bin/osascript" }.allSatisfy { !$0.administrator }, "legacy login app changes never escalate privileges")
+            runner.backgroundOutput = "Records for UID 0:\nUUID: synthetic-background\nName: Example helper\nDisposition: [enabled, allowed]\n"
+            check(try service.readBackgroundItems().count == 1, "authorized background inventory is parsed")
+            check(runner.commands.last?.executable == "/usr/bin/sfltool" && runner.commands.last?.administrator == true, "background inventory explicitly requires administrator authorization")
         } catch { check(false, "mock cron/login operations: \(error.localizedDescription)") }
     }
 }
@@ -275,21 +370,53 @@ private final class MockStartupRunner: StartupCommandRunning {
     var installedCron: String?
     var loginItems: [LegacyLoginItem]?
     var loginToRestore: LegacyLoginItem?
+    var failLoginDeletion = false
+    var backgroundOutput = ""
+    var fakeCronTool: URL?
+    var fakeCronState: URL?
+    var stagedInputs: [URL] = []
+    var stagedInputModes: [Int] = []
+    var tamperCronInput = false
 
     func run(_ command: StartupCommand) throws -> StartupCommandResult {
         commands.append(command)
         if fail { return StartupCommandResult(status: 1, output: "", error: "synthetic failure") }
+        if command.executable == "/usr/bin/sfltool" {
+            return StartupCommandResult(status: 0, output: backgroundOutput, error: "")
+        }
+        if command.executable == "/usr/bin/crontab", let fakeCronState {
+            return StartupCommandResult(status: 0, output: try String(contentsOf: fakeCronState, encoding: .utf8), error: "")
+        }
         if command.executable == "/usr/bin/crontab", let cronText {
             return StartupCommandResult(status: 0, output: cronText, error: "")
         }
         if command.executable == "/bin/sh" {
+            if let fakeCronTool {
+                let input = URL(fileURLWithPath: command.arguments[3])
+                stagedInputs.append(input)
+                let attributes = try FileManager.default.attributesOfItem(atPath: input.path)
+                stagedInputModes.append((attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0)
+                if tamperCronInput {
+                    try Data("synthetic changed staging contents\n".utf8).write(to: input, options: .atomic)
+                    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: input.path)
+                }
+                var arguments = command.arguments
+                arguments[1] = arguments[1].replacingOccurrences(
+                    of: "/usr/bin/crontab", with: CommandRunner.shellQuote(fakeCronTool.path)
+                )
+                let result = try CommandRunner.run("/bin/sh", arguments: arguments)
+                return StartupCommandResult(status: result.status, output: result.standardOutput, error: result.standardError)
+            }
             cronText = installedCron
         }
         if command.executable == "/usr/bin/osascript", let script = command.arguments.last {
             if script.contains("JSON.stringify"), let loginItems {
                 return StartupCommandResult(status: 0, output: String(decoding: try JSONEncoder().encode(loginItems), as: UTF8.self), error: "")
             }
-            if script.contains("matches[0].delete()") { loginItems = [] }
+            if script.contains("matches[0].delete()") {
+                if failLoginDeletion { return StartupCommandResult(status: 1, output: "", error: "synthetic deletion failure") }
+                loginItems = []
+            }
             if script.contains("app.loginItems.push"), let loginToRestore { loginItems = [loginToRestore] }
         }
         if command.arguments.first == "print-disabled" {

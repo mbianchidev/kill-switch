@@ -15,7 +15,7 @@ to read its complete source and command.
 | System services | `/Library/LaunchDaemons`, in the `system` domain | Same overrides, with macOS administrator approval |
 | macOS agents/services | `/System/Library/LaunchAgents` and `/System/Library/LaunchDaemons` | Read-only |
 | Legacy login apps | **Load login apps**, using System Events | Remove only the selected login registration; **Enable** restores its saved name, path, and hidden state |
-| App-owned login/background items | **Load login apps**, using `sfltool dumpbtm` | Read-only inventory; use **Login Items settings** for the macOS-managed switch |
+| App-owned login/background items | **Load background items**, using administrator-authorized `sfltool dumpbtm` | Read-only inventory; use **Login Items settings** for the macOS-managed switch |
 | Your cron jobs | Current account's `crontab -l` | Comment/uncomment only the selected job |
 | Root's cron jobs | **Load system cron**, with administrator approval | Same job-level edits, with administrator approval |
 
@@ -43,6 +43,10 @@ Cron changes preserve unrelated jobs, comments, environment variables, and
 formatting. Disabled jobs remain visible with a `# KillSwitch disabled: ` prefix.
 The current crontab is checked again immediately before installing the edited
 document. A concurrent change is refused; **Refresh** before trying again.
+Replacement contents never enter shell or `osascript` arguments. A private
+`0600` input is copied into an authorization-owned temporary directory, checked
+against its expected hash, installed, and verified in the same command. Both
+temporary copies are cleaned up, including on failure.
 
 ## Permissions and recovery
 
@@ -50,8 +54,16 @@ Opening Startup automatically reads service definitions and your crontab
 without requesting administrator authorization. **Load login apps** explicitly
 requests any required Automation permission for System Events. If denied,
 review **System Settings > Privacy & Security > Automation** and refresh.
-**Load system cron** explicitly requests authorization to read root's jobs.
-Reading or changing a system crontab can therefore prompt again on refresh.
+**Load background items** separately requests administrator authorization for
+the macOS background-item database. **Load system cron** explicitly requests
+authorization to read root's jobs. These inventories stay cached when switching
+tabs or refreshing an unrelated changed entry. Only explicit **Refresh** or
+**Load** actions reload privileged inventories and can prompt again.
+
+Saved login-app backups are not proof that a registration is disabled.
+Until a successful **Load login apps** read verifies its absence, a saved record
+is unknown/read-only. Current live metadata replaces an older hidden-state
+backup for the same registration rather than creating duplicate rows.
 
 App-owned background items use macOS's own controls. Open **Login Items
 settings**, or navigate to **System Settings > General > Login Items** manually

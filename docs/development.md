@@ -127,10 +127,13 @@ Use the smallest relevant target while iterating. Tests use synthetic processes,
 temporary files, and mock dependencies. Install checks use signed mock bundles
 for identity/version/signature rejection, path safety, quarantine handling,
 permissions, replacement/rollback, and startup-loop prevention.
-System-metric checks also open synthetic files and a loopback listener in the
-check process to verify the real `lsof` output format. Startup checks use mock
-command runners and temporary files; they never change live startup entries,
-request administrator access, or control a desktop application.
+System-metric checks also open synthetic files, hold/probe a POSIX lock, and
+create a loopback listener to verify real `lsof` output. Lock fields are compared
+with the installed collector's complete output because macOS can omit them.
+Startup checks use mock command runners, temporary files, and a private fake
+crontab executable to exercise staging, hashes, installation, and cleanup.
+They never change live startup entries, request administrator access, or control
+a desktop application.
 
 `ResourceMonitor.shared` owns the app-lifetime sampler; dashboard and resource
 views observe the same snapshots and history selection. Six-second samples

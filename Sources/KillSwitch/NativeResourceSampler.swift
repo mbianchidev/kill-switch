@@ -86,9 +86,13 @@ final class ResourceSampler {
             if elapsed <= 0 || elapsed > 30 { resetBaselines() }
         }
         var warnings: [String] = []
+        let beforePS = sampleLifetimeIdentities()
         let applications = runningApplications()
         let parsedProcesses = try samplePSProcesses()
-        let nativeProcesses = sampleNativeProcesses(at: now, applications: applications)
+        let afterPS = sampleLifetimeIdentities()
+        let nativeProcesses = sampleNativeProcesses(
+            at: now, applications: applications, beforePS: beforePS, afterPS: afterPS
+        )
         var sampledEnergy = false
         if policy.usesTop && (lastEnergyDate.map { now.timeIntervalSince($0) >= Double(policy.intervalSeconds) } ?? true) {
             do {
@@ -120,18 +124,22 @@ final class ResourceSampler {
         var includedPIDs: Set<Int32> = []
 
         for process in parsedProcesses {
+            let identity = ResourceProcessIdentity.verified(
+                pid: process.pid, before: beforePS, after: afterPS, current: identities[process.pid]
+            )
+            if identity == nil && nativeProcesses[process.pid] != nil { continue }
             includedPIDs.insert(process.pid)
-            let native = nativeProcesses[process.pid]
-            let application = applications[process.pid]
-            let network = identities[process.pid] == nil ? nil : networkProcesses[process.pid]
-            let fallbackName = displayName(for: process.command)
+            let native = identity == nil ? nil : nativeProcesses[process.pid]
+            let application = identity == nil ? nil : applications[process.pid]
+            let network = identity == nil ? nil : networkProcesses[process.pid]
+            let fallbackName = SystemMetricsParser.executableName(process.command)
 
             processes.append(
                 ResourceProcess(
-                    identity: identities[process.pid],
+                    identity: identity,
                     pid: process.pid,
                     name: application?.name ?? native?.name ?? fallbackName,
-                    user: process.user,
+                    user: native?.user ?? process.user,
                     cpu: native?.cpu ?? process.cpu,
                     measuredCPU: native?.cpu,
                     cpuTimeSeconds: native?.cpuTimeSeconds ?? process.cpuTimeSeconds,
@@ -142,7 +150,7 @@ final class ResourceSampler {
                     gpuTimeSeconds: nil,
                     memoryBytes: native?.memoryBytes ?? process.memoryBytes,
                     openFileCount: native?.openFileCount,
-                    power: identities[process.pid].flatMap { cachedPower[$0] } ?? 0,
+                    power: identity.flatMap { cachedPower[$0] } ?? 0,
                     power12Hour: nil,
                     appNap: nil,
                     preventsSleep: cachedPreventingSleep.contains(process.pid),
@@ -235,7 +243,7 @@ final class ResourceSampler {
     private func samplePSProcesses() throws -> [ParsedPSProcess] {
         let result = try CommandRunner.run(
             "/bin/ps",
-            arguments: ["-axo", "pid=,user=,state=,pcpu=,time=,rss=,args="],
+            arguments: ["-axo", "pid=,user=,state=,pcpu=,time=,rss=,comm="],
             environment: ["LC_ALL": "C"]
         )
         guard result.succeeded else {
@@ -250,7 +258,9 @@ final class ResourceSampler {
 
     private func sampleNativeProcesses(
         at date: Date,
-        applications: [Int32: (name: String, icon: NSImage?)]
+        applications: [Int32: (name: String, icon: NSImage?)],
+        beforePS: [Int32: ResourceProcessIdentity],
+        afterPS: [Int32: ResourceProcessIdentity]
     ) -> [Int32: NativeProcess] {
         let previousDate = previousProcessDate
         let elapsed = previousDate.map { date.timeIntervalSince($0) }
@@ -264,6 +274,9 @@ final class ResourceSampler {
             guard let identity = processIdentity(pid: pid, bsd: bsd) else { continue }
             identities[pid] = identity
             guard let usage = processUsage(pid: pid) else { continue }
+            let application = ResourceProcessIdentity.verified(
+                pid: pid, before: beforePS, after: afterPS, current: identity
+            ) == nil ? nil : applications[pid]
 
             let totalCPU = usage.ri_user_time + usage.ri_system_time
             let task = processTaskInfo(pid: pid)
@@ -271,7 +284,7 @@ final class ResourceSampler {
                 pid: pid,
                 identity: identity,
                 bsd: bsd,
-                applicationName: applications[pid]?.name
+                applicationName: application?.name
             )
 
             let cpu: Double?
@@ -304,7 +317,7 @@ final class ResourceSampler {
                 openFileCount: Int(bsd.pbi_nfiles),
                 diskReadBytes: usage.ri_diskio_bytesread,
                 diskWrittenBytes: usage.ri_diskio_byteswritten,
-                icon: applications[pid]?.icon
+                icon: application?.icon
             )
         }
 
@@ -718,6 +731,15 @@ final class ResourceSampler {
         return ResourceProcessIdentity(bootSession: bootSession, pid: pid, startTime: start)
     }
 
+    private func sampleLifetimeIdentities() -> [Int32: ResourceProcessIdentity] {
+        var result: [Int32: ResourceProcessIdentity] = [:]
+        for pid in listPIDs() {
+            guard let bsd = processBSDInfo(pid: pid), let identity = processIdentity(pid: pid, bsd: bsd) else { continue }
+            result[pid] = identity
+        }
+        return result
+    }
+
     private func processUsage(pid: Int32) -> rusage_info_v4? {
         var info = rusage_info_v4()
         let result = withUnsafeMutablePointer(to: &info) { pointer in
@@ -801,12 +823,6 @@ final class ResourceSampler {
         let value = String(cString: name)
         usernames[uid] = value
         return value
-    }
-
-    private func displayName(for command: String) -> String {
-        guard let executable = command.split(whereSeparator: \.isWhitespace).first else { return "Unknown process" }
-        let value = String(executable)
-        return value.hasPrefix("/") ? URL(fileURLWithPath: value).lastPathComponent : value
     }
 
     private func string<T>(from value: inout T) -> String {

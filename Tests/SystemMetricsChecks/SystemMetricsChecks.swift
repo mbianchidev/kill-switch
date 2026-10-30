@@ -8,6 +8,7 @@ struct SystemMetricsChecks {
     private static var checkCount = 0
 
     static func main() {
+        probeSyntheticLockIfRequested()
         checkTopParsing()
         checkNetworkProcessParsing()
         checkNetworkTotalsParsing()

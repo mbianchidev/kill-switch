@@ -12,6 +12,8 @@ public final class StartupService {
     private let stateDirectory: URL
     private let runner: StartupCommandRunning
     private let manager = FileManager.default
+    private var cachedSystemCron: [StartupItem] = []
+    private var cachedBackgroundItems: [StartupItem] = []
 
     public init(home: URL, currentUID: UInt32, stateDirectory: URL, runner: StartupCommandRunning = NativeStartupCommandRunner()) {
         self.home = home
@@ -20,7 +22,9 @@ public final class StartupService {
         self.runner = runner
     }
 
-    public func scan(includeLoginApps: Bool = false, includeSystemCron: Bool = false) -> StartupSnapshot {
+    public func scan(
+        includeLoginApps: Bool = false, includeSystemCron: Bool = false, includeBackgroundItems: Bool = false
+    ) -> StartupSnapshot {
         var items: [StartupItem] = []
         var warnings: [String] = []
         let locations: [(URL, StartupDomain)] = [
@@ -33,7 +37,7 @@ public final class StartupService {
         var overrides: [String: [String: Bool]] = [:]
         for domain in [StartupDomain.gui(currentUID), .system] {
             do {
-                let result = try checked(StartupCommand("/bin/launchctl", arguments: ["print-disabled", domain.target]))
+                let result = try checked(StartupCommandPlanner.serviceOverrides(domain))
                 overrides[domain.target] = try StartupParsers.disabledServices(result.output)
             } catch { warnings.append("\(domain.label) services: \(error.localizedDescription)") }
         }
@@ -53,34 +57,40 @@ public final class StartupService {
             } catch { warnings.append("\(directory.path): \(error.localizedDescription)") }
         }
 
-        for domain in [StartupDomain.gui(currentUID)] + (includeSystemCron ? [.system] : []) {
-            do { items += try cronItems(domain: domain) }
-            catch { warnings.append("\(domain.label) cron: \(error.localizedDescription)") }
+        do { items += try cronItems(domain: .gui(currentUID)) }
+        catch { warnings.append("My account cron: \(error.localizedDescription)") }
+        if includeSystemCron {
+            do { cachedSystemCron = try cronItems(domain: .system) }
+            catch { warnings.append("System cron refresh failed; showing any cached entries: \(error.localizedDescription)") }
         }
+        items += cachedSystemCron
         do {
-            let disabled = try readDisabledLoginItems()
-            items += disabled.map { loginItem($0, enabled: false) }
+            let saved = try readDisabledLoginItems()
+            var live: [LegacyLoginItem]?
             if includeLoginApps {
-                let enabled = try readLoginItems()
-                items.removeAll { item in
-                    if case let .loginItem(login) = item.source { return enabled.contains { $0.id == login.id } }
-                    return false
-                }
-                items += enabled.map { loginItem($0, enabled: true) }
+                do { live = try readLoginItems() }
+                catch { warnings.append("Login apps: \(error.localizedDescription)") }
             }
+            items += StartupParsers.loginItems(saved: saved, live: live, currentUID: currentUID)
         } catch { warnings.append("Login apps: \(error.localizedDescription)") }
 
-        if includeLoginApps {
-            do {
-                let output = try checked(StartupCommand("/usr/bin/sfltool", arguments: ["dumpbtm"])).output
-                let background = StartupParsers.backgroundItems(output, currentUID: currentUID)
-                if background.isEmpty && !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    warnings.append("macOS background-item data could not be decoded. Use Login Items in System Settings.")
-                }
-                items += background
-            } catch { warnings.append("App background items: \(error.localizedDescription)") }
+        if includeBackgroundItems {
+            do { cachedBackgroundItems = try readBackgroundItems() }
+            catch { warnings.append("Background-item refresh failed; showing any cached entries: \(error.localizedDescription)") }
         }
+        items += cachedBackgroundItems
         return StartupSnapshot(items: items, warnings: warnings)
+    }
+
+    public func readBackgroundItems() throws -> [StartupItem] {
+        let output = try checked(StartupCommand(
+            "/usr/bin/sfltool", arguments: ["dumpbtm"], administrator: true
+        )).output
+        let items = StartupParsers.backgroundItems(output, currentUID: currentUID)
+        if items.isEmpty && !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw StartupError("macOS background-item data could not be decoded. Use Login Items in System Settings.")
+        }
+        return items
     }
 
     public func readLaunchService(
@@ -146,10 +156,7 @@ public final class StartupService {
                 throw StartupError("The startup file changed after it was listed. Refresh before changing it.")
             }
             _ = try checked(StartupCommandPlanner.launchService(service, enabled: enabled, currentUID: currentUID))
-            let result = try checked(StartupCommand(
-                "/bin/launchctl", arguments: ["print-disabled", service.domain.target],
-                administrator: service.domain == .system
-            ))
+            let result = try checked(StartupCommandPlanner.serviceOverrides(service.domain))
             let overrides = try StartupParsers.disabledServices(result.output)
             guard overrides[service.label] == !enabled else {
                 throw StartupError("launchctl completed, but the new startup state could not be confirmed. Refresh and inspect this service.")
@@ -177,7 +184,11 @@ public final class StartupService {
     }
 
     private func cronItems(domain: StartupDomain) throws -> [StartupItem] {
-        CronDocument(text: try readCrontab(domain: domain)).jobs.map { job in
+        cronItems(text: try readCrontab(domain: domain), domain: domain)
+    }
+
+    private func cronItems(text: String, domain: StartupDomain) -> [StartupItem] {
+        CronDocument(text: text).jobs.map { job in
             StartupItem(
                 id: "cron/\(domain.target)/\(job.id)", name: job.schedule, kind: .cron, domain: domain,
                 command: job.command, origin: domain == .system ? "root crontab" : "My crontab",
@@ -192,30 +203,70 @@ public final class StartupService {
         let replacement = try CronDocument(text: original).setting(job: job, enabled: enabled)
         let backup = stateDirectory.appendingPathComponent("cron-\(domain == .system ? "system" : "user")-\(UUID().uuidString).txt")
         try writePrivate(Data(original.utf8), to: backup)
+        let input = stateDirectory.appendingPathComponent("cron-input-\(UUID().uuidString).txt")
+        try writePrivate(Data(replacement.utf8), to: input)
+        defer {
+            do { try manager.removeItem(at: input) }
+            catch { fputs("KillSwitch could not remove private cron staging input: \(error.localizedDescription)\n", stderr) }
+        }
 
-        // Check the crontab again in the same authorized command that installs its replacement.
+        // Validate an immutable private copy after authorization; no crontab contents enter argv.
         let arguments = domain == .system ? "-u root " : ""
         let canonical = original.replacingOccurrences(of: #"\n+$"#, with: "", options: .regularExpression)
-        let expected = startupFingerprint(Data(canonical.utf8))
+        let canonicalReplacement = replacement.replacingOccurrences(of: #"\n+$"#, with: "", options: .regularExpression)
         let script = """
         set -eu
-        current=$(/usr/bin/crontab \(arguments)-l)
-        digest=$(/usr/bin/printf '%s' "$current" | /usr/bin/shasum -a 256)
-        if [ "$digest" != \(CommandRunner.shellQuote(expected + "  -")) ]; then
-            /usr/bin/printf '%s\\n' 'The crontab changed. Refresh before changing a job.' >&2
+        source=$1
+        owner=$2
+        expected_old=$3
+        expected_input=$4
+        expected_new=$5
+        parent=${source%/*}
+        if [ -L "$source" ] || [ ! -f "$source" ] || [ -L "$parent" ] || [ ! -d "$parent" ] ||
+           [ "$(/usr/bin/stat -f '%u:%Lp' "$source")" != "$owner:600" ] ||
+           [ "$(/usr/bin/stat -f '%u:%Lp' "$parent")" != "$owner:700" ]; then
+            printf '%s\\n' 'The private cron staging input has unsafe ownership or permissions.' >&2
             exit 1
         fi
-        /usr/bin/printf '%s' \(CommandRunner.shellQuote(replacement)) | /usr/bin/crontab \(arguments)-
+        umask 077
+        private=$(/usr/bin/mktemp -d /private/tmp/killswitch-cron.XXXXXXXX)
+        trap '/bin/rm -f "$private/input"; /bin/rmdir "$private"' EXIT
+        trap 'exit 1' HUP INT TERM
+        /bin/cp -P "$source" "$private/input"
+        if [ -L "$private/input" ] || [ ! -f "$private/input" ]; then
+            printf '%s\\n' 'The cron staging input changed during authorization.' >&2
+            exit 1
+        fi
+        /bin/chmod 600 "$private/input"
+        input_digest=$(/usr/bin/shasum -a 256 "$private/input")
+        if [ "${input_digest%% *}" != "$expected_input" ]; then
+            printf '%s\\n' 'The cron staging input changed. Refresh before changing a job.' >&2
+            exit 1
+        fi
+        current=$(/usr/bin/crontab \(arguments)-l)
+        digest=$(printf '%s' "$current" | /usr/bin/shasum -a 256)
+        if [ "${digest%% *}" != "$expected_old" ]; then
+            printf '%s\\n' 'The crontab changed. Refresh before changing a job.' >&2
+            exit 1
+        fi
+        /usr/bin/crontab \(arguments)"$private/input"
+        installed=$(/usr/bin/crontab \(arguments)-l)
+        installed_digest=$(printf '%s' "$installed" | /usr/bin/shasum -a 256)
+        if [ "${installed_digest%% *}" != "$expected_new" ]; then
+            printf '%s\\n' 'The updated crontab could not be verified. Inspect the saved backup before retrying.' >&2
+            exit 1
+        fi
         """
         do {
-            _ = try checked(StartupCommand("/bin/sh", arguments: ["-c", script], administrator: domain == .system))
+            _ = try checked(StartupCommand("/bin/sh", arguments: [
+                "-c", script, "killswitch-cron", input.path, String(currentUID),
+                startupFingerprint(Data(canonical.utf8)), startupFingerprint(Data(replacement.utf8)),
+                startupFingerprint(Data(canonicalReplacement.utf8))
+            ], administrator: domain == .system))
         } catch {
             throw StartupError("\(error.localizedDescription) The previous crontab is saved in \(backup.path).")
         }
-        let installed = try readCrontab(domain: domain)
-        guard installed.trimmingCharacters(in: .newlines) == replacement.trimmingCharacters(in: .newlines) else {
-            throw StartupError("The updated crontab could not be confirmed. Its previous contents are saved in \(backup.path).")
-        }
+        if domain == .system { cachedSystemCron = cronItems(text: replacement, domain: domain) }
     }
 
     private func readLoginItems() throws -> [LegacyLoginItem] {
@@ -225,14 +276,6 @@ public final class StartupService {
         """
         let result = try checked(StartupCommand("/usr/bin/osascript", arguments: ["-l", "JavaScript", "-e", script]))
         return try JSONDecoder().decode([LegacyLoginItem].self, from: Data(result.output.utf8))
-    }
-
-    private func loginItem(_ login: LegacyLoginItem, enabled: Bool) -> StartupItem {
-        StartupItem(
-            id: login.id, name: login.name, kind: .loginApp, domain: .gui(currentUID),
-            command: login.path, origin: "Legacy login item", state: enabled ? .enabled : .disabled,
-            source: .loginItem(login)
-        )
     }
 
     private func setLoginItem(enabled: Bool, login: LegacyLoginItem) throws {
@@ -253,7 +296,8 @@ public final class StartupService {
             guard current.filter({ $0.id == login.id }) == [login] else {
                 throw StartupError("The login app changed or is ambiguous. Refresh before disabling it.")
             }
-            if !disabled.contains(login) { disabled.append(login) }
+            disabled.removeAll { $0.id == login.id }
+            disabled.append(login)
             try writePrivate(try JSONEncoder().encode(disabled), to: disabledLoginURL)
             script = """
             const app = Application('System Events');
@@ -289,6 +333,7 @@ public final class StartupService {
         guard directory[.type] as? FileAttributeType == .typeDirectory else {
             throw StartupError("The startup backup location must be a real directory.")
         }
+        try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: stateDirectory.path)
         if manager.fileExists(atPath: url.path) {
             let attributes = try manager.attributesOfItem(atPath: url.path)
             guard attributes[.type] as? FileAttributeType == .typeRegular else {

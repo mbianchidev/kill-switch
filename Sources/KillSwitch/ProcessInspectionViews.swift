@@ -41,7 +41,7 @@ final class ProcessInspectionMonitor: ObservableObject {
     private func sample() {
         DispatchQueue.main.async { self.isRefreshing = true }
         do {
-            var arguments = ["-nP", "-b", "+c", "0", "-F0pcuLfatDinsPT"]
+            var arguments = ["-nP", "-b", "+c", "0", ProcessInspectionParser.lsofFields]
             if mode == .connections { arguments += ["-i", "-U"] }
             let result = try CommandRunner.run(
                 "/usr/sbin/lsof", arguments: arguments, environment: ["LC_ALL": "en_US.UTF-8"]
@@ -125,7 +125,7 @@ struct OpenFilesPanel: View {
                     .font(.system(size: 11, design: .monospaced))
                     .textSelection(.enabled)
             }
-            Text("Open does not mean locked. Lock fields are best-effort advisory locks, not proof that no other lock exists. Protected entries may be omitted; control characters in paths use lsof display escapes. This view never closes files or terminates processes.")
+            Text("Open does not mean locked. macOS can omit advisory lock state; no reported lock does not prove a file is unlocked. Protected entries may be omitted; control characters in paths use lsof display escapes. This view never closes files or terminates processes.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
         }

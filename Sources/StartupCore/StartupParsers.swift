@@ -2,22 +2,54 @@ import Foundation
 
 public enum StartupParsers {
     public static func disabledServices(_ text: String) throws -> [String: Bool] {
-        guard text.contains("disabled services = {"), text.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("}") else {
+        guard let header = text.range(
+            of: #"(?m)^[ \t]*disabled services[ \t]*=[ \t]*\{[ \t]*\r?$"#,
+            options: .regularExpression
+        ) else {
             throw StartupError("launchctl did not return readable startup overrides.")
         }
-        let expression = try NSRegularExpression(pattern: #"^\s*"([^"]+)"\s*=>\s*(true|false)\s*;?\s*$"#)
+        let remaining = String(text[header.upperBound...])
+        guard let closing = remaining.range(of: #"(?m)^[ \t]*\}[ \t]*\r?$"#, options: .regularExpression) else {
+            throw StartupError("The launchctl startup override block is incomplete.")
+        }
+        let block = remaining[..<closing.lowerBound]
+        let expression = try NSRegularExpression(pattern: #"^\s*"([^"]+)"\s*=>\s*(true|false|enabled|disabled)\s*;?\s*$"#)
         var result: [String: Bool] = [:]
-        for line in text.components(separatedBy: .newlines) {
+        for line in block.components(separatedBy: .newlines) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty || trimmed == "disabled services = {" || trimmed == "}" { continue }
+            if trimmed.isEmpty { continue }
             guard let match = expression.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
                   let label = Range(match.range(at: 1), in: line),
                   let state = Range(match.range(at: 2), in: line) else {
                 throw StartupError("A launchctl startup override is unreadable. No enabled state was assumed.")
             }
-            result[String(line[label])] = line[state] == "true"
+            result[String(line[label])] = line[state] == "true" || line[state] == "disabled"
         }
         return result
+    }
+
+    public static func loginItems(
+        saved: [LegacyLoginItem], live: [LegacyLoginItem]?, currentUID: UInt32
+    ) -> [StartupItem] {
+        var records: [String: LegacyLoginItem] = [:]
+        for item in saved { records[item.id] = item }
+        for item in live ?? [] { records[item.id] = item }
+        let liveGroups = Dictionary(grouping: live ?? [], by: \.id)
+        return records.values.map { login in
+            let enabled = liveGroups[login.id] != nil
+            let state: StartupState = live == nil ? .unknown : (enabled ? .enabled : .disabled)
+            let restriction: String?
+            if live == nil {
+                restriction = "Load login apps to verify whether this saved registration is currently disabled."
+            } else if (liveGroups[login.id]?.count ?? 0) > 1 {
+                restriction = "Multiple login registrations share this name and path. Manage them in macOS Login Items settings."
+            } else { restriction = nil }
+            return StartupItem(
+                id: login.id, name: login.name, kind: .loginApp, domain: .gui(currentUID),
+                command: login.path, origin: live == nil ? "Saved login app; verification required" : "Legacy login item",
+                state: state, restriction: restriction, source: .loginItem(login)
+            )
+        }.sorted { $0.id < $1.id }
     }
 
     public static func backgroundItems(_ text: String, currentUID: UInt32) -> [StartupItem] {

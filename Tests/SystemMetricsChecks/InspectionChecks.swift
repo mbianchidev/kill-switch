@@ -4,6 +4,23 @@ import InstallCore
 import SystemMetricsCore
 
 extension SystemMetricsChecks {
+    static func probeSyntheticLockIfRequested() {
+        guard CommandLine.arguments.dropFirst().first == "--probe-synthetic-lock" else { return }
+        guard CommandLine.arguments.count == 3 else { exit(EXIT_FAILURE) }
+        let file = URL(fileURLWithPath: CommandLine.arguments[2])
+        guard file.deletingLastPathComponent().lastPathComponent.hasPrefix("killswitch-inspection-"),
+              file.lastPathComponent.hasPrefix("synthetic ") else { exit(EXIT_FAILURE) }
+        let descriptor = Darwin.open(file.path, O_RDWR)
+        guard descriptor >= 0 else { exit(EXIT_FAILURE) }
+        var lock = Darwin.flock()
+        lock.l_type = Int16(F_WRLCK)
+        lock.l_whence = Int16(SEEK_SET)
+        let result = fcntl(descriptor, F_SETLK, &lock)
+        let blocked = result == -1 && (errno == EAGAIN || errno == EACCES)
+        Darwin.close(descriptor)
+        exit(blocked ? EXIT_SUCCESS : EXIT_FAILURE)
+    }
+
     static func checkProcessInspection() {
         let fixture = [
             "p42", "cExample worker", "u501", "Lsample-user", "\nf4", "ar", "lR", "tREG",
@@ -20,6 +37,8 @@ extension SystemMetricsChecks {
         check(snapshot.files.first?.lock == "R", "open-files parser retains lock information")
         check(snapshot.files.first?.size == 4_096, "open-files parser retains size")
         check(snapshot.files.first?.descriptor == "4", "open-files parser retains file descriptor")
+        check(OpenFileQuery(search: "report").apply(to: snapshot.files).isEmpty, "search does not match the unlocked placeholder")
+        check(OpenFileQuery(search: "port").apply(to: snapshot.files).isEmpty, "partial searches do not match unreported lock text")
         check(snapshot.connections.count == 4, "connections include TCP, UDP, and Unix sockets")
         check(snapshot.connections.first?.local == "[::1]:8080", "IPv6 local endpoint remains intact")
         check(snapshot.connections.first?.remote == "[::1]:50000", "IPv6 remote endpoint remains intact")
@@ -53,6 +72,8 @@ extension SystemMetricsChecks {
         )
         let orphan = ProcessInspectionParser.parseLsof(Data("f3\0tREG\0n/tmp/orphan\0".utf8))
         check(orphan.files.isEmpty, "file records without process ownership are rejected")
+        let unknownLock = ProcessInspectionParser.parseLsof(Data("p42\0u501\0f3\0tREG\0lU\0n/tmp/synthetic-unknown-lock\0".utf8))
+        check(unknownLock.files.first?.lockDescription == "Unknown lock", "an unknown lock type is not invented as read/write")
         checkLsofWithSyntheticResources()
     }
 
@@ -69,6 +90,16 @@ extension SystemMetricsChecks {
             let descriptor = Darwin.open(file.path, O_RDWR)
             guard descriptor >= 0 else { check(false, "open synthetic inspection file"); return }
             defer { Darwin.close(descriptor) }
+            var fileLock = Darwin.flock()
+            fileLock.l_type = Int16(F_WRLCK)
+            fileLock.l_whence = Int16(SEEK_SET)
+            guard fcntl(descriptor, F_SETLK, &fileLock) == 0 else {
+                check(false, "lock synthetic inspection file"); return
+            }
+            let probe = try CommandRunner.run(
+                CommandLine.arguments[0], arguments: ["--probe-synthetic-lock", file.path]
+            )
+            check(probe.succeeded, "a separate synthetic process confirms the POSIX write lock is held")
 
             let listener = socket(AF_INET, SOCK_STREAM, 0)
             guard listener >= 0 else { check(false, "create synthetic loopback listener"); return }
@@ -88,13 +119,29 @@ extension SystemMetricsChecks {
 
             let result = try CommandRunner.run(
                 "/usr/sbin/lsof",
-                arguments: ["-nP", "-b", "+c", "0", "-a", "-p", String(getpid()), "-F0pcuLfatDinsPT"],
+                arguments: ["-nP", "-b", "+c", "0", "-a", "-p", String(getpid()), ProcessInspectionParser.lsofFields],
                 environment: ["LC_ALL": "en_US.UTF-8"]
             )
             let snapshot = ProcessInspectionParser.parseLsof(Data(result.standardOutput.utf8))
             check(result.succeeded, "lsof accepts the production machine-readable flags")
             let openFile = snapshot.files.first { $0.descriptor == String(descriptor) }
             check(openFile?.pid == getpid() && openFile?.userID == getuid(), "lsof associates the synthetic file with its process")
+            let allFields = try CommandRunner.run(
+                "/usr/sbin/lsof",
+                arguments: ["-nP", "-b", "+c", "0", "-a", "-p", String(getpid()), "-F0"],
+                environment: ["LC_ALL": "en_US.UTF-8"]
+            )
+            let allFieldFile = ProcessInspectionParser.parseLsof(Data(allFields.standardOutput.utf8))
+                .files.first { $0.descriptor == String(descriptor) }
+            check(allFields.succeeded && allFieldFile != nil, "full native lsof output includes the locked synthetic descriptor")
+            check(ProcessInspectionParser.lsofFields.contains("l"), "production field selection explicitly requests lock status")
+            check(
+                openFile?.lock.trimmingCharacters(in: .whitespaces) == allFieldFile?.lock.trimmingCharacters(in: .whitespaces),
+                "selected lock fields match everything the installed lsof can expose"
+            )
+            if openFile?.hasLock == true {
+                check(openFile?.lockDescription.hasPrefix("Write") == true, "reported native lock has the correct write type")
+            }
             check(
                 openFile?.path.hasSuffix("synthetic caf\u{00e9} file\\nwith newline.txt") == true,
                 "real lsof retains Unicode and spaces while representing control characters with documented escapes"

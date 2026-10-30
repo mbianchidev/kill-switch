@@ -82,6 +82,8 @@ processes. System services and root's crontab require macOS administrator
 approval; protected macOS services stay read-only.
 
 **Load login apps** explicitly requests any required System Events access.
+**Load background items** separately requests administrator access to the
+macOS background-item inventory.
 Modern app-owned background-item switches remain in macOS **Login Items
 settings**. **Load system cron** explicitly authorizes reading root's crontab.
 See [startup management](startup.md) for supported entries, backups, permissions,

@@ -31,7 +31,8 @@ public struct OpenFileRecord: Identifiable, Equatable, Sendable {
         case "R": return "Read"
         case "w": return "Write (partial)"
         case "W": return "Write"
-        case "u", "U": return "Read/write"
+        case "u": return "Read/write"
+        case "U": return "Unknown lock"
         case "x", "X": return "Exclusive"
         default: return hasLock ? lock : "None reported"
         }
@@ -60,6 +61,8 @@ public struct ProcessInspectionSnapshot: Sendable {
 }
 
 public enum ProcessInspectionParser {
+    public static let lsofFields = "-F0pcuLfaltDinsPT"
+
     public static func parseLsof(_ data: Data) -> ProcessInspectionSnapshot {
         var files: [OpenFileRecord] = []
         var connections: [NetworkConnectionRecord] = []
@@ -163,8 +166,9 @@ public struct OpenFileQuery {
         return files.filter { file in
             (userID == nil || file.userID == userID) && (pid == nil || file.pid == pid)
                 && (!locksOnly || file.hasLock) && (kind == nil || file.kind == kind)
-                && (query.isEmpty || [file.path, file.process, file.user, String(file.pid), file.lockDescription]
-                    .contains { $0.localizedCaseInsensitiveContains(query) })
+                && (query.isEmpty || [file.path, file.process, file.user, String(file.pid)]
+                    .contains { $0.localizedCaseInsensitiveContains(query) }
+                    || (file.hasLock && file.lockDescription.localizedCaseInsensitiveContains(query)))
         }.sorted { left, right in
             let comparison: ComparisonResult
             switch sort {

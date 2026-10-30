@@ -9,6 +9,26 @@ extension SystemMetricsChecks {
         let reusedPID = ActivityProcessIdentity(bootSession: "test-boot", pid: 42, startTime: 200)
         let nextBoot = ActivityProcessIdentity(bootSession: "next-boot", pid: 42, startTime: 100)
         check(Set([identity, reusedPID, nextBoot]).count == 3, "history separates PID reuse and boots")
+        check(
+            ActivityProcessIdentity.verified(pid: 42, before: [42: identity], after: [42: identity], current: identity) == identity,
+            "PS fallback data requires one lifetime across both PS boundaries and native collection"
+        )
+        check(
+            ActivityProcessIdentity.verified(pid: 42, before: [42: identity], after: [42: reusedPID], current: reusedPID) == nil,
+            "PID reuse while PS is collected cannot attach old owner or memory to the replacement"
+        )
+        check(
+            ActivityProcessIdentity.verified(pid: 42, before: [42: identity], after: [42: identity], current: reusedPID) == nil,
+            "PID reuse after PS cannot attach its fallback data to a later native identity"
+        )
+        check(
+            ActivityProcessIdentity.verified(pid: 42, before: [:], after: [42: identity], current: identity) == nil,
+            "unbracketed PS fallback data remains unverified"
+        )
+        check(
+            SystemMetricsParser.executableName("/Library/Application Support/Example/agent") == "agent",
+            "argument-free executable names preserve paths containing spaces"
+        )
 
         var rates = ActivityRateTracker()
         let first = rates.sample(
@@ -78,6 +98,14 @@ extension SystemMetricsChecks {
             now: start.addingTimeInterval(360)
         )
         check(expired == 1 && buffer.count == 1, "unsaved history stays bounded and reports expired buckets")
+        var resumedBuffer = ActivityWriteBuffer()
+        let resumed = start.addingTimeInterval(6 * 3_600)
+        check(resumedBuffer.append(initial, now: resumed) == 0, "a newly completed pre-sleep bucket is not an expired retry")
+        do {
+            var resumedWrites: [ActivitySnapshot] = []
+            try resumedBuffer.flush { resumedWrites.append($0) }
+            check(resumedWrites == [initial], "healthy storage receives the original pre-sleep measurements")
+        } catch { check(false, "write pre-sleep bucket: \(error.localizedDescription)") }
 
         let points = [
             ActivityHistoryPoint(date: start, values: ActivityValues(cpu: 20)),

@@ -77,6 +77,10 @@ public enum SystemMetricsParserError: LocalizedError {
 }
 
 public enum SystemMetricsParser {
+    public static func executableName(_ executable: String) -> String {
+        executable.hasPrefix("/") ? URL(fileURLWithPath: executable).lastPathComponent : executable
+    }
+
     public static func parseTop(_ output: String) throws -> ParsedTopSnapshot {
         let lines = output.components(separatedBy: .newlines)
         guard

@@ -84,7 +84,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "StartupCoreChecks",
-            dependencies: ["StartupCore"],
+            dependencies: ["InstallCore", "StartupCore"],
             path: "Tests/StartupCoreChecks"
         )
     ]

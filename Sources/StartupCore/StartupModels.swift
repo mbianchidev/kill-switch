@@ -150,6 +150,10 @@ public struct NativeStartupCommandRunner: StartupCommandRunning {
 }
 
 public enum StartupCommandPlanner {
+    public static func serviceOverrides(_ domain: StartupDomain) -> StartupCommand {
+        StartupCommand("/bin/launchctl", arguments: ["print-disabled", domain.target])
+    }
+
     public static func launchService(
         _ service: LaunchService, enabled: Bool, currentUID: UInt32
     ) throws -> StartupCommand {

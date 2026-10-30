@@ -13,6 +13,8 @@ final class StartupMonitor: ObservableObject {
     @Published private(set) var isWorking = false
     @Published private(set) var includesLoginApps = false
     @Published private(set) var includesSystemCron = false
+    @Published private(set) var includesBackgroundItems = false
+    @Published private(set) var hasLoaded = false
     private let queue = DispatchQueue(label: "killswitch.startup", qos: .userInitiated)
     private let logger = Logger(subsystem: "com.killswitch.app", category: "startup")
     private let service: StartupService
@@ -25,17 +27,23 @@ final class StartupMonitor: ObservableObject {
         )
     }
 
-    func refresh(loadLoginApps: Bool = false, loadSystemCron: Bool = false) {
+    func refresh(
+        loadLoginApps: Bool = false, loadSystemCron: Bool = false, loadBackgroundItems: Bool = false
+    ) {
         guard !isWorking else { return }
         includesLoginApps = includesLoginApps || loadLoginApps
         includesSystemCron = includesSystemCron || loadSystemCron
+        includesBackgroundItems = includesBackgroundItems || loadBackgroundItems
         let login = includesLoginApps
         let cron = includesSystemCron
+        let background = includesBackgroundItems
         isWorking = true
         errorMessage = nil
         statusMessage = nil
         queue.async {
-            let snapshot = self.service.scan(includeLoginApps: login, includeSystemCron: cron)
+            let snapshot = self.service.scan(
+                includeLoginApps: login, includeSystemCron: cron, includeBackgroundItems: background
+            )
             self.publish(snapshot)
         }
     }
@@ -43,14 +51,13 @@ final class StartupMonitor: ObservableObject {
     func setEnabled(_ enabled: Bool, item: StartupItem) {
         guard !isWorking else { return }
         let login = includesLoginApps
-        let cron = includesSystemCron
         isWorking = true
         errorMessage = nil
         statusMessage = nil
         queue.async {
             do {
                 try self.service.setEnabled(enabled, item: item)
-                let snapshot = self.service.scan(includeLoginApps: login, includeSystemCron: cron)
+                let snapshot = self.service.scan(includeLoginApps: login)
                 self.publish(snapshot)
                 DispatchQueue.main.async {
                     self.statusMessage = "\(item.name): \(enabled ? "enabled" : "disabled") for future launches."
@@ -80,6 +87,7 @@ final class StartupMonitor: ObservableObject {
             self.items = snapshot.items
             self.warnings = snapshot.warnings
             self.isWorking = false
+            self.hasLoaded = true
         }
     }
 }
@@ -116,12 +124,14 @@ struct StartupTab: View {
                 Spacer()
                 if monitor.isWorking { ProgressView().controlSize(.small) }
                 Button("Load login apps") { monitor.refresh(loadLoginApps: true) }
-                    .help("Read legacy login apps and app-owned background items. macOS may request Automation access to System Events.")
+                    .help("Read legacy login apps. macOS may request Automation access to System Events.")
+                Button("Load background items") { monitor.refresh(loadBackgroundItems: true) }
+                    .help("Read app-owned background items with explicit macOS administrator approval")
                 Button("Load system cron") { monitor.refresh(loadSystemCron: true) }
                     .help("Read root's crontab with macOS administrator approval")
                 Button("Login Items settings") { monitor.openLoginSettings() }
                 Button { monitor.refresh() } label: { Image(systemName: "arrow.clockwise") }
-                    .accessibilityLabel("Refresh startup entries")
+                    .accessibilityLabel("Refresh startup entries; loaded privileged inventories may request administrator approval")
             }
             .disabled(monitor.isWorking)
 
@@ -145,8 +155,13 @@ struct StartupTab: View {
             Text("Disable future launches without stopping running processes. Protected macOS services stay read-only. App-owned background items are changed in macOS Login Items settings.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
-            if !monitor.includesLoginApps || !monitor.includesSystemCron {
-                Text("Services and your cron jobs are loaded automatically. Load login apps or system cron explicitly to grant the required macOS access.")
+            if !monitor.includesLoginApps || !monitor.includesSystemCron || !monitor.includesBackgroundItems {
+                Text("Services and your cron jobs load automatically. Load login apps, background items, or system cron explicitly to grant their required macOS access.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            if monitor.includesSystemCron || monitor.includesBackgroundItems {
+                Text("Privileged inventories stay cached until an explicit Refresh or Load action. Switching tabs does not request authorization again.")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
@@ -218,7 +233,9 @@ struct StartupTab: View {
         }
         .padding(16)
         .background(Theme.background)
-        .onAppear { monitor.refresh() }
+        .onAppear {
+            if !monitor.hasLoaded { monitor.refresh() }
+        }
         .alert(item: $pending) { change in
             let title = change.enabled ? "Enable \(change.item.name)?" : "Disable \(change.item.name)?"
             let message = change.item.domain == .system
