@@ -18,10 +18,31 @@ quitting. Its status item uses a bolt-shaped icon (`bolt.slash`).
 - **Quit KillSwitch** fully exits, saves screen-time state, and releases
   keep-awake resources.
 
-The watchdog and screen-time monitor continue with the window hidden, as does
-resource sampling when Resources is selected. Leaving Resources stops its
-sampler. The Dev cleanup tab starts its timers on appearance and stops them on
+The watchdog, screen-time monitor, and CPU/memory/disk/network sampling continue
+with the window hidden and while using other tabs. Quitting flushes the current
+history bucket. Energy details run only while their resource view is selected;
+connection/open-file inspection runs only while its panel is visible.
+The Dev cleanup tab starts its timers on appearance and stops them on
 disappearance; opening it runs an immediate cleanup.
+
+## Dashboard
+
+The initial tab compares CPU, memory, network traffic, and disk I/O on one time
+axis. Select a live process, or use **History for** to inspect a previously
+recorded process, including one that exited. **Entire Mac** restores global
+graphs. The process search beside that menu also finds historical names and PIDs.
+
+Choose **Live · 5m**, **1 hour**, **6 hours**, or **24 hours**. Drag across a chart
+or use the keyboard-accessible time slider to inspect the nearest measured
+sample across all four graphs. **Live** returns to current readings. These
+history selections are shared with the individual resource views.
+
+Sampling runs every six seconds while KillSwitch is running. One-minute
+averages persist locally for 24 hours, across app restarts; gaps during sleep,
+shutdown, or failed sampling are not recorded as zero usage. Process histories
+distinguish process lifetimes and boots, not just reused PIDs. **Clear history**
+deletes stored measurements and process names after confirmation; new sampling
+continues. See [history storage and limitations](system-diagnostics.md#history-and-storage).
 
 ## Resources
 
@@ -30,9 +51,43 @@ application icons and executable names where macOS exposes them.
 **My processes** is the default; **All processes** includes other users and
 system processes without granting additional privileges.
 
+Selecting a process also selects its history. CPU, Memory, Disk, and Network
+reuse the dashboard's sampler, history range, and process selector rather than
+starting separate recordings. Their summary cards remain labelled **Entire Mac**.
+Memory history shows bytes used; the current memory-pressure counter remains
+available in the summary.
+
+Within **Network**, switch between **Connections** and **Traffic by process**.
+Connections includes TCP listeners, active connections, bound UDP sockets, and
+Unix sockets visible to this account. Search addresses/ports, process, PID,
+owner, protocol, or state, then filter listeners/active connections and sort.
+
+**Open files** lists accessible file descriptors by process, with path, PID,
+owner, access mode, type, size, and reported advisory lock. Search, filter by
+type or reported locks, and choose sort field/direction. An open file is not
+necessarily locked, and an empty lock field does not prove there is no lock.
+These inspection panels refresh every ten seconds and do not close files or
+terminate processes.
+
 The [resource reference](system-diagnostics.md#resources) describes all five
-modes, counters, graphs, refresh intervals, and unavailable fields.
+modes, counters, data sources, refresh intervals, and unavailable fields.
 Manual kill buttons follow the [termination safety rules](#safety-and-limitations).
+
+## Startup
+
+Review launch agents, system services, login apps, app-owned background items,
+and cron jobs. Search/filter/sort entries and confirm **Disable** or **Enable**
+for supported registrations. Changes affect future launches, not running
+processes. System services and root's crontab require macOS administrator
+approval; protected macOS services stay read-only.
+
+**Load login apps** explicitly requests any required System Events access.
+**Load background items** separately requests administrator access to the
+macOS background-item inventory.
+Modern app-owned background-item switches remain in macOS **Login Items
+settings**. **Load system cron** explicitly authorizes reading root's crontab.
+See [startup management](startup.md) for supported entries, backups, permissions,
+and recovery.
 
 ## Disk cleanup
 

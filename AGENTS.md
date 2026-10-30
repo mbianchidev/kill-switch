@@ -10,7 +10,7 @@ editing. Keep changes focused and preserve existing user changes.
   package dependencies.
 - `Sources/KillSwitch`: SwiftUI/AppKit GUI and basename-dispatched CLI.
 - `Sources/DevCleanupCore`, `DiskCleanupCore`, `KeepAwakeCore`, `InstallCore`,
-  `ScreenTimeCore`, `SystemMetricsCore`: shared behavior and safety rules.
+  `ScreenTimeCore`, `StartupCore`, `SystemMetricsCore`: shared behavior and safety rules.
 - `Sources/KillSwitchUpdateHelper`: supervised whole-app replacement.
 - `Tests/*Checks`: executable regression checks, not an XCTest suite.
 - `scripts/package-macos.sh` and `scripts/check-macos-package.sh`: local universal
@@ -30,6 +30,7 @@ swift run DiskCleanupCoreChecks
 swift run InstallCoreChecks
 swift run SystemMetricsChecks
 swift run ScreenTimeCoreChecks
+swift run StartupCoreChecks
 bash scripts/package-macos.sh
 bash scripts/check-macos-package.sh
 ```
@@ -54,6 +55,9 @@ workaround are covered in [troubleshooting](docs/troubleshooting.md#source-build
   authorization. Never use real customer/person data as a fixture.
 - Surface operation failures clearly; preserve resource cleanup and error
   reporting. Do not replace unavailable metrics with invented values.
+- Keep activity sampling shared across views, preserve process-lifetime
+  identities, and test history/inspection with synthetic data. Startup checks
+  must use mock runners, never live service, login-item, or crontab changes.
 - Keep screenshots and useful documentation unless a change explicitly requires
   replacement. Move detailed README material into linked `docs/` guides.
 

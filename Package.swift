@@ -5,6 +5,10 @@ let package = Package(
     name: "KillSwitch",
     platforms: [.macOS(.v13)],
     targets: [
+        .systemLibrary(
+            name: "CSQLite",
+            path: "Sources/CSQLite"
+        ),
         .target(
             name: "DiskCleanupCore",
             path: "Sources/DiskCleanupCore"
@@ -23,11 +27,17 @@ let package = Package(
         ),
         .target(
             name: "SystemMetricsCore",
+            dependencies: ["CSQLite"],
             path: "Sources/SystemMetricsCore"
         ),
         .target(
             name: "ScreenTimeCore",
             path: "Sources/ScreenTimeCore"
+        ),
+        .target(
+            name: "StartupCore",
+            dependencies: ["InstallCore"],
+            path: "Sources/StartupCore"
         ),
         .executableTarget(
             name: "KillSwitch",
@@ -37,6 +47,7 @@ let package = Package(
                 "InstallCore",
                 "KeepAwakeCore",
                 "ScreenTimeCore",
+                "StartupCore",
                 "SystemMetricsCore"
             ],
             path: "Sources/KillSwitch"
@@ -63,13 +74,18 @@ let package = Package(
         ),
         .executableTarget(
             name: "SystemMetricsChecks",
-            dependencies: ["SystemMetricsCore"],
+            dependencies: ["InstallCore", "SystemMetricsCore"],
             path: "Tests/SystemMetricsChecks"
         ),
         .executableTarget(
             name: "ScreenTimeCoreChecks",
             dependencies: ["ScreenTimeCore"],
             path: "Tests/ScreenTimeCoreChecks"
+        ),
+        .executableTarget(
+            name: "StartupCoreChecks",
+            dependencies: ["InstallCore", "StartupCore"],
+            path: "Tests/StartupCoreChecks"
         )
     ]
 )

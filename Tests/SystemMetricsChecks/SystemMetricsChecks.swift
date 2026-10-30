@@ -8,6 +8,7 @@ struct SystemMetricsChecks {
     private static var checkCount = 0
 
     static func main() {
+        probeSyntheticLockIfRequested()
         checkTopParsing()
         checkNetworkProcessParsing()
         checkNetworkTotalsParsing()
@@ -18,6 +19,8 @@ struct SystemMetricsChecks {
         checkDiskCapacityCalculations()
         checkSamplingPolicies()
         checkResourceChartScales()
+        checkActivityHistory()
+        checkProcessInspection()
 
         if failures.isEmpty {
             print("SystemMetricsChecks: \(checkCount) checks passed")
@@ -223,7 +226,7 @@ struct SystemMetricsChecks {
     private static func checkSamplingPolicies() {
         let cpu = ResourceSamplingPolicy.forMetric(.cpu)
         check(!cpu.usesTop, "CPU avoids top")
-        check(!cpu.collectsNetwork, "CPU avoids network subprocesses")
+        check(cpu.collectsNetwork, "CPU view keeps shared traffic history sampling")
         check(!cpu.collectsMemoryPressure, "CPU avoids memory-pressure subprocess")
         check(cpu.intervalSeconds == 6, "CPU refresh interval")
 
@@ -241,7 +244,12 @@ struct SystemMetricsChecks {
         check(!network.usesTop, "network avoids top")
 
         let disk = ResourceSamplingPolicy.forMetric(.disk)
-        check(!disk.usesTop && !disk.collectsNetwork, "disk uses native collection")
+        check(!disk.usesTop && disk.collectsNetwork, "disk keeps shared traffic history without power sampling")
+        check(
+            ResourceMetricKind.allCases.allSatisfy { ResourceSamplingPolicy.forMetric($0).collectsNetwork },
+            "network collection is independent of the selected resource tab"
+        )
+        check(ResourceSamplingPolicy.continuousIntervalSeconds == 6, "continuous sampling has a fixed six-second cadence")
     }
 
     private static func checkResourceChartScales() {
@@ -317,10 +325,14 @@ struct SystemMetricsChecks {
         )
     }
 
-    private static func check(_ condition: @autoclosure () -> Bool, _ message: String) {
+    static func check(_ condition: @autoclosure () throws -> Bool, _ message: String) {
         checkCount += 1
-        if !condition() {
-            failures.append(message)
+        do {
+            if try !condition() {
+                failures.append(message)
+            }
+        } catch {
+            failures.append("\(message): \(error.localizedDescription)")
         }
     }
 

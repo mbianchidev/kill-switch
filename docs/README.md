@@ -12,6 +12,7 @@ complete setup, configuration, and development instructions.
 | [Usage and configuration](usage.md) | Menu-bar behavior, every tab, editable defaults, persistence, and cleanup safety |
 | [Headless CLI and Porto integration](cli.md) | CLI setup, commands, JSON examples, port syncing, and exit codes |
 | [Resources and system diagnostics](system-diagnostics.md) | Resource counters, sampling, macOS restrictions, spindump, and sysdiagnose |
+| [Startup management](startup.md) | Login apps, background items, launch services, cron jobs, authorization, and backups |
 | [Updates](auto-update.md#using-updates) | Update controls, app/standalone behavior, validation, and recovery |
 | [Troubleshooting](troubleshooting.md) | Opening an unnotarized app, permissions, duplicate installs, CLI issues, and SDK errors |
 
