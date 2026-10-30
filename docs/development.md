@@ -19,8 +19,8 @@ swift build -c release --product KillSwitch
 .build/release/KillSwitch
 ```
 
-The last command launches the GUI without creating a login item. Expect a
-Resources window and menu-bar icon. Local builds report `dev`, so the updater
+The last command launches the GUI without creating a login item. Expect the
+activity dashboard and menu-bar icon. Local builds report `dev`, so the updater
 considers any published release newer. Do not enable automatic updates if you
 want to keep running your local development build.
 
