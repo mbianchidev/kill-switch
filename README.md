@@ -8,8 +8,9 @@
 
 KillSwitch is a native macOS resource manager and menu-bar utility for developers
 managing long-running workloads, including AI-assisted development. Monitor
-processes, inspect disk cleanup candidates, collect diagnostics, and control
-sleep from one app, with optional headless developer-tool integration.
+processes and 24-hour resource history, inspect connections and open files,
+manage startup entries, review disk cleanup candidates, and control sleep,
+with optional headless developer-tool integration.
 
 ## Contents
 
@@ -39,7 +40,7 @@ Or install manually:
 
 1. Download [KillSwitch.dmg](https://github.com/mbianchidev/kill-switch/releases/latest/download/KillSwitch.dmg).
 2. Open it, drag **KillSwitch.app** to **Applications**, and eject the DMG.
-3. Open **KillSwitch** from `/Applications`. A live Resources table and menu-bar
+3. Open **KillSwitch** from `/Applications`. The activity dashboard and menu-bar
    icon confirm it is running.
 
 The app is **ad-hoc signed, not Developer ID signed or Apple-notarized**. For a
@@ -82,7 +83,10 @@ See [architecture and development](docs/development.md).
 
 ## Get started and configuration
 
-- **Resources:** filter/sort the live table; **My processes** is the default.
+- **Dashboard / Resources:** compare live data and 24-hour history; inspect
+  connections and open files. **My processes** is the default.
+- **Startup:** review apps, services, and cron jobs before disabling future
+  launches. System-wide changes require administrator approval.
 - **Dev cleanup:** understand the age-based safety rules before opening the tab;
   its Settings card controls auto-kill, age, detection, and exclusions.
 - **Screen time / Keep awake:** enable optional reminders or sleep prevention.
@@ -96,7 +100,9 @@ the read-only [status command](docs/cli.md#read-saved-status).
 
 | Capability | Implemented behavior |
 | --- | --- |
-| Resources | CPU, memory, energy, disk, and network views with live graphs and process actions |
+| Dashboard and resources | Global/per-process CPU, memory, traffic, and disk history for 24 hours, plus live energy and process actions |
+| Process inspection | Listening/active connections and searchable, sortable open files with reported advisory locks |
+| Startup | Reversible login app, service, and cron controls, with protected macOS entries kept read-only |
 | Disk cleanup | Large files, temporary data, caches, and folders with confirmation and Trash |
 | Developer tools | Configurable dev cleanup, protected-process rules, CPU alerts, and JSON port syncing |
 | Screen time | Local active-time totals, continuous stretches, and optional break reminders |
@@ -120,6 +126,7 @@ The [documentation index](docs/README.md) separates user and developer guides.
 | [Usage and configuration](docs/usage.md) | All tabs, settings, defaults, safety, and persistence |
 | [CLI](docs/cli.md) | Setup, Porto integration, JSON examples, and exit codes |
 | [Resources and diagnostics](docs/system-diagnostics.md) | Counters, sampling, permissions, and report collection |
+| [Startup management](docs/startup.md) | Login apps, background items, services, cron jobs, authorization, and recovery |
 | [Updates](docs/auto-update.md) | User controls, release delivery, verification, and rollback |
 | [Development](docs/development.md) | Source builds, architecture, core checks, and local packaging |
 | [Troubleshooting](docs/troubleshooting.md) | Opening the app, permissions, CLI, updates, and SDK issues |

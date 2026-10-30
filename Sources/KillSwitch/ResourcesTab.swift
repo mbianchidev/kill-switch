@@ -7,21 +7,38 @@ struct ResourcesTab: View {
     @State private var metric: ResourceMetric = .cpu
     @State private var sort: ResourceSort = .cpu
     @State private var searchText = ""
-    @State private var selectedPID: Int32?
+    @State private var showOpenFiles = false
+    @State private var showConnections = true
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            processTable
-            Divider()
-            instrumentRail
+            if showOpenFiles {
+                OpenFilesPanel(showAllUsers: monitor.showAllUsers)
+            } else {
+                if metric == .network && showConnections {
+                    NetworkConnectionsPanel(showAllUsers: monitor.showAllUsers)
+                } else {
+                    processTable
+                }
+                Divider()
+                if metric != .energy {
+                    ActivityHistoryControls(monitor: monitor)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 10)
+                }
+                instrumentRail
+            }
         }
         .background(Theme.background)
         .onChange(of: metric) { newMetric in
             sort = ResourceSort.defaultOption(for: newMetric)
-            monitor.setMetric(newMetric)
+            monitor.setMetric(showOpenFiles ? nil : newMetric)
         }
+        .onChange(of: showOpenFiles) { monitor.setMetric($0 ? nil : metric) }
+        .onAppear { monitor.setMetric(showOpenFiles ? nil : metric) }
+        .onDisappear { monitor.setMetric(nil) }
     }
 
     private var header: some View {
@@ -42,16 +59,28 @@ struct ResourcesTab: View {
 
                 Spacer()
 
-                Picker("Process scope", selection: $monitor.showAllUsers) {
-                    Text("My processes").tag(false)
-                    Text("All processes").tag(true)
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 210)
-                .help("Show only \(monitor.currentUsername), or include root and other users")
+                ProcessScopePicker(monitor: monitor)
             }
 
+            HStack(spacing: 12) {
+                Picker("Process view", selection: $showOpenFiles) {
+                    Text("Resource usage").tag(false)
+                    Text("Open files").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 260)
+                if metric == .network && !showOpenFiles {
+                    Picker("Network view", selection: $showConnections) {
+                        Text("Connections").tag(true)
+                        Text("Traffic by process").tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 270)
+                }
+                Spacer()
+            }
+
+            if !showOpenFiles && !(metric == .network && showConnections) {
             HStack(spacing: 10) {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
@@ -100,13 +129,9 @@ struct ResourcesTab: View {
                         .foregroundColor(.white.opacity(0.4))
                 }
             }
-
-            if let error = monitor.errorMessage {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11))
-                    .foregroundColor(.orange)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+
+            ActivityMonitorErrors(monitor: monitor)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -121,9 +146,11 @@ struct ResourcesTab: View {
                         ResourceProcessRow(
                             process: process,
                             metric: metric,
-                            isSelected: selectedPID == process.pid,
+                            isSelected: process.identity != nil && monitor.focusedProcess == process.identity,
                             isAlternate: index.isMultiple(of: 2) == false,
-                            onSelect: { selectedPID = process.pid },
+                            onSelect: {
+                                if let identity = process.identity { monitor.focusedProcess = identity }
+                            },
                             onKill: { monitor.kill(pid: process.pid) }
                         )
                     }
@@ -144,18 +171,30 @@ struct ResourcesTab: View {
                     .tracking(1.2)
                     .foregroundColor(.white.opacity(0.5))
 
-                ResourceHistoryChart(
-                    metric: metric,
-                    history: monitor.history[metric] ?? [],
-                    pressure: monitor.memory.pressurePercent
-                )
-                    .frame(minWidth: 320, idealWidth: 390, maxWidth: 440, minHeight: 132, maxHeight: 132)
+                Group {
+                    if metric == .energy {
+                        ResourceHistoryChart(
+                            metric: metric, history: monitor.history[metric] ?? [],
+                            pressure: monitor.memory.pressurePercent
+                        )
+                    } else {
+                        ActivityTimelineChart(
+                            metric: metric, history: monitor.timeline, range: monitor.historyRange,
+                            now: monitor.lastUpdated ?? Date(), isProcess: monitor.focusedProcess != nil
+                        )
+                    }
+                }
+                .frame(minWidth: 320, idealWidth: 390, maxWidth: 440, minHeight: 132, maxHeight: 132)
             }
 
             Divider()
 
-            summaryValues
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("ENTIRE MAC · NOW")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.secondary)
+                summaryValues
+            }.frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -167,9 +206,9 @@ struct ResourcesTab: View {
         switch metric {
         case .cpu:
             FlowLayout(spacing: 10) {
-                ResourceValue(label: "System", value: percent(monitor.cpu.systemPercent), color: Theme.cpuSystem)
-                ResourceValue(label: "User", value: percent(monitor.cpu.userPercent), color: Theme.cpuUser)
-                ResourceValue(label: "Idle", value: percent(monitor.cpu.idlePercent))
+                ResourceValue(label: "System", value: monitor.cpu.isAvailable ? percent(monitor.cpu.systemPercent) : "N/A", color: Theme.cpuSystem)
+                ResourceValue(label: "User", value: monitor.cpu.isAvailable ? percent(monitor.cpu.userPercent) : "N/A", color: Theme.cpuUser)
+                ResourceValue(label: "Idle", value: monitor.cpu.isAvailable ? percent(monitor.cpu.idlePercent) : "N/A")
                 ResourceValue(label: "Threads", value: "\(monitor.cpu.threadCount)")
                 ResourceValue(label: "Processes", value: "\(monitor.cpu.processCount)")
                 ResourceValue(label: "Running", value: "\(monitor.cpu.runningCount)")
@@ -211,10 +250,10 @@ struct ResourcesTab: View {
                 DiskCapacityBreakdown(capacity: monitor.disk.capacity)
 
                 FlowLayout(spacing: 10) {
-                    ResourceValue(label: "Reads in", value: formatNumber(monitor.disk.reads))
-                    ResourceValue(label: "Data read", value: formatBytes(monitor.disk.readBytes), color: Theme.inbound)
-                    ResourceValue(label: "Writes out", value: formatNumber(monitor.disk.writes))
-                    ResourceValue(label: "Data written", value: formatBytes(monitor.disk.writtenBytes), color: Theme.outbound)
+                    ResourceValue(label: "Reads in", value: monitor.disk.isAvailable ? formatNumber(monitor.disk.reads) : "N/A")
+                    ResourceValue(label: "Data read", value: monitor.disk.isAvailable ? formatBytes(monitor.disk.readBytes) : "N/A", color: Theme.inbound)
+                    ResourceValue(label: "Writes out", value: monitor.disk.isAvailable ? formatNumber(monitor.disk.writes) : "N/A")
+                    ResourceValue(label: "Data written", value: monitor.disk.isAvailable ? formatBytes(monitor.disk.writtenBytes) : "N/A", color: Theme.outbound)
                     ResourceValue(label: "Reads in/sec", value: formatRate(monitor.disk.readsPerSecond))
                     ResourceValue(label: "Data read/sec", value: formatByteRate(monitor.disk.readBytesPerSecond))
                     ResourceValue(label: "Writes out/sec", value: formatRate(monitor.disk.writesPerSecond))
@@ -223,10 +262,10 @@ struct ResourcesTab: View {
             }
         case .network:
             FlowLayout(spacing: 10) {
-                ResourceValue(label: "Packets in", value: formatNumber(monitor.network.receivedPackets))
-                ResourceValue(label: "Data received", value: formatBytes(monitor.network.receivedBytes), color: Theme.inbound)
-                ResourceValue(label: "Packets out", value: formatNumber(monitor.network.sentPackets))
-                ResourceValue(label: "Data sent", value: formatBytes(monitor.network.sentBytes), color: Theme.outbound)
+                ResourceValue(label: "Packets in", value: monitor.network.isAvailable ? formatNumber(monitor.network.receivedPackets) : "N/A")
+                ResourceValue(label: "Data received", value: monitor.network.isAvailable ? formatBytes(monitor.network.receivedBytes) : "N/A", color: Theme.inbound)
+                ResourceValue(label: "Packets out", value: monitor.network.isAvailable ? formatNumber(monitor.network.sentPackets) : "N/A")
+                ResourceValue(label: "Data sent", value: monitor.network.isAvailable ? formatBytes(monitor.network.sentBytes) : "N/A", color: Theme.outbound)
                 ResourceValue(label: "Packets in/sec", value: formatRate(monitor.network.receivedPacketsPerSecond))
                 ResourceValue(label: "Data received/sec", value: formatByteRate(monitor.network.receivedBytesPerSecond))
                 ResourceValue(label: "Packets out/sec", value: formatRate(monitor.network.sentPacketsPerSecond))
@@ -262,9 +301,9 @@ struct ResourcesTab: View {
         case .diskRead:
             result.sort { ($0.diskReadBytes ?? 0) > ($1.diskReadBytes ?? 0) }
         case .networkReceived:
-            result.sort { $0.receivedBytes > $1.receivedBytes }
+            result.sort { ($0.receivedBytes ?? 0) > ($1.receivedBytes ?? 0) }
         case .networkSent:
-            result.sort { $0.sentBytes > $1.sentBytes }
+            result.sort { ($0.sentBytes ?? 0) > ($1.sentBytes ?? 0) }
         case .name:
             result.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         case .pid:
@@ -274,13 +313,8 @@ struct ResourcesTab: View {
     }
 
     private var chartTitle: String {
-        switch metric {
-        case .cpu: return "CPU LOAD · LAST 5 MINUTES"
-        case .memory: return "MEMORY PRESSURE · LAST 5 MINUTES"
-        case .energy: return "ENERGY IMPACT · LAST 5 MINUTES"
-        case .disk: return "DISK THROUGHPUT · LAST 5 MINUTES"
-        case .network: return "NETWORK THROUGHPUT · LAST 5 MINUTES"
-        }
+        if metric == .energy { return "ENERGY IMPACT · LAST 5 MINUTES" }
+        return "\(metric.rawValue.uppercased()) · \(monitor.historyRange.rawValue.uppercased())"
     }
 
     private var tableWidth: CGFloat {
@@ -366,7 +400,10 @@ private struct ResourceProcessRow: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            processName
+            Button(action: onSelect) { processName }
+                .buttonStyle(.borderless)
+                .disabled(process.identity == nil)
+                .accessibilityLabel("Show history for \(process.name), PID \(process.pid)")
             switch metric {
             case .cpu:
                 value(String(format: "%.1f", process.cpu), width: 72, color: Theme.cpuUser)
@@ -426,10 +463,10 @@ private struct ResourceProcessRow: View {
                 value("\(process.pid)", width: 72)
                 value(process.user, width: 140, alignment: .leading)
             case .network:
-                value(formatBytes(process.sentBytes), width: 110, color: Theme.outbound)
-                value(formatBytes(process.receivedBytes), width: 110, color: Theme.inbound)
-                value(formatNumber(process.sentPackets), width: 110)
-                value(formatNumber(process.receivedPackets), width: 110)
+                value(process.sentBytes.map(formatBytes) ?? "N/A", width: 110, color: Theme.outbound)
+                value(process.receivedBytes.map(formatBytes) ?? "N/A", width: 110, color: Theme.inbound)
+                value(process.sentPackets.map(formatNumber) ?? "N/A", width: 110)
+                value(process.receivedPackets.map(formatNumber) ?? "N/A", width: 110)
                 value("\(process.pid)", width: 72)
                 value(process.user, width: 140, alignment: .leading)
             }

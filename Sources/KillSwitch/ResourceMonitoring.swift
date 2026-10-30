@@ -44,6 +44,7 @@ struct ResourceProcess: Identifiable {
     let name: String
     let user: String
     let cpu: Double
+    let measuredCPU: Double?
     let cpuTimeSeconds: Double
     let threads: Int?
     let idleWakeUps: UInt64?
@@ -58,19 +59,16 @@ struct ResourceProcess: Identifiable {
     let preventsSleep: Bool
     let diskReadBytes: UInt64?
     let diskWrittenBytes: UInt64?
-    let receivedBytes: UInt64
-    let sentBytes: UInt64
-    let receivedPackets: UInt64
-    let sentPackets: UInt64
+    let receivedBytes: UInt64?
+    let sentBytes: UInt64?
+    let receivedPackets: UInt64?
+    let sentPackets: UInt64?
     let icon: NSImage?
 
     var id: Int32 { pid }
 }
 
-struct ResourceProcessIdentity: Hashable {
-    let pid: Int32
-    let startTime: UInt64
-}
+typealias ResourceProcessIdentity = ActivityProcessIdentity
 
 struct CPUResourceSummary {
     let userPercent: Double
@@ -79,6 +77,7 @@ struct CPUResourceSummary {
     let processCount: Int
     let runningCount: Int
     let threadCount: Int
+    var isAvailable = true
 
     static let unavailable = CPUResourceSummary(
         userPercent: 0,
@@ -86,7 +85,8 @@ struct CPUResourceSummary {
         idlePercent: 0,
         processCount: 0,
         runningCount: 0,
-        threadCount: 0
+        threadCount: 0,
+        isAvailable: false
     )
 }
 
@@ -113,7 +113,7 @@ struct MemoryResourceSummary {
 }
 
 struct DiskResourceSummary {
-    let capacity: DiskCapacity?
+    var capacity: DiskCapacity?
     let reads: UInt64
     let readBytes: UInt64
     let writes: UInt64
@@ -122,6 +122,7 @@ struct DiskResourceSummary {
     let readBytesPerSecond: Double?
     let writesPerSecond: Double?
     let writtenBytesPerSecond: Double?
+    var isAvailable = true
 
     static let unavailable = DiskResourceSummary(
         capacity: nil,
@@ -132,7 +133,8 @@ struct DiskResourceSummary {
         readsPerSecond: nil,
         readBytesPerSecond: nil,
         writesPerSecond: nil,
-        writtenBytesPerSecond: nil
+        writtenBytesPerSecond: nil,
+        isAvailable: false
     )
 }
 
@@ -145,6 +147,7 @@ struct NetworkResourceSummary {
     let receivedBytesPerSecond: Double?
     let sentPacketsPerSecond: Double?
     let sentBytesPerSecond: Double?
+    var isAvailable = true
 
     static let unavailable = NetworkResourceSummary(
         receivedPackets: 0,
@@ -154,7 +157,8 @@ struct NetworkResourceSummary {
         receivedPacketsPerSecond: nil,
         receivedBytesPerSecond: nil,
         sentPacketsPerSecond: nil,
-        sentBytesPerSecond: nil
+        sentBytesPerSecond: nil,
+        isAvailable: false
     )
 }
 
@@ -180,6 +184,8 @@ struct ResourceHistoryPoint: Identifiable {
 }
 
 final class ResourceMonitor: ObservableObject {
+    static let shared = ResourceMonitor()
+
     @Published private(set) var processes: [ResourceProcess] = []
     @Published private(set) var cpu = CPUResourceSummary.unavailable
     @Published private(set) var memory = MemoryResourceSummary.unavailable
@@ -189,15 +195,16 @@ final class ResourceMonitor: ObservableObject {
     @Published private(set) var history: [ResourceMetric: [ResourceHistoryPoint]] = [:]
     @Published private(set) var lastUpdated: Date?
     @Published private(set) var errorMessage: String?
-    @Published var showAllUsers = false {
-        didSet {
-            let newValue = showAllUsers
-            samplingQueue.async { [weak self] in
-                guard let self else { return }
-                self.includeAllUsers = newValue
-                self.restartTimer(sampleImmediately: true)
-            }
-        }
+    @Published private(set) var historyError: String?
+    @Published private(set) var timeline: [ActivityHistoryPoint] = []
+    @Published private(set) var historyProcesses: [ActivityProcessDescriptor] = []
+    @Published private(set) var liveActivity: ActivitySnapshot?
+    @Published var showAllUsers = false
+    @Published var historyRange: ActivityHistoryRange = .live {
+        didSet { reloadHistory() }
+    }
+    @Published var focusedProcess: ActivityProcessIdentity? {
+        didSet { reloadHistory() }
     }
 
     let currentUsername = NSUserName()
@@ -211,47 +218,71 @@ final class ResourceMonitor: ObservableObject {
     private let samplingQueue = DispatchQueue(label: "killswitch.resources.sampling", qos: .utility)
     private let logger = Logger(subsystem: "com.killswitch.app", category: "resources")
     private var timer: DispatchSourceTimer?
-    private var includeAllUsers = false
-    private var activeMetric: ResourceMetric = .cpu
+    private var activeMetric: ResourceMetric?
     private var energyHistory: [ResourceProcessIdentity: [EnergySample]] = [:]
     private var lastEnergyHistorySample: Date?
     private var running = false
+    private var store: ActivityHistoryStore?
+    private var accumulator = ActivityAccumulator()
+    private var rates = ActivityRateTracker()
+    private var liveSnapshots: [ActivitySnapshot] = []
+    private var archivedProcesses: [ActivityProcessDescriptor] = []
+    private var selectedRange: ActivityHistoryRange = .live
+    private var selectedProcess: ActivityProcessIdentity?
 
     func start() {
-        let includeAllUsers = showAllUsers
         samplingQueue.async { [weak self] in
             guard let self, !self.running else { return }
             self.running = true
-            self.includeAllUsers = includeAllUsers
             self.sampler.resetBaselines()
+            self.openHistory()
             self.restartTimer(sampleImmediately: true)
         }
     }
 
-    func stop() {
-        samplingQueue.async { [weak self] in
-            guard let self else { return }
-            self.running = false
-            self.timer?.cancel()
-            self.timer = nil
-            self.sampler.resetBaselines()
+    func shutdown() {
+        samplingQueue.sync {
+            running = false
+            timer?.cancel()
+            timer = nil
+            if let current = accumulator.current, let store {
+                do { try store.save(current, now: Date()) }
+                catch { reportHistoryError(error) }
+            }
         }
     }
 
     func refresh() {
         samplingQueue.async { [weak self] in
-            self?.restartTimer(sampleImmediately: true)
+            guard let self else { return }
+            if self.store == nil { self.openHistory() }
+            self.restartTimer(sampleImmediately: true)
         }
     }
 
-    func setMetric(_ metric: ResourceMetric) {
+    func setMetric(_ metric: ResourceMetric?) {
         samplingQueue.async { [weak self] in
             guard let self, self.activeMetric != metric else { return }
             self.activeMetric = metric
-            if metric == .network {
-                self.sampler.resetNetworkBaseline()
+        }
+    }
+
+    func clearHistory() {
+        samplingQueue.async { [weak self] in
+            guard let self else { return }
+            do {
+                guard let store = self.store else {
+                    throw ActivityHistoryError(message: "the database is unavailable; history could not be cleared.")
+                }
+                try store.clear()
+                self.liveSnapshots.removeAll()
+                self.archivedProcesses.removeAll()
+                self.accumulator = ActivityAccumulator()
+                self.publishTimeline(now: Date())
+                DispatchQueue.main.async { self.historyError = nil }
+            } catch {
+                self.reportHistoryError(error)
             }
-            self.restartTimer(sampleImmediately: true)
         }
     }
 
@@ -267,13 +298,12 @@ final class ResourceMonitor: ObservableObject {
         timer = nil
         guard running else { return }
 
-        let policy = ResourceSamplingPolicy.forMetric(activeMetric)
-        let interval = TimeInterval(policy.intervalSeconds)
+        let interval = TimeInterval(ResourceSamplingPolicy.continuousIntervalSeconds)
         let timer = DispatchSource.makeTimerSource(queue: samplingQueue)
         timer.schedule(
             deadline: sampleImmediately ? .now() : .now() + interval,
             repeating: interval,
-            leeway: .seconds(max(1, min(5, policy.intervalSeconds / 6)))
+            leeway: .seconds(1)
         )
         timer.setEventHandler { [weak self] in self?.sampleNow() }
         timer.resume()
@@ -285,9 +315,9 @@ final class ResourceMonitor: ObservableObject {
         let metric = activeMetric
 
         do {
-            let snapshot = try sampler.sample(metric: metric, includeAllUsers: includeAllUsers)
+            let snapshot = try sampler.sample(metric: metric)
             var sampledProcesses = snapshot.processes
-            if metric == .energy {
+            if snapshot.sampledEnergy {
                 updateEnergyHistory(processes: sampledProcesses, now: snapshot.date)
             }
 
@@ -302,31 +332,147 @@ final class ResourceMonitor: ObservableObject {
                 }
             }
 
+            let activity = activitySnapshot(snapshot)
+            liveSnapshots.append(activity)
+            liveSnapshots.removeAll { $0.date < snapshot.date.addingTimeInterval(-300) }
+            if let completed = accumulator.append(activity), let store {
+                do {
+                    try store.save(completed, now: snapshot.date)
+                    archivedProcesses = try store.processes(since: snapshot.date.addingTimeInterval(-ActivityHistoryStore.retention))
+                    DispatchQueue.main.async { self.historyError = nil }
+                } catch {
+                    reportHistoryError(error)
+                }
+            }
+            publishTimeline(now: snapshot.date)
+
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.processes = sampledProcesses
                 self.cpu = snapshot.cpu
                 self.memory = snapshot.memory
                 self.disk = snapshot.disk
-                if let network = snapshot.network {
-                    self.network = network
-                }
+                self.network = snapshot.network ?? .unavailable
                 if let battery = snapshot.battery {
                     self.battery = battery
                 }
-                if let point = snapshot.historyPoint {
-                    self.history[metric, default: []].append(point)
+                if snapshot.sampledEnergy {
+                    self.history[.energy, default: []].append(ResourceHistoryPoint(
+                        date: snapshot.date,
+                        primary: sampledProcesses.reduce(0) { $0 + $1.power },
+                        secondary: nil
+                    ))
                     let cutoff = snapshot.date.addingTimeInterval(-300)
-                    self.history[metric]?.removeAll { $0.date < cutoff }
+                    self.history[.energy]?.removeAll { $0.date < cutoff }
                 }
+                self.liveActivity = activity
                 self.lastUpdated = snapshot.date
-                self.errorMessage = nil
+                self.errorMessage = snapshot.warnings.isEmpty ? nil : snapshot.warnings.joined(separator: "\n")
             }
         } catch {
             logger.error("Resource sampling failed: \(error.localizedDescription)")
             DispatchQueue.main.async { [weak self] in
                 self?.errorMessage = error.localizedDescription
             }
+        }
+    }
+
+    private func openHistory() {
+        do {
+            let applicationSupport = try FileManager.default.url(
+                for: .applicationSupportDirectory, in: .userDomainMask,
+                appropriateFor: nil, create: true
+            )
+            let url = applicationSupport.appendingPathComponent("KillSwitch/ActivityHistory/activity.sqlite")
+            let historyStore = try ActivityHistoryStore(url: url)
+            try historyStore.prune(now: Date())
+            archivedProcesses = try historyStore.processes(since: Date().addingTimeInterval(-ActivityHistoryStore.retention))
+            store = historyStore
+            DispatchQueue.main.async { self.historyError = nil }
+            publishTimeline(now: Date())
+        } catch {
+            reportHistoryError(error)
+        }
+    }
+
+    private func reloadHistory() {
+        let range = historyRange
+        let process = focusedProcess
+        samplingQueue.async { [weak self] in
+            guard let self else { return }
+            self.selectedRange = range
+            self.selectedProcess = process
+            self.publishTimeline(now: Date())
+        }
+    }
+
+    private func publishTimeline(now: Date) {
+        let cutoff = now.addingTimeInterval(-selectedRange.seconds)
+        var points: [ActivityHistoryPoint] = []
+        do {
+            if let store {
+                points = try store.history(process: selectedProcess, since: cutoff, until: now)
+            }
+        } catch {
+            reportHistoryError(error)
+        }
+        let live = liveSnapshots.filter { $0.date >= cutoff }.map { $0.point(for: selectedProcess) }
+        if let first = live.first {
+            points.removeAll { $0.date >= first.date }
+        }
+        points.append(contentsOf: live)
+
+        var descriptors = Dictionary(uniqueKeysWithValues: archivedProcesses.map { ($0.id, $0) })
+        for sample in liveSnapshots.flatMap(\.processes) {
+            descriptors[sample.process.id] = sample.process
+        }
+        let sorted = descriptors.values.sorted {
+            if $0.name != $1.name { return $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            if $0.identity.pid != $1.identity.pid { return $0.identity.pid < $1.identity.pid }
+            return $0.identity.key < $1.identity.key
+        }
+        DispatchQueue.main.async {
+            self.timeline = points
+            self.historyProcesses = sorted
+        }
+    }
+
+    private func activitySnapshot(_ snapshot: ResourceSnapshot) -> ActivitySnapshot {
+        let samples = snapshot.processes.compactMap { process -> ActivityProcessSample? in
+            guard let identity = process.identity else { return nil }
+            let rate = rates.sample(
+                identity: identity, date: snapshot.date,
+                diskRead: process.diskReadBytes, diskWritten: process.diskWrittenBytes,
+                received: process.receivedBytes, sent: process.sentBytes
+            )
+            return ActivityProcessSample(
+                process: ActivityProcessDescriptor(identity: identity, name: process.name, user: process.user),
+                values: ActivityValues(
+                    cpu: process.measuredCPU, memory: Double(process.memoryBytes),
+                    diskRead: rate.diskRead, diskWritten: rate.diskWritten,
+                    received: rate.received, sent: rate.sent
+                )
+            )
+        }
+        rates.retain(Set(samples.map(\.process.identity)))
+        return ActivitySnapshot(
+            date: snapshot.date,
+            system: ActivityValues(
+                cpu: snapshot.cpu.isAvailable ? snapshot.cpu.userPercent + snapshot.cpu.systemPercent : nil,
+                memory: snapshot.memory.physicalBytes > 0 ? Double(snapshot.memory.usedBytes) : nil,
+                diskRead: snapshot.disk.readBytesPerSecond, diskWritten: snapshot.disk.writtenBytesPerSecond,
+                received: snapshot.network?.receivedBytesPerSecond, sent: snapshot.network?.sentBytesPerSecond,
+                cpuSystem: snapshot.cpu.isAvailable ? snapshot.cpu.systemPercent : nil,
+                cpuUser: snapshot.cpu.isAvailable ? snapshot.cpu.userPercent : nil
+            ),
+            processes: samples
+        )
+    }
+
+    private func reportHistoryError(_ error: Error) {
+        logger.error("Activity history failed: \(error.localizedDescription)")
+        DispatchQueue.main.async {
+            self.historyError = "History could not be saved or loaded: \(error.localizedDescription) Refresh to retry."
         }
     }
 

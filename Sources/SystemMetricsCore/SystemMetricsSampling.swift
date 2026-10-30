@@ -11,6 +11,7 @@ public enum ResourceMetricKind: String, CaseIterable, Identifiable, Sendable {
 }
 
 public struct ResourceSamplingPolicy: Equatable, Sendable {
+    public static let continuousIntervalSeconds = 6
     public let intervalSeconds: Int
     public let usesTop: Bool
     public let collectsMemoryPressure: Bool
@@ -18,48 +19,13 @@ public struct ResourceSamplingPolicy: Equatable, Sendable {
     public let collectsNetwork: Bool
 
     public static func forMetric(_ metric: ResourceMetricKind) -> ResourceSamplingPolicy {
-        switch metric {
-        case .cpu:
-            return ResourceSamplingPolicy(
-                intervalSeconds: 6,
-                usesTop: false,
-                collectsMemoryPressure: false,
-                collectsEnergyDetails: false,
-                collectsNetwork: false
-            )
-        case .memory:
-            return ResourceSamplingPolicy(
-                intervalSeconds: 6,
-                usesTop: false,
-                collectsMemoryPressure: true,
-                collectsEnergyDetails: false,
-                collectsNetwork: false
-            )
-        case .energy:
-            return ResourceSamplingPolicy(
-                intervalSeconds: 15,
-                usesTop: true,
-                collectsMemoryPressure: false,
-                collectsEnergyDetails: true,
-                collectsNetwork: false
-            )
-        case .disk:
-            return ResourceSamplingPolicy(
-                intervalSeconds: 6,
-                usesTop: false,
-                collectsMemoryPressure: false,
-                collectsEnergyDetails: false,
-                collectsNetwork: false
-            )
-        case .network:
-            return ResourceSamplingPolicy(
-                intervalSeconds: 6,
-                usesTop: false,
-                collectsMemoryPressure: false,
-                collectsEnergyDetails: false,
-                collectsNetwork: true
-            )
-        }
+        ResourceSamplingPolicy(
+            intervalSeconds: metric == .energy ? 15 : continuousIntervalSeconds,
+            usesTop: metric == .energy,
+            collectsMemoryPressure: metric == .memory,
+            collectsEnergyDetails: metric == .energy,
+            collectsNetwork: true
+        )
     }
 }
 

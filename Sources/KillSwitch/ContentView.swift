@@ -1,7 +1,9 @@
 import SwiftUI
 
 private enum MainTab: Hashable {
+    case dashboard
     case resources
+    case startup
     case diskCleanup
     case cleanup
     case watchdog
@@ -12,18 +14,24 @@ private enum MainTab: Hashable {
 }
 
 struct ContentView: View {
-    @State private var selectedTab: MainTab = .resources
+    @State private var selectedTab: MainTab = .dashboard
     @StateObject private var diagnostics = DiagnosticsController.shared
     @StateObject private var watchdog = CPUWatchdog()
-    @StateObject private var resourceMonitor = ResourceMonitor()
+    @StateObject private var resourceMonitor = ResourceMonitor.shared
     @StateObject private var diskCleanupMonitor = DiskCleanupMonitor()
     @ObservedObject private var updater = UpdateChecker.shared
 
     var body: some View {
         TabView(selection: $selectedTab) {
+            ActivityDashboard(monitor: resourceMonitor)
+                .tabItem { Label("Dashboard", systemImage: "square.grid.2x2") }
+                .tag(MainTab.dashboard)
             ResourcesTab(monitor: resourceMonitor)
                 .tabItem { Label("Resources", systemImage: "waveform.path.ecg") }
                 .tag(MainTab.resources)
+            StartupTab()
+                .tabItem { Label("Startup", systemImage: "power") }
+                .tag(MainTab.startup)
             DiskCleanupTab(monitor: diskCleanupMonitor)
                 .tabItem { Label("Disk cleanup", systemImage: "internaldrive") }
                 .tag(MainTab.diskCleanup)
@@ -52,22 +60,11 @@ struct ContentView: View {
         .onAppear {
             watchdog.start()
             updater.startPeriodicChecks()
-            updateResourceMonitoring()
             AppStartupConfirmation.contentDidAppear()
-        }
-        .onChange(of: selectedTab) { _ in
-            updateResourceMonitoring()
         }
         .onReceive(NotificationCenter.default.publisher(for: .showDiagnosticsTab)) { _ in
             selectedTab = .diagnostics
         }
     }
 
-    private func updateResourceMonitoring() {
-        if selectedTab == .resources {
-            resourceMonitor.start()
-        } else {
-            resourceMonitor.stop()
-        }
-    }
 }

@@ -36,6 +36,9 @@ jobs:
       - name: Test system metric parsers
         run: swift run SystemMetricsChecks
 
+      - name: Test startup controls and safety
+        run: swift run StartupCoreChecks
+
       - name: Test screen time tracking
         run: swift run ScreenTimeCoreChecks
 

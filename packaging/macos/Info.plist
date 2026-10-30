@@ -32,5 +32,7 @@
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>KillSwitch reads and changes the login apps you select in Startup. Access to System Events is requested only when you load login apps.</string>
 </dict>
 </plist>

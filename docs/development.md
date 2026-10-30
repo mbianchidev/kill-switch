@@ -43,6 +43,11 @@ terminate real processes.
   `netstat`, and `pmset` run only for metrics that require them. See
   [resource data sources and restrictions](system-diagnostics.md#resources).
 - **`osascript`:** native notifications and administrator-authorized diagnostics.
+- **SQLite:** macOS's built-in `sqlite3` library stores private, bounded activity
+  history through the `CSQLite` system-library target, without a package download.
+- **Process inspection and startup:** NUL-delimited `lsof` data, launchd
+  overrides, System Events legacy login items, macOS background-item inventory,
+  and confirmed crontab edits. System-wide changes require authorization.
 - **`URLSession` with async/await and the GitHub Releases API:** release checks
   and in-app update downloads.
 - **Built-in macOS packaging tools:** native `.app` and DMG creation, without
@@ -64,7 +69,8 @@ terminate real processes.
 | [`KeepAwakeCore`](../Sources/KeepAwakeCore) | IOKit power assertions, timed sessions, and resource cleanup |
 | [`InstallCore`](../Sources/InstallCore) | Binary/symlink path safety, native command execution, whole-app validation, staging, startup confirmation, and rollback |
 | [`ScreenTimeCore`](../Sources/ScreenTimeCore) | Active-time tracking, idle breaks, daily rollover, and reminder boundaries |
-| [`SystemMetricsCore`](../Sources/SystemMetricsCore) | Resource parsing and metric-specific sampling behavior |
+| [`SystemMetricsCore`](../Sources/SystemMetricsCore) | Resource parsing, continuous sampling policy, PID-safe history/rates, private SQLite storage, and process inspection queries |
+| [`StartupCore`](../Sources/StartupCore) | Startup inventory, protected-service policy, command planning, reversible cron/login changes, and backups |
 
 [`KillSwitch`](../Sources/KillSwitch) contains the GUI and basename-dispatched
 headless CLI. [`KillSwitchUpdateHelper`](../Sources/KillSwitchUpdateHelper)
@@ -114,12 +120,27 @@ swift run DiskCleanupCoreChecks
 swift run InstallCoreChecks
 swift run SystemMetricsChecks
 swift run ScreenTimeCoreChecks
+swift run StartupCoreChecks
 ```
 
 Use the smallest relevant target while iterating. Tests use synthetic processes,
 temporary files, and mock dependencies. Install checks use signed mock bundles
 for identity/version/signature rejection, path safety, quarantine handling,
 permissions, replacement/rollback, and startup-loop prevention.
+System-metric checks also open synthetic files and a loopback listener in the
+check process to verify the real `lsof` output format. Startup checks use mock
+command runners and temporary files; they never change live startup entries,
+request administrator access, or control a desktop application.
+
+`ResourceMonitor.shared` owns the app-lifetime sampler; dashboard and resource
+views observe the same snapshots and history selection. Six-second samples
+remain in memory for five minutes, and `ActivityAccumulator` writes minute
+averages on rollover and normal termination. Store operations stay on the
+sampling queue. `ActivityProcessIdentity` includes boot identity and process
+start time to avoid merging reused PIDs. Failed/restricted measurements remain
+optional and do not become zeroes. See
+[history storage](system-diagnostics.md#history-and-storage) and
+[startup management](startup.md) for user-facing behavior and persistence.
 
 There is no separate formatter or linter configuration. Match the existing
 Swift style and keep failure messages actionable. Add regression checks in the
