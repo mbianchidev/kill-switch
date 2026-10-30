@@ -54,6 +54,9 @@ struct StartupCoreChecks {
         check(CronDocument(text: "@unknown /usr/bin/true\nnot a cron entry").jobs.isEmpty, "malformed cron rows are not editable")
         let duplicate = CronDocument(text: "@reboot /usr/bin/true\n@reboot /usr/bin/true\n")
         check(Set(duplicate.jobs.map(\.id)).count == 2, "duplicate cron commands keep distinct identities")
+        check(NativeStartupCommandRunner.administratorOutput("line\n\n\n") == "line\n\n", "administrator transport removes exactly the osascript result terminator")
+        check(NativeStartupCommandRunner.administratorOutput("line\r\n\n") == "line\r\n", "administrator transport preserves the command's original line endings")
+        check(NativeStartupCommandRunner.administratorOutput("") == "", "empty administrator output remains empty")
     }
 
     private static func checkLaunchServiceSafety() {
@@ -157,6 +160,14 @@ struct StartupCoreChecks {
         check(items.first?.state == .enabled, "enabled background item disposition is explicit")
         check(items.last?.state == .disabled, "disabled background item disposition is explicit")
         check(items.allSatisfy { $0.restriction != nil }, "modern background items stay managed by macOS settings")
+        let foreignInventory = StartupParsers.backgroundInventory("""
+        Records for UID 502:
+        UUID: other-user
+        Name: Example helper
+        """, currentUID: 501)
+        check(foreignInventory.recognized && foreignInventory.items.isEmpty, "a valid inventory can contain no entries in the selected scope")
+        check(StartupParsers.backgroundInventory("Records for UID 501:\n", currentUID: 501).recognized, "a recognized empty section is a valid inventory")
+        check(!StartupParsers.backgroundInventory("unrecognized output", currentUID: 501).recognized, "unreadable inventory output is distinct from an empty result")
         let saved = LegacyLoginItem(name: "Example", path: "/Applications/Example.app", hidden: true)
         let unknown = StartupParsers.loginItems(saved: [saved], live: nil, currentUID: 501)
         check(unknown.first?.state == .unknown && unknown.first?.restriction != nil, "saved login metadata is not proof of a disabled registration")
@@ -312,6 +323,8 @@ struct StartupCoreChecks {
             check(runner.stagedInputs.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) }, "failed cron staging input is cleaned up")
             check(try FileManager.default.contentsOfDirectory(at: privateCopies, includingPropertiesForKeys: nil).isEmpty, "failed authorized staging copy is cleaned up")
             runner.tamperCronInput = false
+            try service.setEnabled(true, item: enableCron)
+            check(try String(contentsOf: fakeState, encoding: .utf8) == original, "a second root cron edit immediately restores the exact original document")
 
             let login = LegacyLoginItem(name: "Example \"quoted\" app", path: "/Applications/Example's app.app", hidden: true)
             runner.loginItems = [login]
@@ -360,6 +373,9 @@ struct StartupCoreChecks {
             runner.backgroundOutput = "Records for UID 0:\nUUID: synthetic-background\nName: Example helper\nDisposition: [enabled, allowed]\n"
             check(try service.readBackgroundItems().count == 1, "authorized background inventory is parsed")
             check(runner.commands.last?.executable == "/usr/bin/sfltool" && runner.commands.last?.administrator == true, "background inventory explicitly requires administrator authorization")
+            let otherUID: UInt32 = getuid() == 501 ? 502 : 501
+            runner.backgroundOutput = "Records for UID \(otherUID):\nUUID: other-user-only\nName: Example helper\n"
+            check(try service.readBackgroundItems().isEmpty, "a valid no-scope background inventory clears results instead of failing")
         } catch { check(false, "mock cron/login operations: \(error.localizedDescription)") }
     }
 }
@@ -387,7 +403,10 @@ private final class MockStartupRunner: StartupCommandRunning {
             return StartupCommandResult(status: 0, output: backgroundOutput, error: "")
         }
         if command.executable == "/usr/bin/crontab", let fakeCronState {
-            return StartupCommandResult(status: 0, output: try String(contentsOf: fakeCronState, encoding: .utf8), error: "")
+            let original = try String(contentsOf: fakeCronState, encoding: .utf8)
+            let output = command.administrator
+                ? NativeStartupCommandRunner.administratorOutput(original + "\n") : original
+            return StartupCommandResult(status: 0, output: output, error: "")
         }
         if command.executable == "/usr/bin/crontab", let cronText {
             return StartupCommandResult(status: 0, output: cronText, error: "")

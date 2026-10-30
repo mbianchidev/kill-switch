@@ -86,11 +86,11 @@ public final class StartupService {
         let output = try checked(StartupCommand(
             "/usr/bin/sfltool", arguments: ["dumpbtm"], administrator: true
         )).output
-        let items = StartupParsers.backgroundItems(output, currentUID: currentUID)
-        if items.isEmpty && !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        let inventory = StartupParsers.backgroundInventory(output, currentUID: currentUID)
+        guard inventory.recognized else {
             throw StartupError("macOS background-item data could not be decoded. Use Login Items in System Settings.")
         }
-        return items
+        return inventory.items
     }
 
     public func readLaunchService(

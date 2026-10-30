@@ -189,7 +189,7 @@ public enum ActivitySeries {
 
 public struct ActivityRateTracker {
     private struct Counters {
-        let date: Date
+        let dates: [Date]
         let values: [UInt64?]
     }
     private var previous: [ActivityProcessIdentity: Counters] = [:]
@@ -198,15 +198,18 @@ public struct ActivityRateTracker {
 
     public mutating func sample(
         identity: ActivityProcessIdentity, date: Date,
-        diskRead: UInt64?, diskWritten: UInt64?, received: UInt64?, sent: UInt64?
+        diskRead: UInt64?, diskWritten: UInt64?, received: UInt64?, sent: UInt64?,
+        diskDate: Date? = nil, networkDate: Date? = nil
     ) -> ActivityValues {
         let values = [diskRead, diskWritten, received, sent]
-        defer { previous[identity] = Counters(date: date, values: values) }
+        let dates = [diskDate ?? date, diskDate ?? date, networkDate ?? date, networkDate ?? date]
+        defer { previous[identity] = Counters(dates: dates, values: values) }
         guard let old = previous[identity] else { return ActivityValues() }
-        let elapsed = date.timeIntervalSince(old.date)
-        guard elapsed >= 0.1, elapsed <= 30 else { return ActivityValues() }
-        let rates = zip(values, old.values).map { current, previous -> Double? in
-            guard let current, let previous, current >= previous else { return nil }
+        let rates = values.indices.map { index -> Double? in
+            let elapsed = dates[index].timeIntervalSince(old.dates[index])
+            guard elapsed >= 0.1, elapsed <= 30,
+                  let current = values[index], let previous = old.values[index],
+                  current >= previous else { return nil }
             return Double(current - previous) / elapsed
         }
         return ActivityValues(

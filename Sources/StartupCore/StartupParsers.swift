@@ -1,5 +1,10 @@
 import Foundation
 
+public struct BackgroundItemInventory: Sendable {
+    public let items: [StartupItem]
+    public let recognized: Bool
+}
+
 public enum StartupParsers {
     public static func disabledServices(_ text: String) throws -> [String: Bool] {
         guard let header = text.range(
@@ -53,13 +58,23 @@ public enum StartupParsers {
     }
 
     public static func backgroundItems(_ text: String, currentUID: UInt32) -> [StartupItem] {
-        var uid: UInt32?
+        backgroundInventory(text, currentUID: currentUID).items
+    }
+
+    public static func backgroundInventory(_ text: String, currentUID: UInt32) -> BackgroundItemInventory {
+        var uid: Int64?
         var record: [String: String] = [:]
         var result: [StartupItem] = []
+        var sawSection = false
+        var invalidRecord = false
 
         func finish() {
-            guard let uid, uid == 0 || uid == currentUID,
-                  let uuid = record["UUID"], let name = record["Name"] else { return }
+            guard record["UUID"] != nil else { return }
+            guard let uid, let uuid = record["UUID"], let name = record["Name"] else {
+                invalidRecord = true
+                return
+            }
+            guard uid == 0 || uid == Int64(currentUID) else { return }
             let disposition = record["Disposition"] ?? ""
             let state: StartupState
             if let begin = disposition.firstIndex(of: "["), let end = disposition.firstIndex(of: "]"), begin < end {
@@ -71,7 +86,7 @@ public enum StartupParsers {
             let path = source.hasPrefix("file:") ? (URL(string: source)?.path ?? source) : source
             result.append(StartupItem(
                 id: "background/\(uid)/\(uuid)", name: name, kind: .backgroundItem,
-                domain: uid == 0 ? .system : .gui(uid), command: path, origin: record["Type"] ?? "macOS background item",
+                domain: uid == 0 ? .system : .gui(currentUID), command: path, origin: record["Type"] ?? "macOS background item",
                 state: state, restriction: "Managed by macOS. Use System Settings > General > Login Items.",
                 source: .managedBackgroundItem(uuid)
             ))
@@ -83,8 +98,9 @@ public enum StartupParsers {
                 finish()
                 record.removeAll()
                 let identifier = line.dropFirst("Records for UID".count).trimmingCharacters(in: .whitespaces)
-                uid = identifier.hasPrefix("-") ? nil
-                    : identifier.split(whereSeparator: { !$0.isNumber }).first.flatMap { UInt32($0) }
+                let number = identifier.prefix { $0 == "-" || $0.isNumber }
+                uid = Int64(number)
+                if uid != nil { sawSection = true }
                 continue
             }
             guard let separator = line.firstIndex(of: ":") else { continue }
@@ -94,6 +110,6 @@ public enum StartupParsers {
             record[key] = value
         }
         finish()
-        return result
+        return BackgroundItemInventory(items: result, recognized: sawSection && !invalidRecord)
     }
 }

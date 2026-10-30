@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import InstallCore
 import SystemMetricsCore
@@ -9,6 +10,9 @@ extension SystemMetricsChecks {
         let reusedPID = ActivityProcessIdentity(bootSession: "test-boot", pid: 42, startTime: 200)
         let nextBoot = ActivityProcessIdentity(bootSession: "next-boot", pid: 42, startTime: 100)
         check(Set([identity, reusedPID, nextBoot]).count == 3, "history separates PID reuse and boots")
+        let sleepOwners: Set<ActivityProcessIdentity> = [identity]
+        check(sleepOwners.contains(identity) && !sleepOwners.contains(reusedPID), "sleep assertions do not transfer to a replacement sharing the PID")
+        checkProcessLifetimeReader()
         check(
             ActivityProcessIdentity.verified(pid: 42, before: [42: identity], after: [42: identity], current: identity) == identity,
             "PS fallback data requires one lifetime across both PS boundaries and native collection"
@@ -42,6 +46,23 @@ extension SystemMetricsChecks {
         )
         check(second.diskRead == 100 && second.diskWritten == 200, "process disk rates use elapsed time")
         check(second.received == 300 && second.sent == 400, "process traffic rates use elapsed time")
+        var independentlyTimed = ActivityRateTracker()
+        _ = independentlyTimed.sample(
+            identity: identity, date: start, diskRead: 0, diskWritten: 0, received: 0, sent: 0,
+            diskDate: start, networkDate: start.addingTimeInterval(1)
+        )
+        let delayedNetwork = independentlyTimed.sample(
+            identity: identity, date: start.addingTimeInterval(6),
+            diskRead: 600, diskWritten: 600, received: 2_100, sent: 2_100,
+            diskDate: start.addingTimeInterval(6), networkDate: start.addingTimeInterval(8)
+        )
+        check(delayedNetwork.diskRead == 100 && delayedNetwork.received == 300, "rate calculation uses each collector's real timestamp despite an energy delay")
+        let undelayedNetwork = independentlyTimed.sample(
+            identity: identity, date: start.addingTimeInterval(12),
+            diskRead: 1_200, diskWritten: 1_200, received: 3_600, sent: 3_600,
+            diskDate: start.addingTimeInterval(12), networkDate: start.addingTimeInterval(13)
+        )
+        check(undelayedNetwork.received == 300, "steady network traffic does not alternate between delayed spikes and dips")
         let reset = rates.sample(
             identity: identity, date: start.addingTimeInterval(12),
             diskRead: 1, diskWritten: nil, received: nil, sent: 1
@@ -124,6 +145,21 @@ extension SystemMetricsChecks {
         check(ActivityHistoryRange.day.seconds == 86_400, "history retention range is exactly 24 hours")
 
         checkActivityStore(initial: initial, process: process, start: start)
+    }
+
+    private static func checkProcessLifetimeReader() {
+        var info = kinfo_proc()
+        info.kp_proc.p_pid = 42
+        info.kp_eproc.e_ucred.cr_uid = 502
+        info.kp_proc.p_un.__p_starttime.tv_sec = 1_800_000_000
+        info.kp_proc.p_un.__p_starttime.tv_usec = 123_456
+        let identity = ProcessLifetimeReader.identity(info: info, pid: 42, bootSession: "synthetic-boot")
+        check(identity?.startTime == 1_800_000_000_123_456, "unprivileged lifetime decoding does not exclude other users")
+        check(ProcessLifetimeReader.identity(info: info, pid: 43, bootSession: "synthetic-boot") == nil, "lifetime decoding verifies the requested PID")
+        info.kp_proc.p_un.__p_starttime.tv_usec = -1
+        check(ProcessLifetimeReader.identity(info: info, pid: 42, bootSession: "synthetic-boot") == nil, "invalid lifetime timestamps are not invented")
+        let own = ProcessLifetimeReader.read(pid: getpid(), bootSession: "synthetic-check-boot")
+        check(own?.pid == getpid() && (own?.startTime ?? 0) > 0, "the native KERN_PROC_PID reader identifies the synthetic checks process")
     }
 
     private static func checkActivityStore(

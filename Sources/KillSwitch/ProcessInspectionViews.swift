@@ -79,7 +79,8 @@ struct OpenFilesPanel: View {
     @State private var selected: OpenFileRecord.ID?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let rows = visible
+        return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 TextField("Search path, process, PID, user, or lock", text: $search)
                     .textFieldStyle(.roundedBorder)
@@ -98,8 +99,8 @@ struct OpenFilesPanel: View {
                 inspectionRefresh(monitor)
             }
 
-            InspectionStatus(monitor: monitor, count: visible.count, noun: "open files")
-            Table(visible, selection: $selected) {
+            InspectionStatus(monitor: monitor, count: rows.count, noun: "open files")
+            Table(rows, selection: $selected) {
                 TableColumn("Path") { Text($0.path).help($0.path) }
                     .width(min: 230, ideal: 360)
                 TableColumn("Process") { Text($0.process) }
@@ -115,7 +116,7 @@ struct OpenFilesPanel: View {
             .font(.system(size: 11, design: .monospaced))
             .scrollContentBackground(.hidden)
             .overlay {
-                if visible.isEmpty && !monitor.isRefreshing {
+                if rows.isEmpty && !monitor.isRefreshing {
                     Text(monitor.lastUpdated == nil ? "Refresh to inspect open files" : "No matching open files")
                         .foregroundColor(.secondary)
                 }
@@ -152,7 +153,8 @@ struct NetworkConnectionsPanel: View {
     @State private var selected: NetworkConnectionRecord.ID?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let rows = visible
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 TextField("Search process, PID, endpoint, port, or state", text: $search)
                     .textFieldStyle(.roundedBorder)
@@ -167,8 +169,8 @@ struct NetworkConnectionsPanel: View {
                 SortDirectionButton(ascending: $ascending)
                 inspectionRefresh(monitor)
             }
-            InspectionStatus(monitor: monitor, count: visible.count, noun: "connections")
-            Table(visible, selection: $selected) {
+            InspectionStatus(monitor: monitor, count: rows.count, noun: "connections")
+            Table(rows, selection: $selected) {
                 TableColumn("Process") { Text($0.process) }.width(min: 110, ideal: 140)
                 TableColumn("PID") { Text(String($0.pid)) }.width(55)
                 TableColumn("User") { Text($0.user) }.width(90)
@@ -181,7 +183,7 @@ struct NetworkConnectionsPanel: View {
             .font(.system(size: 11, design: .monospaced))
             .scrollContentBackground(.hidden)
             .overlay {
-                if visible.isEmpty && !monitor.isRefreshing {
+                if rows.isEmpty && !monitor.isRefreshing {
                     Text(monitor.lastUpdated == nil ? "Collecting connections" : "No matching connections")
                         .foregroundColor(.secondary)
                 }

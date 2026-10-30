@@ -59,6 +59,8 @@ struct ResourceProcess: Identifiable {
     let preventsSleep: Bool
     let diskReadBytes: UInt64?
     let diskWrittenBytes: UInt64?
+    let diskSampledAt: Date?
+    let networkSampledAt: Date?
     let receivedBytes: UInt64?
     let sentBytes: UInt64?
     let receivedPackets: UInt64?
@@ -445,7 +447,8 @@ final class ResourceMonitor: ObservableObject {
             let rate = rates.sample(
                 identity: identity, date: snapshot.date,
                 diskRead: process.diskReadBytes, diskWritten: process.diskWrittenBytes,
-                received: process.receivedBytes, sent: process.sentBytes
+                received: process.receivedBytes, sent: process.sentBytes,
+                diskDate: process.diskSampledAt, networkDate: process.networkSampledAt
             )
             return ActivityProcessSample(
                 process: ActivityProcessDescriptor(identity: identity, name: process.name, user: process.user),

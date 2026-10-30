@@ -47,6 +47,8 @@ Replacement contents never enter shell or `osascript` arguments. A private
 `0600` input is copied into an authorization-owned temporary directory, checked
 against its expected hash, installed, and verified in the same command. Both
 temporary copies are cleaned up, including on failure.
+The administrator transport removes only the newline added by `osascript`,
+preserving the crontab's own trailing newlines and subsequent edit fingerprints.
 
 ## Permissions and recovery
 

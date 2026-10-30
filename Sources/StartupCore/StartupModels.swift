@@ -136,6 +136,10 @@ public protocol StartupCommandRunning {
 public struct NativeStartupCommandRunner: StartupCommandRunning {
     public init() {}
 
+    public static func administratorOutput(_ output: String) -> String {
+        output.hasSuffix("\n") ? String(output.dropLast()) : output
+    }
+
     public func run(_ command: StartupCommand) throws -> StartupCommandResult {
         let result: CommandResult
         if command.administrator {
@@ -145,7 +149,9 @@ public struct NativeStartupCommandRunner: StartupCommandRunning {
         } else {
             result = try CommandRunner.run(command.executable, arguments: command.arguments, environment: ["LC_ALL": "C"])
         }
-        return StartupCommandResult(status: result.status, output: result.standardOutput, error: result.standardError)
+        let output = command.administrator && result.succeeded
+            ? Self.administratorOutput(result.standardOutput) : result.standardOutput
+        return StartupCommandResult(status: result.status, output: output, error: result.standardError)
     }
 }
 

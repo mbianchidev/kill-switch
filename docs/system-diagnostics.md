@@ -36,6 +36,8 @@ Throughput and energy scales start at zero and include the largest value in
 the visible history. Legends identify the series; CPU/memory/disk/network
 support five-minute, one-hour, six-hour, and 24-hour windows. Energy retains its
 session-only five-minute graph.
+Each I/O counter uses its own collection timestamp for rate calculations;
+blocking energy queries do not turn steady traffic into alternating rates.
 
 KillSwitch uses supported macOS interfaces where available: `top`, Mach VM
 statistics, `libproc`, IOKit storage statistics, `nettop`, `netstat`,
@@ -67,6 +69,9 @@ History includes measurements, process names, numeric PIDs, ownership, and
 process-lifetime/boot identities. It does not record network endpoints, open
 file paths, or process command-line arguments. Nothing is uploaded.
 **Clear history** removes the saved records and in-memory graph data.
+Lifetime identities use unprivileged `KERN_PROC_PID` information, including
+other users' processes; restricted rusage counters remain unavailable rather
+than excluding their readable PS memory and network history.
 
 Global counters measure the whole Mac regardless of the process-table scope.
 Per-process memory may use physical footprint or, where restricted, resident

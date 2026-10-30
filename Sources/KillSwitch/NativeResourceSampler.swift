@@ -46,6 +46,7 @@ private struct NativeProcess {
     let openFileCount: Int
     let diskReadBytes: UInt64
     let diskWrittenBytes: UInt64
+    let sampledAt: Date
     let icon: NSImage?
 }
 
@@ -55,7 +56,7 @@ private struct ProcessMetadata {
 }
 
 final class ResourceSampler {
-    private var previousProcessCPU: [ResourceProcessIdentity: UInt64] = [:]
+    private var previousProcessCPU: [ResourceProcessIdentity: (date: Date, nanoseconds: UInt64)] = [:]
     private var previousProcessDate: Date?
     private var previousSystemCPU: SystemCPUTicks?
     private var previousDisk: (date: Date, counters: DiskCounters)?
@@ -67,7 +68,7 @@ final class ResourceSampler {
     private let bootSession = ResourceSampler.bootSessionIdentifier()
     private var lastEnergyDate: Date?
     private var cachedPower: [ResourceProcessIdentity: Double] = [:]
-    private var cachedPreventingSleep: Set<Int32> = []
+    private var cachedPreventingSleep: Set<ResourceProcessIdentity> = []
     private var cachedBattery: BatteryResourceSummary?
 
     func resetBaselines() {
@@ -91,7 +92,7 @@ final class ResourceSampler {
         let parsedProcesses = try samplePSProcesses()
         let afterPS = sampleLifetimeIdentities()
         let nativeProcesses = sampleNativeProcesses(
-            at: now, applications: applications, beforePS: beforePS, afterPS: afterPS
+            applications: applications, beforePS: beforePS, afterPS: afterPS
         )
         var sampledEnergy = false
         if policy.usesTop && (lastEnergyDate.map { now.timeIntervalSince($0) >= Double(policy.intervalSeconds) } ?? true) {
@@ -100,7 +101,7 @@ final class ResourceSampler {
                 cachedPower = Dictionary(uniqueKeysWithValues: power.compactMap { pid, value in
                     identities[pid].map { ($0, value) }
                 })
-                cachedPreventingSleep = samplePreventingSleepPIDs()
+                cachedPreventingSleep = Set(samplePreventingSleepPIDs().compactMap { identities[$0] })
                 cachedBattery = sampleBattery()
                 lastEnergyDate = now
                 sampledEnergy = true
@@ -109,14 +110,15 @@ final class ResourceSampler {
             }
         }
         var networkProcesses: [Int32: ParsedNetworkProcess] = [:]
+        var networkSampledAt: Date?
         do {
             networkProcesses = try sampleNetworkProcesses()
+            networkSampledAt = Date()
         } catch {
             warnings.append("Process traffic: \(error.localizedDescription)")
         }
         identities = identities.filter { pid, identity in
-            guard let bsd = processBSDInfo(pid: pid) else { return false }
-            return processIdentity(pid: pid, bsd: bsd) == identity
+            ProcessLifetimeReader.read(pid: pid, bootSession: bootSession) == identity
         }
 
         var processes: [ResourceProcess] = []
@@ -153,9 +155,11 @@ final class ResourceSampler {
                     power: identity.flatMap { cachedPower[$0] } ?? 0,
                     power12Hour: nil,
                     appNap: nil,
-                    preventsSleep: cachedPreventingSleep.contains(process.pid),
+                    preventsSleep: identity.map { cachedPreventingSleep.contains($0) } ?? false,
                     diskReadBytes: native?.diskReadBytes,
                     diskWrittenBytes: native?.diskWrittenBytes,
+                    diskSampledAt: native?.sampledAt,
+                    networkSampledAt: network == nil ? nil : networkSampledAt,
                     receivedBytes: network?.receivedBytes,
                     sentBytes: network?.sentBytes,
                     receivedPackets: network?.receivedPackets,
@@ -187,9 +191,11 @@ final class ResourceSampler {
                     power: cachedPower[native.identity] ?? 0,
                     power12Hour: nil,
                     appNap: nil,
-                    preventsSleep: cachedPreventingSleep.contains(native.pid),
+                    preventsSleep: cachedPreventingSleep.contains(native.identity),
                     diskReadBytes: native.diskReadBytes,
                     diskWrittenBytes: native.diskWrittenBytes,
+                    diskSampledAt: native.sampledAt,
+                    networkSampledAt: network == nil ? nil : networkSampledAt,
                     receivedBytes: network?.receivedBytes,
                     sentBytes: network?.sentBytes,
                     receivedPackets: network?.receivedPackets,
@@ -210,7 +216,8 @@ final class ResourceSampler {
         let capacity = sampleDiskCapacity()
         let disk: DiskResourceSummary
         do {
-            disk = makeDiskSummary(now: now, counters: try sampleDiskCounters(), capacity: capacity)
+            let counters = try sampleDiskCounters()
+            disk = makeDiskSummary(now: Date(), counters: counters, capacity: capacity)
         } catch {
             previousDisk = nil
             var unavailable = DiskResourceSummary.unavailable
@@ -220,7 +227,8 @@ final class ResourceSampler {
         }
         let network: NetworkResourceSummary?
         do {
-            network = makeNetworkSummary(now: now, counters: try sampleNetworkCounters())
+            let counters = try sampleNetworkCounters()
+            network = makeNetworkSummary(now: Date(), counters: counters)
         } catch {
             previousNetwork = nil
             network = nil
@@ -228,7 +236,7 @@ final class ResourceSampler {
         }
 
         return ResourceSnapshot(
-            date: now,
+            date: Date(),
             processes: processes,
             cpu: cpu,
             memory: memory,
@@ -257,23 +265,20 @@ final class ResourceSampler {
     }
 
     private func sampleNativeProcesses(
-        at date: Date,
         applications: [Int32: (name: String, icon: NSImage?)],
         beforePS: [Int32: ResourceProcessIdentity],
         afterPS: [Int32: ResourceProcessIdentity]
     ) -> [Int32: NativeProcess] {
-        let previousDate = previousProcessDate
-        let elapsed = previousDate.map { date.timeIntervalSince($0) }
-        var currentCPU: [ResourceProcessIdentity: UInt64] = [:]
+        var currentCPU: [ResourceProcessIdentity: (date: Date, nanoseconds: UInt64)] = [:]
         var activeIdentities: Set<ResourceProcessIdentity> = []
         var result: [Int32: NativeProcess] = [:]
         identities.removeAll(keepingCapacity: true)
 
         for pid in listPIDs() {
-            guard let bsd = processBSDInfo(pid: pid) else { continue }
-            guard let identity = processIdentity(pid: pid, bsd: bsd) else { continue }
+            guard let identity = ProcessLifetimeReader.read(pid: pid, bootSession: bootSession) else { continue }
             identities[pid] = identity
-            guard let usage = processUsage(pid: pid) else { continue }
+            guard let bsd = processBSDInfo(pid: pid), let usage = processUsage(pid: pid) else { continue }
+            let sampledAt = Date()
             let application = ResourceProcessIdentity.verified(
                 pid: pid, before: beforePS, after: afterPS, current: identity
             ) == nil ? nil : applications[pid]
@@ -288,18 +293,17 @@ final class ResourceSampler {
             )
 
             let cpu: Double?
-            if let elapsed,
-               let previousCPU = previousProcessCPU[identity] {
+            if let previousCPU = previousProcessCPU[identity] {
                 cpu = SystemMetricsCalculator.processCPUPercent(
                     currentNanoseconds: totalCPU,
-                    previousNanoseconds: previousCPU,
-                    elapsedSeconds: elapsed
+                    previousNanoseconds: previousCPU.nanoseconds,
+                    elapsedSeconds: sampledAt.timeIntervalSince(previousCPU.date)
                 )
             } else {
                 cpu = nil
             }
 
-            currentCPU[identity] = totalCPU
+            currentCPU[identity] = (sampledAt, totalCPU)
             activeIdentities.insert(identity)
             result[pid] = NativeProcess(
                 identity: identity,
@@ -317,12 +321,13 @@ final class ResourceSampler {
                 openFileCount: Int(bsd.pbi_nfiles),
                 diskReadBytes: usage.ri_diskio_bytesread,
                 diskWrittenBytes: usage.ri_diskio_byteswritten,
+                sampledAt: sampledAt,
                 icon: application?.icon
             )
         }
 
         previousProcessCPU = currentCPU
-        previousProcessDate = date
+        previousProcessDate = Date()
         metadata = metadata.filter { activeIdentities.contains($0.key) }
         return result
     }
@@ -725,16 +730,10 @@ final class ResourceSampler {
         return size == MemoryLayout<proc_bsdinfo>.size ? info : nil
     }
 
-    private func processIdentity(pid: Int32, bsd: proc_bsdinfo) -> ResourceProcessIdentity? {
-        let start = UInt64(max(0, bsd.pbi_start_tvsec)) * 1_000_000 + UInt64(bsd.pbi_start_tvusec)
-        guard start > 0 else { return nil }
-        return ResourceProcessIdentity(bootSession: bootSession, pid: pid, startTime: start)
-    }
-
     private func sampleLifetimeIdentities() -> [Int32: ResourceProcessIdentity] {
         var result: [Int32: ResourceProcessIdentity] = [:]
         for pid in listPIDs() {
-            guard let bsd = processBSDInfo(pid: pid), let identity = processIdentity(pid: pid, bsd: bsd) else { continue }
+            guard let identity = ProcessLifetimeReader.read(pid: pid, bootSession: bootSession) else { continue }
             result[pid] = identity
         }
         return result
