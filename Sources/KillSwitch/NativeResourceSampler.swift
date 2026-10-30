@@ -110,6 +110,10 @@ final class ResourceSampler {
         } catch {
             warnings.append("Process traffic: \(error.localizedDescription)")
         }
+        identities = identities.filter { pid, identity in
+            guard let bsd = processBSDInfo(pid: pid) else { return false }
+            return processIdentity(pid: pid, bsd: bsd) == identity
+        }
 
         var processes: [ResourceProcess] = []
         processes.reserveCapacity(parsedProcesses.count)
@@ -119,7 +123,7 @@ final class ResourceSampler {
             includedPIDs.insert(process.pid)
             let native = nativeProcesses[process.pid]
             let application = applications[process.pid]
-            let network = networkProcesses[process.pid]
+            let network = identities[process.pid] == nil ? nil : networkProcesses[process.pid]
             let fallbackName = displayName(for: process.command)
 
             processes.append(
@@ -153,7 +157,8 @@ final class ResourceSampler {
             )
         }
 
-        for native in nativeProcesses.values where !includedPIDs.contains(native.pid) {
+        for native in nativeProcesses.values
+        where !includedPIDs.contains(native.pid) && identities[native.pid] == native.identity {
             let network = networkProcesses[native.pid]
             processes.append(
                 ResourceProcess(
@@ -256,9 +261,7 @@ final class ResourceSampler {
 
         for pid in listPIDs() {
             guard let bsd = processBSDInfo(pid: pid) else { continue }
-            let startTime = UInt64(max(0, bsd.pbi_start_tvsec)) * 1_000_000 + UInt64(bsd.pbi_start_tvusec)
-            guard startTime > 0 else { continue }
-            let identity = ResourceProcessIdentity(bootSession: bootSession, pid: pid, startTime: startTime)
+            guard let identity = processIdentity(pid: pid, bsd: bsd) else { continue }
             identities[pid] = identity
             guard let usage = processUsage(pid: pid) else { continue }
 
@@ -707,6 +710,12 @@ final class ResourceSampler {
             proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, $0, Int32(MemoryLayout<proc_bsdinfo>.size))
         }
         return size == MemoryLayout<proc_bsdinfo>.size ? info : nil
+    }
+
+    private func processIdentity(pid: Int32, bsd: proc_bsdinfo) -> ResourceProcessIdentity? {
+        let start = UInt64(max(0, bsd.pbi_start_tvsec)) * 1_000_000 + UInt64(bsd.pbi_start_tvusec)
+        guard start > 0 else { return nil }
+        return ResourceProcessIdentity(bootSession: bootSession, pid: pid, startTime: start)
     }
 
     private func processUsage(pid: Int32) -> rusage_info_v4? {

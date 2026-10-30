@@ -265,3 +265,28 @@ public struct ActivityAccumulator {
         return completed
     }
 }
+
+public struct ActivityWriteBuffer {
+    private var snapshots: [ActivitySnapshot] = []
+    public var count: Int { snapshots.count }
+    public init() {}
+
+    @discardableResult
+    public mutating func append(_ snapshot: ActivitySnapshot, now: Date) -> Int {
+        snapshots.removeAll { $0.date == snapshot.date }
+        snapshots.append(snapshot)
+        snapshots.sort { $0.date < $1.date }
+        let previousCount = snapshots.count
+        let cutoff = now.addingTimeInterval(-300)
+        snapshots.removeAll { $0.date < cutoff }
+        if snapshots.count > 6 { snapshots.removeFirst(snapshots.count - 6) }
+        return previousCount - snapshots.count
+    }
+
+    public mutating func flush(save: (ActivitySnapshot) throws -> Void) throws {
+        while let snapshot = snapshots.first {
+            try save(snapshot)
+            snapshots.removeFirst()
+        }
+    }
+}

@@ -196,6 +196,7 @@ final class ResourceMonitor: ObservableObject {
     @Published private(set) var lastUpdated: Date?
     @Published private(set) var errorMessage: String?
     @Published private(set) var historyError: String?
+    @Published private(set) var historyNotice: String?
     @Published private(set) var timeline: [ActivityHistoryPoint] = []
     @Published private(set) var historyProcesses: [ActivityProcessDescriptor] = []
     @Published private(set) var liveActivity: ActivitySnapshot?
@@ -224,6 +225,7 @@ final class ResourceMonitor: ObservableObject {
     private var running = false
     private var store: ActivityHistoryStore?
     private var accumulator = ActivityAccumulator()
+    private var writeBuffer = ActivityWriteBuffer()
     private var rates = ActivityRateTracker()
     private var liveSnapshots: [ActivitySnapshot] = []
     private var archivedProcesses: [ActivityProcessDescriptor] = []
@@ -245,9 +247,9 @@ final class ResourceMonitor: ObservableObject {
             running = false
             timer?.cancel()
             timer = nil
-            if let current = accumulator.current, let store {
-                do { try store.save(current, now: Date()) }
-                catch { reportHistoryError(error) }
+            if let current = accumulator.current {
+                enqueueHistory(current, now: Date())
+                flushPendingHistory(now: Date())
             }
         }
     }
@@ -256,6 +258,7 @@ final class ResourceMonitor: ObservableObject {
         samplingQueue.async { [weak self] in
             guard let self else { return }
             if self.store == nil { self.openHistory() }
+            self.flushPendingHistory(now: Date())
             self.restartTimer(sampleImmediately: true)
         }
     }
@@ -278,8 +281,12 @@ final class ResourceMonitor: ObservableObject {
                 self.liveSnapshots.removeAll()
                 self.archivedProcesses.removeAll()
                 self.accumulator = ActivityAccumulator()
+                self.writeBuffer = ActivityWriteBuffer()
                 self.publishTimeline(now: Date())
-                DispatchQueue.main.async { self.historyError = nil }
+                DispatchQueue.main.async {
+                    self.historyError = nil
+                    self.historyNotice = nil
+                }
             } catch {
                 self.reportHistoryError(error)
             }
@@ -335,15 +342,10 @@ final class ResourceMonitor: ObservableObject {
             let activity = activitySnapshot(snapshot)
             liveSnapshots.append(activity)
             liveSnapshots.removeAll { $0.date < snapshot.date.addingTimeInterval(-300) }
-            if let completed = accumulator.append(activity), let store {
-                do {
-                    try store.save(completed, now: snapshot.date)
-                    archivedProcesses = try store.processes(since: snapshot.date.addingTimeInterval(-ActivityHistoryStore.retention))
-                    DispatchQueue.main.async { self.historyError = nil }
-                } catch {
-                    reportHistoryError(error)
-                }
+            if let completed = accumulator.append(activity) {
+                enqueueHistory(completed, now: snapshot.date)
             }
+            flushPendingHistory(now: snapshot.date)
             publishTimeline(now: snapshot.date)
 
             DispatchQueue.main.async { [weak self] in
@@ -473,6 +475,26 @@ final class ResourceMonitor: ObservableObject {
         logger.error("Activity history failed: \(error.localizedDescription)")
         DispatchQueue.main.async {
             self.historyError = "History could not be saved or loaded: \(error.localizedDescription) Refresh to retry."
+        }
+    }
+
+    private func enqueueHistory(_ snapshot: ActivitySnapshot, now: Date) {
+        if writeBuffer.append(snapshot, now: now) > 0 {
+            logger.error("Unsaved activity history expired after five minutes of storage failures.")
+            DispatchQueue.main.async {
+                self.historyNotice = "Some older measurements could not be saved while history storage was unavailable."
+            }
+        }
+    }
+
+    private func flushPendingHistory(now: Date) {
+        guard writeBuffer.count > 0, let store else { return }
+        do {
+            try writeBuffer.flush { try store.save($0, now: now) }
+            archivedProcesses = try store.processes(since: now.addingTimeInterval(-ActivityHistoryStore.retention))
+            DispatchQueue.main.async { self.historyError = nil }
+        } catch {
+            reportHistoryError(error)
         }
     }
 

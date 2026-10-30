@@ -261,6 +261,12 @@ struct ActivityMonitorErrors: View {
                 .foregroundColor(.orange)
                 .textSelection(.enabled)
         }
+        if let notice = monitor.historyNotice {
+            Label(notice, systemImage: "clock.badge.exclamationmark")
+                .font(.system(size: 11))
+                .foregroundColor(.orange)
+                .textSelection(.enabled)
+        }
     }
 }
 

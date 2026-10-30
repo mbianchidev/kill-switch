@@ -80,6 +80,9 @@ per-process history.
 Storage or collector failures appear in the UI and logs. A failed component
 does not replace other available measurements with invented values. **Refresh**
 retries unavailable history storage.
+Failed writes are retried automatically and by **Refresh**. Up to five minutes
+of unsaved minute buckets are retained in memory; longer storage outages display
+a separate data-loss notice rather than growing memory without a bound.
 
 ## Connections and open files
 

@@ -62,6 +62,22 @@ extension SystemMetricsChecks {
         check(completed?.system.memory == 100, "missing samples are not averaged as zero")
         check(completed?.processes.first?.values.memory == 300, "minute history includes per-process memory")
         check(accumulator.current?.system.cpu == 90, "next minute starts a separate bucket")
+        var buffer = ActivityWriteBuffer()
+        buffer.append(initial, now: start)
+        do {
+            try buffer.flush { _ in throw ActivityHistoryError(message: "synthetic storage failure") }
+            check(false, "failed history writes must report failure")
+        } catch { check(buffer.count == 1, "failed history writes remain queued for retry") }
+        var saved: [ActivitySnapshot] = []
+        do { try buffer.flush { saved.append($0) } }
+        catch { check(false, "retry history writes: \(error.localizedDescription)") }
+        check(saved == [initial] && buffer.count == 0, "history retry persists and removes the queued bucket")
+        buffer.append(initial, now: start)
+        let expired = buffer.append(
+            ActivitySnapshot(date: start.addingTimeInterval(360), system: ActivityValues(cpu: 1), processes: []),
+            now: start.addingTimeInterval(360)
+        )
+        check(expired == 1 && buffer.count == 1, "unsaved history stays bounded and reports expired buckets")
 
         let points = [
             ActivityHistoryPoint(date: start, values: ActivityValues(cpu: 20)),
