@@ -146,6 +146,8 @@ model lifetimes stable without observing their updates; only the relevant leaf
 views subscribe, so a resource tick does not rebuild every tab. The native
 history-process menu creates its choices on opening and releases them after
 closing instead of maintaining a SwiftUI view for every recorded process.
+Its descriptor catalog includes the current minute and bounded pending writes,
+so coalescing cannot hide an exited process before its measurements are saved.
 Sampling and inspection queues drain autoreleased objects after each work item.
 Six-second samples remain in memory for five minutes, bounded to 51 snapshots
 by `ActivityLiveHistory`; extra refreshes replace their current six-second slot.

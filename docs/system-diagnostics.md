@@ -57,6 +57,8 @@ process lists; the latest measurement keeps its actual collection timestamp.
 The history-process menu builds its choices only when opened and releases them
 when closed. Search, exited-process selection, and native keyboard navigation
 remain available without retaining a view for every historical process.
+Process choices include the current minute and pending writes, so short-lived
+processes and their names remain selectable while measurements await storage.
 The shared monitor averages available measurements into one-minute buckets and
 saves each completed bucket, plus the current partial bucket when quitting
 normally. A crash can lose the unfinished minute. Recording does not continue while KillSwitch is

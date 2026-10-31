@@ -13,6 +13,7 @@ private enum MainTab: Hashable {
     case updates
 }
 
+@MainActor
 struct ContentView: View {
     @State private var selectedTab: MainTab = .dashboard
     // Keep model lifetimes stable without observing updates across the entire tab hierarchy.

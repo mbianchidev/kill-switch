@@ -427,13 +427,9 @@ final class ResourceMonitor: ObservableObject {
         }
         points.append(contentsOf: live)
 
-        var descriptors = Dictionary(uniqueKeysWithValues: archivedProcesses.map { ($0.id, $0) })
-        for snapshot in liveHistory.snapshots {
-            for sample in snapshot.processes {
-                descriptors[sample.process.id] = sample.process
-            }
-        }
-        let sorted = descriptors.values.sorted {
+        let sorted = liveHistory.processDescriptors(
+            archived: archivedProcesses, accumulator: accumulator, pending: writeBuffer
+        ).sorted {
             if $0.name != $1.name { return $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             if $0.identity.pid != $1.identity.pid { return $0.identity.pid < $1.identity.pid }
             return $0.identity.key < $1.identity.key
