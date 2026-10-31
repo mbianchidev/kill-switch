@@ -3,6 +3,7 @@ import SwiftUI
 private enum MainTab: Hashable {
     case dashboard
     case resources
+    case openFiles
     case startup
     case diskCleanup
     case cleanup
@@ -28,9 +29,14 @@ struct ContentView: View {
             ActivityDashboard(monitor: resourceMonitor)
                 .tabItem { Label("Dashboard", systemImage: "square.grid.2x2") }
                 .tag(MainTab.dashboard)
-            ResourcesTab(monitor: resourceMonitor)
-                .tabItem { Label("Resources", systemImage: "waveform.path.ecg") }
-                .tag(MainTab.resources)
+            Group {
+                ResourcesTab(monitor: resourceMonitor)
+                    .tabItem { Label("Resources", systemImage: "waveform.path.ecg") }
+                    .tag(MainTab.resources)
+                OpenFilesTab(resourceMonitor: resourceMonitor)
+                    .tabItem { Label("Open files", systemImage: "doc.text.magnifyingglass") }
+                    .tag(MainTab.openFiles)
+            }
             StartupTab()
                 .tabItem { Label("Startup", systemImage: "power") }
                 .tag(MainTab.startup)

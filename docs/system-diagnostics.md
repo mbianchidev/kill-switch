@@ -101,8 +101,10 @@ pre-sleep bucket.
 
 ## Connections and open files
 
-The Network connections panel and Open files panel use `lsof`'s NUL-delimited
-field output, with numeric addresses/ports and full command names. They refresh
+Network connections are in **Resources > Network**. Open-file inspection has a
+single entry point in the dedicated **Open files** tab beside Resources.
+Both use `lsof`'s NUL-delimited field output, with numeric addresses/ports and
+full command names. They refresh
 every ten seconds only while visible. Names with spaces remain intact; control
 characters use `lsof` display escapes. Search and sorting use the displayed
 values. Protected processes, files, and sockets can be omitted by macOS, and

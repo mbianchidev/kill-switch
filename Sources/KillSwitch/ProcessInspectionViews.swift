@@ -70,8 +70,8 @@ final class ProcessInspectionMonitor: ObservableObject {
     }
 }
 
-struct OpenFilesPanel: View {
-    let showAllUsers: Bool
+struct OpenFilesTab: View {
+    @ObservedObject var resourceMonitor: ResourceMonitor
     @StateObject private var monitor = ProcessInspectionMonitor()
     @State private var search = ""
     @State private var locksOnly = false
@@ -83,6 +83,13 @@ struct OpenFilesPanel: View {
     var body: some View {
         let rows = visible
         return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Label("Open files", systemImage: "doc.text.magnifyingglass")
+                    .font(.system(size: 15, weight: .semibold))
+                Spacer()
+                ProcessScopePicker(monitor: resourceMonitor)
+            }
+            Divider()
             HStack(spacing: 10) {
                 TextField("Search path, process, PID, user, or lock", text: $search)
                     .textFieldStyle(.roundedBorder)
@@ -133,13 +140,14 @@ struct OpenFilesPanel: View {
                 .foregroundColor(.secondary)
         }
         .padding(12)
+        .background(Theme.background)
         .onAppear { monitor.start(.files) }
         .onDisappear { monitor.stop() }
     }
 
     private var visible: [OpenFileRecord] {
         OpenFileQuery(
-            search: search, userID: showAllUsers ? nil : getuid(), locksOnly: locksOnly,
+            search: search, userID: resourceMonitor.showAllUsers ? nil : getuid(), locksOnly: locksOnly,
             kind: kind == "All types" ? nil : kind, sort: sort, ascending: ascending
         ).apply(to: monitor.files)
     }

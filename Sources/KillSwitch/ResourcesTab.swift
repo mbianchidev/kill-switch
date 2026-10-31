@@ -7,37 +7,31 @@ struct ResourcesTab: View {
     @State private var metric: ResourceMetric = .cpu
     @State private var sort: ResourceSort = .cpu
     @State private var searchText = ""
-    @State private var showOpenFiles = false
     @State private var showConnections = true
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            if showOpenFiles {
-                OpenFilesPanel(showAllUsers: monitor.showAllUsers)
+            if metric == .network && showConnections {
+                NetworkConnectionsPanel(showAllUsers: monitor.showAllUsers)
             } else {
-                if metric == .network && showConnections {
-                    NetworkConnectionsPanel(showAllUsers: monitor.showAllUsers)
-                } else {
-                    processTable
-                }
-                Divider()
-                if metric != .energy {
-                    ActivityHistoryControls(monitor: monitor)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 10)
-                }
-                instrumentRail
+                processTable
             }
+            Divider()
+            if metric != .energy {
+                ActivityHistoryControls(monitor: monitor)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+            }
+            instrumentRail
         }
         .background(Theme.background)
         .onChange(of: metric) { newMetric in
             sort = ResourceSort.defaultOption(for: newMetric)
-            monitor.setMetric(showOpenFiles ? nil : newMetric)
+            monitor.setMetric(newMetric)
         }
-        .onChange(of: showOpenFiles) { monitor.setMetric($0 ? nil : metric) }
-        .onAppear { monitor.setMetric(showOpenFiles ? nil : metric) }
+        .onAppear { monitor.setMetric(metric) }
         .onDisappear { monitor.setMetric(nil) }
     }
 
@@ -62,73 +56,67 @@ struct ResourcesTab: View {
                 ProcessScopePicker(monitor: monitor)
             }
 
-            HStack(spacing: 12) {
-                Picker("Process view", selection: $showOpenFiles) {
-                    Text("Resource usage").tag(false)
-                    Text("Open files").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 260)
-                if metric == .network && !showOpenFiles {
+            if metric == .network {
+                HStack(spacing: 12) {
                     Picker("Network view", selection: $showConnections) {
                         Text("Connections").tag(true)
                         Text("Traffic by process").tag(false)
                     }
                     .pickerStyle(.segmented)
                     .frame(width: 270)
+                    Spacer()
                 }
-                Spacer()
             }
 
-            if !showOpenFiles && !(metric == .network && showConnections) {
-            HStack(spacing: 10) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.white.opacity(0.45))
-                    TextField("Filter by process, PID, or user", text: $searchText)
-                        .textFieldStyle(.plain)
-                        .foregroundColor(.white)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.black.opacity(0.22))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border))
-                )
+            if !(metric == .network && showConnections) {
+                HStack(spacing: 10) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(.white.opacity(0.45))
+                        TextField("Filter by process, PID, or user", text: $searchText)
+                            .textFieldStyle(.plain)
+                            .foregroundColor(.white)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.black.opacity(0.22))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border))
+                    )
 
-                Picker("Sort", selection: $sort) {
-                    ForEach(ResourceSort.options(for: metric)) { option in
-                        Text(option.rawValue).tag(option)
+                    Picker("Sort", selection: $sort) {
+                        ForEach(ResourceSort.options(for: metric)) { option in
+                            Text(option.rawValue).tag(option)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 160)
+
+                    Button {
+                        monitor.refresh()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Refresh now")
+
+                    Text("\(visibleProcesses.count) processes")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.45))
+
+                    Spacer()
+
+                    if let lastUpdated = monitor.lastUpdated {
+                        Text("Updated \(lastUpdated.formatted(date: .omitted, time: .standard))")
+                            .font(.system(size: 11))
+                            .foregroundColor(.white.opacity(0.4))
+                    } else {
+                        Text("Collecting system metrics…")
+                            .font(.system(size: 11))
+                            .foregroundColor(.white.opacity(0.4))
                     }
                 }
-                .pickerStyle(.menu)
-                .frame(width: 160)
-
-                Button {
-                    monitor.refresh()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.borderless)
-                .help("Refresh now")
-
-                Text("\(visibleProcesses.count) processes")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.45))
-
-                Spacer()
-
-                if let lastUpdated = monitor.lastUpdated {
-                    Text("Updated \(lastUpdated.formatted(date: .omitted, time: .standard))")
-                        .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.4))
-                } else {
-                    Text("Collecting system metrics…")
-                        .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.4))
-                }
-            }
             }
 
             ActivityMonitorErrors(monitor: monitor)

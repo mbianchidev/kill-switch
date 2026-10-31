@@ -84,7 +84,8 @@ See [architecture and development](docs/development.md).
 ## Get started and configuration
 
 - **Dashboard / Resources:** compare live data and 24-hour history; inspect
-  connections and open files. **My processes** is the default.
+  network connections. **My processes** is the default.
+- **Open files:** inspect file descriptors and reported locks in one dedicated tab.
 - **Startup:** review apps, services, and cron jobs before disabling future
   launches. System-wide changes require administrator approval.
 - **Dev cleanup:** understand the age-based safety rules before opening the tab;
@@ -101,7 +102,7 @@ the read-only [status command](docs/cli.md#read-saved-status).
 | Capability | Implemented behavior |
 | --- | --- |
 | Dashboard and resources | Global/per-process CPU, memory, traffic, and disk history for 24 hours, plus live energy and process actions |
-| Process inspection | Listening/active connections and searchable, sortable open files with reported advisory locks |
+| Process inspection | Network connections in Resources and one dedicated Open files tab with search, sorting, and reported advisory locks |
 | Startup | Reversible login app, service, and cron controls, with protected macOS entries kept read-only |
 | Disk cleanup | Large files, temporary data, caches, and folders with confirmation and Trash |
 | Developer tools | Configurable dev cleanup, protected-process rules, CPU alerts, and JSON port syncing |
