@@ -1,3 +1,4 @@
+import Combine
 import Darwin
 import Foundation
 import InstallCore
@@ -71,14 +72,20 @@ final class ProcessInspectionMonitor: ObservableObject {
 }
 
 struct OpenFilesTab: View {
-    @ObservedObject var resourceMonitor: ResourceMonitor
+    let resourceMonitor: ResourceMonitor
     @StateObject private var monitor = ProcessInspectionMonitor()
+    @State private var showAllUsers: Bool
     @State private var search = ""
     @State private var locksOnly = false
     @State private var kind = "All types"
     @State private var sort: OpenFileSort = .path
     @State private var ascending = true
     @State private var selected: OpenFileRecord.ID?
+
+    init(resourceMonitor: ResourceMonitor) {
+        self.resourceMonitor = resourceMonitor
+        _showAllUsers = State(initialValue: resourceMonitor.showAllUsers)
+    }
 
     var body: some View {
         let rows = visible
@@ -141,13 +148,14 @@ struct OpenFilesTab: View {
         }
         .padding(12)
         .background(Theme.background)
+        .onReceive(resourceMonitor.$showAllUsers.removeDuplicates()) { showAllUsers = $0 }
         .onAppear { monitor.start(.files) }
         .onDisappear { monitor.stop() }
     }
 
     private var visible: [OpenFileRecord] {
         OpenFileQuery(
-            search: search, userID: resourceMonitor.showAllUsers ? nil : getuid(), locksOnly: locksOnly,
+            search: search, userID: showAllUsers ? nil : getuid(), locksOnly: locksOnly,
             kind: kind == "All types" ? nil : kind, sort: sort, ascending: ascending
         ).apply(to: monitor.files)
     }

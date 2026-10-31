@@ -55,6 +55,15 @@ struct ActivityProcessMenu: NSViewRepresentable {
             }
         }
 
+        func menuHasKeyEquivalent(
+            _ menu: NSMenu, for event: NSEvent,
+            target: AutoreleasingUnsafeMutablePointer<AnyObject?>,
+            action: UnsafeMutablePointer<Selector?>
+        ) -> Bool {
+            // No choices have shortcuts; bypass AppKit's closed-menu population.
+            false
+        }
+
         func menuWillOpen(_ menu: NSMenu) {
             isTracking = true
         }
