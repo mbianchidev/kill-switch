@@ -1,3 +1,4 @@
+import Combine
 import Darwin
 import Foundation
 import InstallCore
@@ -12,7 +13,9 @@ final class ProcessInspectionMonitor: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var lastUpdated: Date?
     @Published private(set) var isRefreshing = false
-    private let queue = DispatchQueue(label: "killswitch.process-inspection", qos: .utility)
+    private let queue = DispatchQueue(
+        label: "killswitch.process-inspection", qos: .utility, autoreleaseFrequency: .workItem
+    )
     private let logger = Logger(subsystem: "com.killswitch.app", category: "process-inspection")
     private var timer: DispatchSourceTimer?
     private var mode: Mode = .files
@@ -41,7 +44,7 @@ final class ProcessInspectionMonitor: ObservableObject {
     private func sample() {
         DispatchQueue.main.async { self.isRefreshing = true }
         do {
-            var arguments = ["-nP", "-b", "+c", "0", ProcessInspectionParser.lsofFields]
+            var arguments = ProcessInspectionParser.lsofArguments
             if mode == .connections { arguments += ["-i", "-U"] }
             let result = try CommandRunner.run(
                 "/usr/sbin/lsof", arguments: arguments, environment: ["LC_ALL": "en_US.UTF-8"]
@@ -68,9 +71,10 @@ final class ProcessInspectionMonitor: ObservableObject {
     }
 }
 
-struct OpenFilesPanel: View {
-    let showAllUsers: Bool
+struct OpenFilesTab: View {
+    let resourceMonitor: ResourceMonitor
     @StateObject private var monitor = ProcessInspectionMonitor()
+    @State private var showAllUsers: Bool
     @State private var search = ""
     @State private var locksOnly = false
     @State private var kind = "All types"
@@ -78,9 +82,21 @@ struct OpenFilesPanel: View {
     @State private var ascending = true
     @State private var selected: OpenFileRecord.ID?
 
+    init(resourceMonitor: ResourceMonitor) {
+        self.resourceMonitor = resourceMonitor
+        _showAllUsers = State(initialValue: resourceMonitor.showAllUsers)
+    }
+
     var body: some View {
         let rows = visible
         return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Label("Open files", systemImage: "doc.text.magnifyingglass")
+                    .font(.system(size: 15, weight: .semibold))
+                Spacer()
+                ProcessScopePicker(monitor: resourceMonitor)
+            }
+            Divider()
             HStack(spacing: 10) {
                 TextField("Search path, process, PID, user, or lock", text: $search)
                     .textFieldStyle(.roundedBorder)
@@ -131,6 +147,8 @@ struct OpenFilesPanel: View {
                 .foregroundColor(.secondary)
         }
         .padding(12)
+        .background(Theme.background)
+        .onReceive(resourceMonitor.$showAllUsers.removeDuplicates()) { showAllUsers = $0 }
         .onAppear { monitor.start(.files) }
         .onDisappear { monitor.stop() }
     }

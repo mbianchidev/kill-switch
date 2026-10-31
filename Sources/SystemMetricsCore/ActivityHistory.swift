@@ -127,6 +127,46 @@ public struct ActivityHistoryPoint: Identifiable, Equatable, Sendable {
     }
 }
 
+public struct ActivityLiveHistory {
+    public private(set) var snapshots: [ActivitySnapshot] = []
+
+    public init() {}
+
+    public mutating func append(_ snapshot: ActivitySnapshot) {
+        let interval = Double(ResourceSamplingPolicy.continuousIntervalSeconds)
+        let slot = floor(snapshot.date.timeIntervalSince1970 / interval)
+        if let last = snapshots.last, floor(last.date.timeIntervalSince1970 / interval) == slot {
+            snapshots[snapshots.count - 1] = snapshot
+        } else {
+            snapshots.append(snapshot)
+        }
+        let cutoff = snapshot.date.addingTimeInterval(-ActivityHistoryRange.live.seconds)
+        snapshots.removeAll { $0.date < cutoff }
+        let limit = Int(ActivityHistoryRange.live.seconds / interval) + 1
+        if snapshots.count > limit {
+            snapshots.removeFirst(snapshots.count - limit)
+        }
+    }
+
+    public mutating func removeAll() {
+        snapshots.removeAll()
+    }
+
+    public func processDescriptors(
+        archived: [ActivityProcessDescriptor], accumulator: ActivityAccumulator, pending: ActivityWriteBuffer
+    ) -> [ActivityProcessDescriptor] {
+        var descriptors = Dictionary(uniqueKeysWithValues: archived.map { ($0.id, $0) })
+        pending.addProcessDescriptors(to: &descriptors)
+        accumulator.addProcessDescriptors(to: &descriptors)
+        for snapshot in snapshots {
+            for sample in snapshot.processes {
+                descriptors[sample.process.id] = sample.process
+            }
+        }
+        return Array(descriptors.values)
+    }
+}
+
 public enum ActivityHistoryRange: String, CaseIterable, Identifiable, Sendable {
     case live = "Live · 5m"
     case hour = "1 hour"
@@ -257,6 +297,14 @@ public struct ActivityAccumulator {
         }
     }
 
+    fileprivate func addProcessDescriptors(
+        to descriptors: inout [ActivityProcessIdentity: ActivityProcessDescriptor]
+    ) {
+        for (identity, entry) in processes {
+            descriptors[identity] = entry.0
+        }
+    }
+
     public mutating func append(_ snapshot: ActivitySnapshot) -> ActivitySnapshot? {
         let bucket = Date(timeIntervalSince1970: floor(snapshot.date.timeIntervalSince1970 / 60) * 60)
         let completed = minute != nil && minute != bucket ? current : nil
@@ -302,6 +350,16 @@ public struct ActivityWriteBuffer {
         while let entry = entries.first {
             try save(entry.snapshot)
             entries.removeFirst()
+        }
+    }
+
+    fileprivate func addProcessDescriptors(
+        to descriptors: inout [ActivityProcessIdentity: ActivityProcessDescriptor]
+    ) {
+        for entry in entries {
+            for sample in entry.snapshot.processes {
+                descriptors[sample.process.id] = sample.process
+            }
         }
     }
 }

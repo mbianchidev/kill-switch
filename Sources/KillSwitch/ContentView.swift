@@ -3,6 +3,7 @@ import SwiftUI
 private enum MainTab: Hashable {
     case dashboard
     case resources
+    case openFiles
     case startup
     case diskCleanup
     case cleanup
@@ -13,22 +14,29 @@ private enum MainTab: Hashable {
     case updates
 }
 
+@MainActor
 struct ContentView: View {
     @State private var selectedTab: MainTab = .dashboard
-    @StateObject private var diagnostics = DiagnosticsController.shared
-    @StateObject private var watchdog = CPUWatchdog()
-    @StateObject private var resourceMonitor = ResourceMonitor.shared
-    @StateObject private var diskCleanupMonitor = DiskCleanupMonitor()
-    @ObservedObject private var updater = UpdateChecker.shared
+    // Keep model lifetimes stable without observing updates across the entire tab hierarchy.
+    private let diagnostics = DiagnosticsController.shared
+    @State private var watchdog = CPUWatchdog()
+    private let resourceMonitor = ResourceMonitor.shared
+    @State private var diskCleanupMonitor = DiskCleanupMonitor()
+    private let updater = UpdateChecker.shared
 
     var body: some View {
         TabView(selection: $selectedTab) {
             ActivityDashboard(monitor: resourceMonitor)
                 .tabItem { Label("Dashboard", systemImage: "square.grid.2x2") }
                 .tag(MainTab.dashboard)
-            ResourcesTab(monitor: resourceMonitor)
-                .tabItem { Label("Resources", systemImage: "waveform.path.ecg") }
-                .tag(MainTab.resources)
+            Group {
+                ResourcesTab(monitor: resourceMonitor)
+                    .tabItem { Label("Resources", systemImage: "waveform.path.ecg") }
+                    .tag(MainTab.resources)
+                OpenFilesTab(resourceMonitor: resourceMonitor)
+                    .tabItem { Label("Open files", systemImage: "doc.text.magnifyingglass") }
+                    .tag(MainTab.openFiles)
+            }
             StartupTab()
                 .tabItem { Label("Startup", systemImage: "power") }
                 .tag(MainTab.startup)

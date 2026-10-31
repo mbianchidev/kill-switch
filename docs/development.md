@@ -135,9 +135,26 @@ crontab executable to exercise staging, hashes, installation, and cleanup.
 They never change live startup entries, request administrator access, or control
 a desktop application.
 
+For memory regressions, run `swift run SystemMetricsChecks --memory-stress`.
+This adds two simulated hours of 5,000 synthetic processes, checks that all
+processes remain in the bounded live history and minute averages, and enforces a
+256 MiB peak-resident-memory budget for the checks process, not the full GUI.
+
 `ResourceMonitor.shared` owns the app-lifetime sampler; dashboard and resource
-views observe the same snapshots and history selection. Six-second samples
-remain in memory for five minutes, and `ActivityAccumulator` writes minute
+views observe the same snapshots and history selection. The tab container keeps
+model lifetimes stable without observing their updates; only the relevant leaf
+views subscribe, so a resource tick does not rebuild every tab. The native
+history-process menu creates its choices on opening and releases them after
+closing instead of maintaining a SwiftUI view for every recorded process.
+Its shortcut delegate bypasses populating choices during closed-menu key checks.
+Its descriptor catalog includes the current minute and bounded pending writes,
+so coalescing cannot hide an exited process before its measurements are saved.
+`OpenFilesTab` subscribes only to shared process-scope changes; resource ticks
+do not rerun its file filtering and sorting.
+Sampling and inspection queues drain autoreleased objects after each work item.
+Six-second samples remain in memory for five minutes, bounded to 51 snapshots
+by `ActivityLiveHistory`; extra refreshes replace their current six-second slot.
+`ActivityAccumulator` still receives every measurement and writes minute
 averages on rollover and normal termination. Store operations stay on the
 sampling queue. `ActivityProcessIdentity` includes boot identity and process
 start time to avoid merging reused PIDs. Failed/restricted measurements remain

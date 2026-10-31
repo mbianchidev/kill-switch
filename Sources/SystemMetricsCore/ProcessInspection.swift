@@ -62,6 +62,7 @@ public struct ProcessInspectionSnapshot: Sendable {
 
 public enum ProcessInspectionParser {
     public static let lsofFields = "-F0pcuLfaltDinsPT"
+    public static let lsofArguments = ["-nP", "-S", "2", "+c", "0", lsofFields]
 
     public static func parseLsof(_ data: Data) -> ProcessInspectionSnapshot {
         var files: [OpenFileRecord] = []

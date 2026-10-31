@@ -61,17 +61,27 @@ Within **Network**, switch between **Connections** and **Traffic by process**.
 Connections includes TCP listeners, active connections, bound UDP sockets, and
 Unix sockets visible to this account. Search addresses/ports, process, PID,
 owner, protocol, or state, then filter listeners/active connections and sort.
-
-**Open files** lists accessible file descriptors by process, with path, PID,
-owner, access mode, type, size, and reported advisory lock. Search, filter by
-type or reported locks, and choose sort field/direction. An open file is not
-necessarily locked, and an empty lock field does not prove there is no lock.
-These inspection panels refresh every ten seconds and do not close files or
-terminate processes.
+Connections refresh every ten seconds only while visible.
 
 The [resource reference](system-diagnostics.md#resources) describes all five
 modes, counters, data sources, refresh intervals, and unavailable fields.
 Manual kill buttons follow the [termination safety rules](#safety-and-limitations).
+
+## Open files
+
+Use the dedicated **Open files** tab beside Resources to inspect accessible file
+descriptors. This is the only open-files entry point; Resources retains resource
+usage and network connections. **My processes** is the default, and the scope
+picker is shared with Dashboard and Resources.
+
+The table includes path, process, PID, owner, access mode, type, size, and
+reported advisory lock. Search, filter by type or reported locks, and choose
+sort field/direction. An open file is not necessarily locked, and an empty lock
+field does not prove there is no lock.
+
+Inspection refreshes every ten seconds while this tab is visible and stops when
+you switch tabs. It does not close files or terminate processes. See the
+[inspection limitations](system-diagnostics.md#connections-and-open-files).
 
 ## Startup
 

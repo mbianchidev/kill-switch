@@ -82,6 +82,8 @@ extension SystemMetricsChecks {
 
         var accumulator = ActivityAccumulator()
         let process = ActivityProcessDescriptor(identity: identity, name: "Example worker", user: "sample-user")
+        checkLiveHistory(start: start, process: process)
+        checkHistoryProcessDescriptors(start: start, process: process)
         let initial = ActivitySnapshot(
             date: start, system: ActivityValues(cpu: 10, memory: 100),
             processes: [ActivityProcessSample(process: process, values: ActivityValues(cpu: 20, memory: 200))]
@@ -145,6 +147,141 @@ extension SystemMetricsChecks {
         check(ActivityHistoryRange.day.seconds == 86_400, "history retention range is exactly 24 hours")
 
         checkActivityStore(initial: initial, process: process, start: start)
+        if CommandLine.arguments.contains("--memory-stress") {
+            checkActivityMemoryFootprint(start: start)
+        }
+    }
+
+    private static func checkLiveHistory(start: Date, process: ActivityProcessDescriptor) {
+        var history = ActivityLiveHistory()
+        func snapshot(_ seconds: TimeInterval) -> ActivitySnapshot {
+            ActivitySnapshot(
+                date: start.addingTimeInterval(seconds),
+                system: ActivityValues(cpu: seconds),
+                processes: [ActivityProcessSample(process: process, values: ActivityValues(memory: seconds))]
+            )
+        }
+        for index in 0..<60 {
+            history.append(snapshot(Double(index) / 10))
+        }
+        check(history.snapshots.count == 1, "rapid refreshes replace the current six-second history slot")
+        check(history.snapshots.last?.date == start.addingTimeInterval(5.9), "coalescing keeps the real latest measurement time")
+        check(history.snapshots.last?.processes.first?.values.memory == 5.9, "coalescing keeps the latest per-process values")
+
+        var bounded = true
+        for second in 6..<7_200 {
+            history.append(snapshot(Double(second)))
+            bounded = bounded && history.snapshots.count <= 51
+        }
+        check(bounded, "live history never exceeds 51 snapshots during hours of rapid refreshes")
+        check(history.snapshots.count == 51, "coalescing preserves the full five-minute live window")
+        check(
+            history.snapshots.allSatisfy { $0.date >= start.addingTimeInterval(7_199 - 300) },
+            "live history drops measurements outside its five-minute window"
+        )
+        history.append(snapshot(86_400))
+        check(history.snapshots.count == 1, "resume drops old live snapshots without inventing gap samples")
+        history.removeAll()
+        check(history.snapshots.isEmpty, "clear history releases live snapshots")
+    }
+
+    private static func checkActivityMemoryFootprint(start: Date) {
+        let processes = (0..<5_000).map { index in
+            ActivityProcessDescriptor(
+                identity: ActivityProcessIdentity(
+                    bootSession: "synthetic-memory-boot", pid: Int32(index + 1_000), startTime: UInt64(index + 1)
+                ),
+                name: "Synthetic worker \(index)", user: "sample-user"
+            )
+        }
+        var history = ActivityLiveHistory()
+        var accumulator = ActivityAccumulator()
+        for index in 0..<1_200 {
+            autoreleasepool {
+                let values = ActivityValues(
+                    cpu: Double(index % 100), memory: Double(index * 1_024),
+                    diskRead: 100, diskWritten: 200, received: 300, sent: 400
+                )
+                let snapshot = ActivitySnapshot(
+                    date: start.addingTimeInterval(Double(index * 6)), system: values,
+                    processes: processes.map { ActivityProcessSample(process: $0, values: values) }
+                )
+                history.append(snapshot)
+                _ = accumulator.append(snapshot)
+            }
+        }
+        check(history.snapshots.count == 51, "two synthetic hours with 5,000 processes retain only five live minutes")
+        check(history.snapshots.last?.processes.count == 5_000, "memory bounds do not drop processes")
+        check(accumulator.current?.processes.count == 5_000, "minute averages still include every synthetic process")
+        check(
+            history.processDescriptors(archived: [], accumulator: accumulator, pending: ActivityWriteBuffer()).count == 5_000,
+            "the bounded selector catalog includes every synthetic process"
+        )
+        var usage = rusage()
+        guard getrusage(RUSAGE_SELF, &usage) == 0 else {
+            check(false, "read the synthetic checks process memory usage: \(String(cString: strerror(errno)))")
+            return
+        }
+        let limit = 256 * 1_024 * 1_024
+        check(usage.ru_maxrss < limit, "synthetic history stress stays below 256 MiB peak resident memory")
+        print("Activity memory stress: \(usage.ru_maxrss / 1_024 / 1_024) MiB peak RSS, 5,000 processes, two simulated hours")
+    }
+
+    private static func checkHistoryProcessDescriptors(start: Date, process: ActivityProcessDescriptor) {
+        var history = ActivityLiveHistory()
+        var accumulator = ActivityAccumulator()
+        var pending = ActivityWriteBuffer()
+        let brief = ActivitySnapshot(
+            date: start, system: ActivityValues(),
+            processes: [ActivityProcessSample(process: process, values: ActivityValues(cpu: 1))]
+        )
+        let exited = ActivitySnapshot(
+            date: start.addingTimeInterval(0.1), system: ActivityValues(), processes: []
+        )
+        history.append(brief)
+        _ = accumulator.append(brief)
+        history.append(exited)
+        _ = accumulator.append(exited)
+        check(history.snapshots.last?.processes.isEmpty == true, "rapid refresh can replace a short-lived process measurement")
+        check(
+            history.processDescriptors(archived: [], accumulator: accumulator, pending: pending) == [process],
+            "a coalesced short-lived process keeps its selector name and lifetime identity in the current minute"
+        )
+
+        let resumed = ActivitySnapshot(
+            date: start.addingTimeInterval(6 * 3_600), system: ActivityValues(), processes: []
+        )
+        history.append(resumed)
+        if let completed = accumulator.append(resumed) { pending.append(completed, now: resumed.date) }
+        check(pending.count == 1, "the pre-sleep minute remains queued until persistence succeeds")
+        check(
+            history.processDescriptors(archived: [], accumulator: accumulator, pending: pending) == [process],
+            "descriptors awaiting persistence remain selectable even after the live window expires"
+        )
+        do {
+            try pending.flush { _ in throw ActivityHistoryError(message: "synthetic catalog storage failure") }
+            check(false, "synthetic selector persistence failure must propagate")
+        } catch {
+            check(
+                history.processDescriptors(archived: [], accumulator: accumulator, pending: pending) == [process],
+                "storage failure does not hide a queued process name"
+            )
+        }
+        do {
+            var archived: [ActivityProcessDescriptor] = []
+            try pending.flush { archived.append(contentsOf: $0.processes.map(\.process)) }
+            check(
+                history.processDescriptors(archived: archived, accumulator: accumulator, pending: pending) == [process],
+                "successful persistence hands process descriptors to the archive without losing selection"
+            )
+        } catch { check(false, "persist synthetic selector descriptors: \(error.localizedDescription)") }
+        history.removeAll()
+        accumulator = ActivityAccumulator()
+        pending = ActivityWriteBuffer()
+        check(
+            history.processDescriptors(archived: [], accumulator: accumulator, pending: pending).isEmpty,
+            "clear history releases selector descriptors along with measurements"
+        )
     }
 
     private static func checkProcessLifetimeReader() {

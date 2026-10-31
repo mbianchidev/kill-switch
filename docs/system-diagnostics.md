@@ -51,10 +51,17 @@ The **All processes** scope does not grant administrator privileges.
 
 ## History and storage
 
-Live history retains six-second samples for five minutes. The shared monitor
-averages available measurements into one-minute buckets and saves each completed
-bucket, plus the current partial bucket when quitting normally. A crash can
-lose the unfinished minute. Recording does not continue while KillSwitch is
+Live history retains at most 51 six-second samples for five minutes. Manual
+refreshes update the current six-second slot rather than retaining extra full
+process lists; the latest measurement keeps its actual collection timestamp.
+The history-process menu builds its choices only when opened and releases them
+when closed. Search, exited-process selection, and native keyboard navigation
+remain available without retaining a view for every historical process.
+Process choices include the current minute and pending writes, so short-lived
+processes and their names remain selectable while measurements await storage.
+The shared monitor averages available measurements into one-minute buckets and
+saves each completed bucket, plus the current partial bucket when quitting
+normally. A crash can lose the unfinished minute. Recording does not continue while KillSwitch is
 quit or the Mac is asleep.
 
 History is held in macOS's built-in SQLite database at:
@@ -94,12 +101,19 @@ pre-sleep bucket.
 
 ## Connections and open files
 
-The Network connections panel and Open files panel use `lsof`'s NUL-delimited
-field output, with numeric addresses/ports and full command names. They refresh
+Network connections are in **Resources > Network**. Open-file inspection has a
+single entry point in the dedicated **Open files** tab beside Resources.
+Both use `lsof`'s NUL-delimited field output, with numeric addresses/ports and
+full command names. They refresh
 every ten seconds only while visible. Names with spaces remain intact; control
 characters use `lsof` display escapes. Search and sorting use the displayed
 values. Protected processes, files, and sockets can be omitted by macOS, and
 short-lived connections between samples may be missed.
+
+Filesystem metadata lookups use `lsof`'s two-second blocking-operation timeout.
+Inspection no longer deliberately skips those lookups with `-b`, which generated
+warnings for every mounted filesystem even when inspection succeeded.
+Genuine timeout, permission, and collection warnings still appear in the panel.
 
 Open files includes ordinary files, directories, and Unix sockets, with file
 descriptor, access, size, and reported lock information. Locks are best-effort
