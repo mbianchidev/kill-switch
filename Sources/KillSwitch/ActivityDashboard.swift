@@ -185,16 +185,12 @@ struct ActivityHistoryControls: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Menu {
-                Button("Entire Mac") { monitor.focusedProcess = nil }
-                Divider()
-                ForEach(availableProcesses) { process in
-                    Button(processTitle(process)) { monitor.focusedProcess = process.id }
-                }
-            } label: {
-                Label(focusedTitle, systemImage: monitor.focusedProcess == nil ? "desktopcomputer" : "app")
-                    .lineLimit(1)
-            }
+            ActivityProcessMenu(
+                title: focusedTitle,
+                processes: availableProcesses,
+                liveIdentities: Set(monitor.processes.compactMap(\.identity)),
+                selection: $monitor.focusedProcess
+            )
             .frame(maxWidth: 260, alignment: .leading)
             .accessibilityLabel("History for \(focusedTitle)")
 
@@ -236,12 +232,6 @@ struct ActivityHistoryControls: View {
                 && (processSearch.isEmpty || [$0.name, $0.user, String($0.identity.pid)]
                     .contains { $0.localizedCaseInsensitiveContains(processSearch) })
         }
-    }
-
-    private func processTitle(_ process: ActivityProcessDescriptor) -> String {
-        let live = monitor.processes.contains { $0.identity == process.id }
-        let started = Date(timeIntervalSince1970: Double(process.identity.startTime) / 1_000_000)
-        return "\(process.name) (\(process.identity.pid), \(started.formatted(date: .omitted, time: .standard)))\(live ? "" : " [exited]")"
     }
 }
 

@@ -12,7 +12,9 @@ final class ProcessInspectionMonitor: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var lastUpdated: Date?
     @Published private(set) var isRefreshing = false
-    private let queue = DispatchQueue(label: "killswitch.process-inspection", qos: .utility)
+    private let queue = DispatchQueue(
+        label: "killswitch.process-inspection", qos: .utility, autoreleaseFrequency: .workItem
+    )
     private let logger = Logger(subsystem: "com.killswitch.app", category: "process-inspection")
     private var timer: DispatchSourceTimer?
     private var mode: Mode = .files
@@ -41,7 +43,7 @@ final class ProcessInspectionMonitor: ObservableObject {
     private func sample() {
         DispatchQueue.main.async { self.isRefreshing = true }
         do {
-            var arguments = ["-nP", "-b", "+c", "0", ProcessInspectionParser.lsofFields]
+            var arguments = ProcessInspectionParser.lsofArguments
             if mode == .connections { arguments += ["-i", "-U"] }
             let result = try CommandRunner.run(
                 "/usr/sbin/lsof", arguments: arguments, environment: ["LC_ALL": "en_US.UTF-8"]

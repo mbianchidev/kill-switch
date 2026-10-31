@@ -119,16 +119,20 @@ extension SystemMetricsChecks {
 
             let result = try CommandRunner.run(
                 "/usr/sbin/lsof",
-                arguments: ["-nP", "-b", "+c", "0", "-a", "-p", String(getpid()), ProcessInspectionParser.lsofFields],
+                arguments: ProcessInspectionParser.lsofArguments + ["-a", "-p", String(getpid())],
                 environment: ["LC_ALL": "en_US.UTF-8"]
             )
             let snapshot = ProcessInspectionParser.parseLsof(Data(result.standardOutput.utf8))
             check(result.succeeded, "lsof accepts the production machine-readable flags")
+            check(
+                !result.standardError.contains("-b was specified"),
+                "inspection does not generate filesystem warnings by deliberately skipping metadata"
+            )
             let openFile = snapshot.files.first { $0.descriptor == String(descriptor) }
             check(openFile?.pid == getpid() && openFile?.userID == getuid(), "lsof associates the synthetic file with its process")
             let allFields = try CommandRunner.run(
                 "/usr/sbin/lsof",
-                arguments: ["-nP", "-b", "+c", "0", "-a", "-p", String(getpid()), "-F0"],
+                arguments: ProcessInspectionParser.lsofArguments.dropLast() + ["-a", "-p", String(getpid()), "-F0"],
                 environment: ["LC_ALL": "en_US.UTF-8"]
             )
             let allFieldFile = ProcessInspectionParser.parseLsof(Data(allFields.standardOutput.utf8))

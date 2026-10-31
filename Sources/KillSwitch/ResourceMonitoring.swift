@@ -218,7 +218,9 @@ final class ResourceMonitor: ObservableObject {
     }
 
     private let sampler = ResourceSampler()
-    private let samplingQueue = DispatchQueue(label: "killswitch.resources.sampling", qos: .utility)
+    private let samplingQueue = DispatchQueue(
+        label: "killswitch.resources.sampling", qos: .utility, autoreleaseFrequency: .workItem
+    )
     private let logger = Logger(subsystem: "com.killswitch.app", category: "resources")
     private var timer: DispatchSourceTimer?
     private var activeMetric: ResourceMetric?
@@ -229,7 +231,7 @@ final class ResourceMonitor: ObservableObject {
     private var accumulator = ActivityAccumulator()
     private var writeBuffer = ActivityWriteBuffer()
     private var rates = ActivityRateTracker()
-    private var liveSnapshots: [ActivitySnapshot] = []
+    private var liveHistory = ActivityLiveHistory()
     private var archivedProcesses: [ActivityProcessDescriptor] = []
     private var selectedRange: ActivityHistoryRange = .live
     private var selectedProcess: ActivityProcessIdentity?
@@ -280,7 +282,7 @@ final class ResourceMonitor: ObservableObject {
                     throw ActivityHistoryError(message: "the database is unavailable; history could not be cleared.")
                 }
                 try store.clear()
-                self.liveSnapshots.removeAll()
+                self.liveHistory.removeAll()
                 self.archivedProcesses.removeAll()
                 self.accumulator = ActivityAccumulator()
                 self.writeBuffer = ActivityWriteBuffer()
@@ -342,8 +344,7 @@ final class ResourceMonitor: ObservableObject {
             }
 
             let activity = activitySnapshot(snapshot)
-            liveSnapshots.append(activity)
-            liveSnapshots.removeAll { $0.date < snapshot.date.addingTimeInterval(-300) }
+            liveHistory.append(activity)
             if let completed = accumulator.append(activity) {
                 enqueueHistory(completed, now: snapshot.date)
             }
@@ -420,15 +421,17 @@ final class ResourceMonitor: ObservableObject {
         } catch {
             reportHistoryError(error)
         }
-        let live = liveSnapshots.filter { $0.date >= cutoff }.map { $0.point(for: selectedProcess) }
+        let live = liveHistory.snapshots.filter { $0.date >= cutoff }.map { $0.point(for: selectedProcess) }
         if let first = live.first {
             points.removeAll { $0.date >= first.date }
         }
         points.append(contentsOf: live)
 
         var descriptors = Dictionary(uniqueKeysWithValues: archivedProcesses.map { ($0.id, $0) })
-        for sample in liveSnapshots.flatMap(\.processes) {
-            descriptors[sample.process.id] = sample.process
+        for snapshot in liveHistory.snapshots {
+            for sample in snapshot.processes {
+                descriptors[sample.process.id] = sample.process
+            }
         }
         let sorted = descriptors.values.sorted {
             if $0.name != $1.name { return $0.name.localizedStandardCompare($1.name) == .orderedAscending }
@@ -437,7 +440,9 @@ final class ResourceMonitor: ObservableObject {
         }
         DispatchQueue.main.async {
             self.timeline = points
-            self.historyProcesses = sorted
+            if self.historyProcesses != sorted {
+                self.historyProcesses = sorted
+            }
         }
     }
 

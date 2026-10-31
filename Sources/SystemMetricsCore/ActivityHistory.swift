@@ -127,6 +127,32 @@ public struct ActivityHistoryPoint: Identifiable, Equatable, Sendable {
     }
 }
 
+public struct ActivityLiveHistory {
+    public private(set) var snapshots: [ActivitySnapshot] = []
+
+    public init() {}
+
+    public mutating func append(_ snapshot: ActivitySnapshot) {
+        let interval = Double(ResourceSamplingPolicy.continuousIntervalSeconds)
+        let slot = floor(snapshot.date.timeIntervalSince1970 / interval)
+        if let last = snapshots.last, floor(last.date.timeIntervalSince1970 / interval) == slot {
+            snapshots[snapshots.count - 1] = snapshot
+        } else {
+            snapshots.append(snapshot)
+        }
+        let cutoff = snapshot.date.addingTimeInterval(-ActivityHistoryRange.live.seconds)
+        snapshots.removeAll { $0.date < cutoff }
+        let limit = Int(ActivityHistoryRange.live.seconds / interval) + 1
+        if snapshots.count > limit {
+            snapshots.removeFirst(snapshots.count - limit)
+        }
+    }
+
+    public mutating func removeAll() {
+        snapshots.removeAll()
+    }
+}
+
 public enum ActivityHistoryRange: String, CaseIterable, Identifiable, Sendable {
     case live = "Live · 5m"
     case hour = "1 hour"
