@@ -1,4 +1,5 @@
 import Foundation
+import TableQueryCore
 
 public struct DevCleanupProcess: Equatable {
     public let pid: Int32
@@ -66,6 +67,25 @@ public struct DevCleanupConfiguration: Equatable {
         self.indicators = indicators
         self.exclusions = exclusions
     }
+}
+
+public enum DevPortTableFields {
+    public static let port = TableField<PortProcess>.number("port", title: "Port") { Decimal($0.port) }
+    public static let command = TableField<PortProcess>.text("command", title: "Command", aliases: ["name", "process"]) { $0.command }
+    public static let pid = TableField<PortProcess>.number("pid", title: "PID") { Decimal($0.pid) }
+    public static let protected = TableField<PortProcess>.boolean("protected", title: "Protected") {
+        ProcessTerminationPolicy.protectionReason(for: $0.command) != nil
+    }
+    public static let columns = [port, command, pid]
+    public static let all = columns + [protected]
+}
+
+public enum CleanedProcessTableFields {
+    public static let runtime = TableField<CleanedProcess>.text("runtime", title: "Runtime") { $0.runtime }
+    public static let age = TableField<CleanedProcess>.number("age", title: "Age", unit: .seconds) { $0.ageHours * 3_600 }
+    public static let pid = TableField<CleanedProcess>.number("pid", title: "PID") { Decimal($0.pid) }
+    public static let command = TableField<CleanedProcess>.text("command", title: "Command", aliases: ["name", "process"]) { $0.command }
+    public static let all = [runtime, age, pid, command]
 }
 
 public struct DevCleanupScanResult: Equatable {

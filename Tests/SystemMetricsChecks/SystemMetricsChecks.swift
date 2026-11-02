@@ -9,18 +9,21 @@ struct SystemMetricsChecks {
 
     static func main() {
         probeSyntheticLockIfRequested()
-        checkTopParsing()
-        checkNetworkProcessParsing()
-        checkNetworkTotalsParsing()
-        checkBatteryPressureAndAssertions()
-        checkByteAndDurationParsing()
-        checkPSProcessParsing()
-        checkCPUCalculations()
-        checkDiskCapacityCalculations()
-        checkSamplingPolicies()
-        checkResourceChartScales()
-        checkActivityHistory()
-        checkProcessInspection()
+        checkTableQueries()
+        if !CommandLine.arguments.contains("--table-query-checks") {
+            checkTopParsing()
+            checkNetworkProcessParsing()
+            checkNetworkTotalsParsing()
+            checkBatteryPressureAndAssertions()
+            checkByteAndDurationParsing()
+            checkPSProcessParsing()
+            checkCPUCalculations()
+            checkDiskCapacityCalculations()
+            checkSamplingPolicies()
+            checkResourceChartScales()
+            checkActivityHistory()
+            checkProcessInspection()
+        }
 
         if failures.isEmpty {
             print("SystemMetricsChecks: \(checkCount) checks passed")

@@ -64,6 +64,7 @@ terminate real processes.
 
 | Target | Responsibility |
 | --- | --- |
+| [`TableQueryCore`](../Sources/TableQueryCore) | Typed text/numeric/date/boolean filters, unit parsing, quoted search, and bidirectional comparators shared by all data tables |
 | [`DevCleanupCore`](../Sources/DevCleanupCore) | Preferences, integration-port merging, CLI parsing, cleanup classification, and shared termination protection |
 | [`DiskCleanupCore`](../Sources/DiskCleanupCore) | File scanning, cleanup candidates, protected-path checks, and Trash operations |
 | [`KeepAwakeCore`](../Sources/KeepAwakeCore) | IOKit power assertions, timed sessions, and resource cleanup |
@@ -136,6 +137,13 @@ Isolated launch-directory fixtures cover updater placeholders, configuration
 plists, read-only links, duplicate labels per domain, and source revalidation.
 They never change live startup entries, request administrator access, or control
 a desktop application.
+
+For table-query changes, `swift run SystemMetricsChecks --table-query-checks`
+runs only the shared query and activity-field checks. The full command also
+covers inspection filtering and ownership scope. Startup, disk-cleanup, and
+dev-cleanup checks verify their own field definitions without running live
+operations. Numeric sort keys are projected once per row; views reuse each
+filtered snapshot rather than sorting again for every cell.
 
 For memory regressions, run `swift run SystemMetricsChecks --memory-stress`.
 This adds two simulated hours of 5,000 synthetic processes, checks that all

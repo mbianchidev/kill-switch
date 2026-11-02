@@ -6,7 +6,9 @@
 
 The **Resources** tab defaults to the logged-in user's processes. Select
 **All processes** to include root, service accounts, and other users.
-Filter by process name, PID, or user and sort by the selected resource.
+Filter by process name, PID, user, or comparisons such as `CPU% > 40`, and sort
+any data column in either direction. The [filter guide](table-controls.md)
+covers numeric units, predefined values, and resetting filters.
 Application icons and executable names appear where macOS exposes them.
 
 | Mode | Process data | System graph and summary |
@@ -107,7 +109,8 @@ Both use `lsof`'s NUL-delimited field output, with numeric addresses/ports and
 full command names. They refresh
 every ten seconds only while visible. Names with spaces remain intact; control
 characters use `lsof` display escapes. Search and sorting use the displayed
-values. Protected processes, files, and sockets can be omitted by macOS, and
+values for text; numeric comparisons and sorting use underlying counters rather
+than formatted strings. macOS can omit protected processes, files, and sockets;
 short-lived connections between samples may be missed.
 
 Filesystem metadata lookups use `lsof`'s two-second blocking-operation timeout.

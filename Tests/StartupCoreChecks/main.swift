@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import InstallCore
 import StartupCore
+import TableQueryCore
 
 @main
 struct StartupCoreChecks {
@@ -288,6 +289,10 @@ struct StartupCoreChecks {
                 "the same label in different launchd domains is not a duplicate"
             )
             check(snapshot.items.first { $0.name == "org.example.unique" }?.restriction == nil, "unrelated user services remain editable")
+            check(
+                TableQuery(search: "readOnly = no", fields: StartupTableFields.all).filter(snapshot.items).count == 1,
+                "startup read-only filters reflect duplicate and protected-service restrictions"
+            )
         } catch { check(false, "duplicate launch service inventory: \(error.localizedDescription)") }
     }
 
@@ -317,8 +322,14 @@ struct StartupCoreChecks {
             check(snapshot.items.count == 1 && snapshot.warnings.isEmpty, "synthetic launch-directory scans stay isolated and readable")
             let item = try service.readLaunchService(at: url, domain: .gui(getuid()), overrides: [:])
             check(item.state == .enabled, "user launch agents are discoverable from synthetic plists")
+            let query = TableQuery(search: "state = Enabled type = \"Launch agents\"", fields: StartupTableFields.all)
+            check(query.error == nil && query.filter([item]).count == 1, "startup search accepts predefined state and type values")
             let unknown = try service.readLaunchService(at: url, domain: .gui(getuid()), overrides: nil)
             check(unknown.state == .unknown && unknown.restriction != nil, "unverified startup state remains unknown and read-only")
+            check(
+                TableQuery(search: "enabled != no", fields: StartupTableFields.all).filter([unknown]).isEmpty,
+                "unknown startup state is not invented as an enabled boolean filter value"
+            )
             let unknownCalls = runner.commands.count
             do {
                 try service.setEnabled(false, item: unknown)

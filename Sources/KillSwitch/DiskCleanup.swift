@@ -1,6 +1,7 @@
 import AppKit
 import DiskCleanupCore
 import SwiftUI
+import TableQueryCore
 
 // The monitor shares this immutable service across scan workers and its serial Trash worker.
 private final class DiskCleanupServiceBox: @unchecked Sendable {
@@ -556,17 +557,20 @@ final class DiskCleanupMonitor: ObservableObject {
 struct DiskCleanupTab: View {
     @ObservedObject var monitor: DiskCleanupMonitor
     @State private var searchText = ""
+    @State private var sorting = TableComparator(field: DiskCleanupTableFields.size, order: .reverse)
     @State private var pendingTrashItems: [DiskCleanupItem] = []
     @State private var showTrashConfirmation = false
 
     var body: some View {
-        VStack(spacing: 0) {
+        let rows = visibleItems
+        return VStack(spacing: 0) {
             header
             Divider()
             notices
-            browserToolbar
+            browserToolbar(rows)
+            filterToolbar
             Divider()
-            itemBrowser
+            itemBrowser(rows)
             Divider()
             actionBar
         }
@@ -686,7 +690,7 @@ struct DiskCleanupTab: View {
         }
     }
 
-    private var browserToolbar: some View {
+    private func browserToolbar(_ items: [DiskCleanupItem]) -> some View {
         HStack(spacing: 12) {
             if monitor.category == .largestFiles {
                 Label("Largest individual files in your home folders", systemImage: "arrow.down.to.line")
@@ -707,31 +711,26 @@ struct DiskCleanupTab: View {
                     .lineLimit(1)
                     .frame(maxWidth: 230, alignment: .trailing)
             } else {
-                Text("\(visibleItems.count) items - \(formatBytes(visibleBytes))")
+                Text("\(items.count) items - \(formatBytes(items.reduce(UInt64(0)) { $0 + $1.sizeBytes }))")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.white.opacity(0.42))
             }
-
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.white.opacity(0.38))
-                TextField("Filter items", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 11))
-                    .foregroundColor(.white)
-                    .frame(width: 170)
-            }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(Color.black.opacity(0.2))
-                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Theme.border))
-            )
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
         .background(Color.black.opacity(0.12))
+    }
+
+    private var filterToolbar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TableSearchControls(search: $searchText, fields: DiskCleanupTableFields.all, prompt: "Search items, or size > 1GB")
+            HStack {
+                TableSortControls(fields: DiskCleanupTableFields.columns, sorting: $sorting)
+                Spacer()
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
     }
 
     private var breadcrumb: some View {
@@ -763,8 +762,9 @@ struct DiskCleanupTab: View {
     }
 
     @ViewBuilder
-    private var itemBrowser: some View {
-        if visibleItems.isEmpty {
+    private func itemBrowser(_ items: [DiskCleanupItem]) -> some View {
+        let maximumSize = items.map(\.sizeBytes).max() ?? 0
+        if items.isEmpty {
             VStack(spacing: 12) {
                 if monitor.isScanning {
                     ProgressView()
@@ -782,7 +782,7 @@ struct DiskCleanupTab: View {
                     Text(searchText.isEmpty ? monitor.category.emptyMessage : "No matching items")
                         .font(.system(size: 15, weight: .semibold, design: .rounded))
                         .foregroundColor(.white.opacity(0.82))
-                    Text(searchText.isEmpty ? monitor.category.emptyDetail : "Try a different file or folder name.")
+                    Text(searchText.isEmpty ? monitor.category.emptyDetail : "Change or reset the filters.")
                         .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.4))
                 }
@@ -793,13 +793,13 @@ struct DiskCleanupTab: View {
             ScrollView([.horizontal, .vertical]) {
                 LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
                     Section {
-                        ForEach(visibleItems) { item in
+                        ForEach(items) { item in
                             DiskCleanupRow(
                                 item: item,
                                 path: monitor.abbreviatedPath(item.url),
-                                sizeRatio: maximumVisibleSize == 0
+                                sizeRatio: maximumSize == 0
                                     ? 0
-                                    : Double(item.sizeBytes) / Double(maximumVisibleSize),
+                                    : Double(item.sizeBytes) / Double(maximumSize),
                                 isSelected: monitor.selectedIDs.contains(item.id),
                                 canNavigate: item.kind == .directory && monitor.category != .largestFiles,
                                 isScanning: monitor.isScanning,
@@ -813,7 +813,7 @@ struct DiskCleanupTab: View {
                             )
                         }
                     } header: {
-                        tableHeader
+                        tableHeader(items)
                     }
                 }
                 .frame(minWidth: 960, alignment: .leading)
@@ -822,29 +822,31 @@ struct DiskCleanupTab: View {
         }
     }
 
-    private var tableHeader: some View {
-        HStack(spacing: 10) {
+    private func tableHeader(_ items: [DiskCleanupItem]) -> some View {
+        let selectable = items.filter(\.canTrash)
+        let allSelected = !selectable.isEmpty && selectable.allSatisfy { monitor.selectedIDs.contains($0.id) }
+        return HStack(spacing: 10) {
             Button {
-                monitor.setSelection(!allVisibleSelected, for: visibleItems)
+                monitor.setSelection(!allSelected, for: items)
             } label: {
-                Image(systemName: allVisibleSelected ? "checkmark.square.fill" : "square")
-                    .foregroundColor(allVisibleSelected ? Theme.diskCleanupAccent : .white.opacity(0.35))
+                Image(systemName: allSelected ? "checkmark.square.fill" : "square")
+                    .foregroundColor(allSelected ? Theme.diskCleanupAccent : .white.opacity(0.35))
             }
             .buttonStyle(.plain)
-            .help(allVisibleSelected ? "Deselect all visible items" : "Select all visible items")
+            .help(allSelected ? "Deselect all visible items" : "Select all visible items")
             .accessibilityLabel(
-                allVisibleSelected ? "Deselect all visible items" : "Select all visible items"
+                allSelected ? "Deselect all visible items" : "Select all visible items"
             )
-            .disabled(selectableVisibleItems.isEmpty || monitor.isTrashing)
+            .disabled(selectable.isEmpty || monitor.isTrashing)
             .frame(width: 22)
 
-            Text("ITEM")
+            TableSortHeader(field: DiskCleanupTableFields.name, sorting: $sorting, title: "ITEM")
                 .frame(minWidth: 430, maxWidth: .infinity, alignment: .leading)
-            Text("CONTENTS")
+            TableSortHeader(field: DiskCleanupTableFields.contents, sorting: $sorting, title: "CONTENTS")
                 .frame(width: 90, alignment: .leading)
-            Text("MODIFIED")
+            TableSortHeader(field: DiskCleanupTableFields.modified, sorting: $sorting, title: "MODIFIED")
                 .frame(width: 130, alignment: .leading)
-            Text("SPACE USED")
+            TableSortHeader(field: DiskCleanupTableFields.size, sorting: $sorting, title: "SPACE USED", alignment: .trailing)
                 .frame(width: 100, alignment: .trailing)
             Color.clear.frame(width: 58)
         }
@@ -936,33 +938,12 @@ struct DiskCleanupTab: View {
     }
 
     private var visibleItems: [DiskCleanupItem] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return monitor.items }
-        return monitor.items.filter {
-            $0.name.localizedCaseInsensitiveContains(query)
-                || monitor.abbreviatedPath($0.url).localizedCaseInsensitiveContains(query)
-        }
-    }
-
-    private var selectableVisibleItems: [DiskCleanupItem] {
-        visibleItems.filter(\.canTrash)
-    }
-
-    private var allVisibleSelected: Bool {
-        !selectableVisibleItems.isEmpty
-            && selectableVisibleItems.allSatisfy { monitor.selectedIDs.contains($0.id) }
-    }
-
-    private var visibleBytes: UInt64 {
-        visibleItems.reduce(UInt64(0)) { $0 + $1.sizeBytes }
+        TableQuery(search: searchText, fields: DiskCleanupTableFields.all)
+            .apply(to: monitor.items, sorting: sorting, identity: \.id)
     }
 
     private var selectedBytes: UInt64 {
         monitor.selectedItems.reduce(UInt64(0)) { $0 + $1.sizeBytes }
-    }
-
-    private var maximumVisibleSize: UInt64 {
-        visibleItems.map(\.sizeBytes).max() ?? 0
     }
 
     private var scanProgressText: String {

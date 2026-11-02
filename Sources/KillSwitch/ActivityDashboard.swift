@@ -1,11 +1,13 @@
 import Charts
 import SwiftUI
 import SystemMetricsCore
+import TableQueryCore
 
 struct ActivityDashboard: View {
     @ObservedObject var monitor: ResourceMonitor
     @State private var search = ""
     @State private var selectedDate: Date?
+    @State private var sorting = TableComparator(field: ActivityTableFields.cpu, order: .reverse)
 
     private let metrics: [ResourceMetric] = [.cpu, .memory, .network, .disk]
 
@@ -58,30 +60,32 @@ struct ActivityDashboard: View {
                 HStack {
                     Text("Live processes")
                         .font(.system(size: 13, weight: .semibold))
-                    TextField("Search process, PID, or user", text: $search)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 330)
+                    TableSortControls(fields: ActivityTableFields.columns, sorting: $sorting)
                     Spacer()
                     Text("Select a process to compare all four histories")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                 }
-                Table(liveProcesses, selection: $monitor.focusedProcess) {
-                    TableColumn("Process") { Text($0.process.name) }
+                TableSearchControls(
+                    search: $search, fields: ActivityTableFields.all, prompt: "Search processes, or CPU% > 40",
+                    resetAdditional: { monitor.showAllUsers = false }
+                )
+                Table(liveProcesses, selection: $monitor.focusedProcess, sortOrder: tableSortOrder($sorting)) {
+                    TableColumn("Process", sortUsing: TableComparator(field: ActivityTableFields.name)) { Text($0.process.name) }
                         .width(min: 140, ideal: 180)
-                    TableColumn("PID") { Text(String($0.process.identity.pid)) }
+                    TableColumn("PID", sortUsing: TableComparator(field: ActivityTableFields.pid)) { Text(String($0.process.identity.pid)) }
                         .width(55)
-                    TableColumn("CPU") { Text(formatActivityValue($0.values.cpu, metric: .cpu)) }
+                    TableColumn("CPU", sortUsing: TableComparator(field: ActivityTableFields.cpu)) { Text(formatActivityValue($0.values.cpu, metric: .cpu)) }
                         .width(75)
-                    TableColumn("Memory") { Text(formatActivityValue($0.values.memory, metric: .memory)) }
+                    TableColumn("Memory", sortUsing: TableComparator(field: ActivityTableFields.memory)) { Text(formatActivityValue($0.values.memory, metric: .memory)) }
                         .width(90)
-                    TableColumn("Received/s") { Text(formatByteRate($0.values.received)) }
+                    TableColumn("Received/s", sortUsing: TableComparator(field: ActivityTableFields.received)) { Text(formatByteRate($0.values.received)) }
                         .width(100)
-                    TableColumn("Sent/s") { Text(formatByteRate($0.values.sent)) }
+                    TableColumn("Sent/s", sortUsing: TableComparator(field: ActivityTableFields.sent)) { Text(formatByteRate($0.values.sent)) }
                         .width(100)
-                    TableColumn("Read/s") { Text(formatByteRate($0.values.diskRead)) }
+                    TableColumn("Read/s", sortUsing: TableComparator(field: ActivityTableFields.read)) { Text(formatByteRate($0.values.diskRead)) }
                         .width(100)
-                    TableColumn("Written/s") { Text(formatByteRate($0.values.diskWritten)) }
+                    TableColumn("Written/s", sortUsing: TableComparator(field: ActivityTableFields.written)) { Text(formatByteRate($0.values.diskWritten)) }
                         .width(100)
                 }
                 .font(.system(size: 11, design: .monospaced))
@@ -145,15 +149,11 @@ struct ActivityDashboard: View {
     }
 
     private var liveProcesses: [ActivityProcessSample] {
-        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (monitor.liveActivity?.processes ?? []).filter {
-            (monitor.showAllUsers || $0.process.user == monitor.currentUsername)
-                && (query.isEmpty || [$0.process.name, $0.process.user, String($0.process.identity.pid)]
-                    .contains { $0.localizedCaseInsensitiveContains(query) })
-        }.sorted {
-            if ($0.values.cpu ?? -1) != ($1.values.cpu ?? -1) { return ($0.values.cpu ?? -1) > ($1.values.cpu ?? -1) }
-            return $0.process.identity.pid < $1.process.identity.pid
+        let scoped = (monitor.liveActivity?.processes ?? []).filter {
+            monitor.showAllUsers || $0.process.user == monitor.currentUsername
         }
+        return TableQuery(search: search, fields: ActivityTableFields.all)
+            .apply(to: scoped, sorting: sorting, identity: { $0.process.identity.key })
     }
 }
 
@@ -194,10 +194,20 @@ struct ActivityHistoryControls: View {
             .frame(maxWidth: 260, alignment: .leading)
             .accessibilityLabel("History for \(focusedTitle)")
 
-            TextField("Find historical process", text: $processSearch)
-                .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: 200)
-                .help("Filter the History for menu, including exited processes")
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 4) {
+                    TextField("Find process, or pid > 100", text: $processSearch)
+                        .textFieldStyle(.roundedBorder)
+                        .help("Filter historical names, PIDs, or users, including exited processes. For example: name:worker pid > 100")
+                    Button { processSearch = "" } label: { Image(systemName: "xmark.circle") }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Reset history process search")
+                }
+                if let error = TableQuery(search: processSearch, fields: HistoricalProcessFields.all).error {
+                    TableQueryErrorLabel(message: error)
+                }
+            }
+            .frame(maxWidth: 230)
 
             Picker("History range", selection: $monitor.historyRange) {
                 ForEach(ActivityHistoryRange.allCases) { range in
@@ -227,10 +237,10 @@ struct ActivityHistoryControls: View {
     }
 
     private var availableProcesses: [ActivityProcessDescriptor] {
-        monitor.historyProcesses.filter {
+        let query = TableQuery(search: processSearch, fields: HistoricalProcessFields.all)
+        return monitor.historyProcesses.filter {
             (monitor.showAllUsers || $0.user == monitor.currentUsername)
-                && (processSearch.isEmpty || [$0.name, $0.user, String($0.identity.pid)]
-                    .contains { $0.localizedCaseInsensitiveContains(processSearch) })
+                && query.matches($0)
         }
     }
 }

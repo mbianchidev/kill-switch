@@ -1,4 +1,5 @@
 import Foundation
+import TableQueryCore
 
 public enum DiskCleanupCategory: String, CaseIterable, Hashable, Sendable {
     case largestFiles
@@ -53,6 +54,27 @@ public struct DiskCleanupProgress: Equatable, Sendable {
         self.scannedEntryCount = scannedEntryCount
         self.currentURL = currentURL
     }
+}
+
+public enum DiskCleanupTableFields {
+    public static let name = TableField<DiskCleanupItem>.text("name", title: "Item") { $0.name }
+    public static let path = TableField<DiskCleanupItem>.text("path", title: "Path") { $0.url.path }
+    public static let shortPath = TableField<DiskCleanupItem>.text("shortPath", title: "Abbreviated path") {
+        ($0.url.standardizedFileURL.path as NSString).abbreviatingWithTildeInPath
+    }
+    public static let kind = TableField<DiskCleanupItem>.text("type", title: "Type", aliases: ["kind"], values: ["File", "Folder", "Package"]) {
+        switch $0.kind {
+        case .file: return "File"
+        case .directory: return "Folder"
+        case .package: return "Package"
+        }
+    }
+    public static let contents = TableField<DiskCleanupItem>.number("contents", title: "Contents", aliases: ["count", "files"]) { Decimal($0.fileCount) }
+    public static let modified = TableField<DiskCleanupItem>.date("modified", title: "Modified") { $0.modificationDate }
+    public static let size = TableField<DiskCleanupItem>.number("size", title: "Space used", aliases: ["bytes"], unit: .bytes) { Decimal($0.sizeBytes) }
+    public static let removable = TableField<DiskCleanupItem>.boolean("removable", title: "Can move to Trash") { $0.canTrash }
+    public static let columns = [name, path, kind, contents, modified, size]
+    public static let all = columns + [shortPath, removable]
 }
 
 public struct DiskCleanupScanResult: Equatable, Sendable {

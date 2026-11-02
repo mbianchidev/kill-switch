@@ -7,6 +7,11 @@ running process. Search by app/service name, command, or path; filter by entry
 type and enabled state, then choose a sort field and direction. Select a row
 to read its complete source and command.
 
+Every data-column header supports both sort directions. Search also accepts
+comparisons such as `state = Enabled` or `readOnly = no`. **Reset filters**
+clears search and restores the type/state pickers; see the
+[shared filter guide](table-controls.md).
+
 ## Supported entries
 
 | Entry | Discovery | Control |

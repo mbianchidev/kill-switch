@@ -1,4 +1,5 @@
 import Foundation
+import TableQueryCore
 
 public struct OpenFileRecord: Identifiable, Equatable, Sendable {
     public let pid: Int32
@@ -53,6 +54,14 @@ public struct NetworkConnectionRecord: Identifiable, Equatable, Sendable {
     public var id: String { "\(pid)/\(descriptor)/\(protocolName)/\(local)/\(remote ?? "")" }
     public var isListening: Bool { state == "LISTEN" }
     public var isActive: Bool { remote != nil && state != "CLOSED" && !isListening }
+    public var protocolDescription: String { family == "unix" ? protocolName : "\(protocolName) \(family)" }
+    public var localPort: UInt16? { port(in: local) }
+    public var remotePort: UInt16? { port(in: remote) }
+
+    private func port(in endpoint: String?) -> UInt16? {
+        guard family != "unix", let last = endpoint?.split(separator: ":").last else { return nil }
+        return UInt16(last)
+    }
 }
 
 public struct ProcessInspectionSnapshot: Sendable {
@@ -137,7 +146,24 @@ public enum OpenFileSort: String, CaseIterable, Identifiable, Sendable {
     case descriptor = "Descriptor"
     case size = "Size"
     case lock = "Lock"
+    case user = "User"
+    case access = "Access"
+    case kind = "Type"
     public var id: Self { self }
+
+    var field: TableField<OpenFileRecord> {
+        switch self {
+        case .path: return OpenFileTableFields.path
+        case .process: return OpenFileTableFields.process
+        case .pid: return OpenFileTableFields.pid
+        case .descriptor: return OpenFileTableFields.descriptor
+        case .size: return OpenFileTableFields.size
+        case .lock: return OpenFileTableFields.lock
+        case .user: return OpenFileTableFields.user
+        case .access: return OpenFileTableFields.access
+        case .kind: return OpenFileTableFields.kind
+        }
+    }
 }
 
 public struct OpenFileQuery {
@@ -162,27 +188,21 @@ public struct OpenFileQuery {
         self.ascending = ascending
     }
 
+    public var tableQuery: TableQuery<OpenFileRecord> { TableQuery(search: search, fields: OpenFileTableFields.all) }
+
+    public func matching(_ files: [OpenFileRecord]) -> [OpenFileRecord] { tableQuery.filter(scoped(files)) }
+
     public func apply(to files: [OpenFileRecord]) -> [OpenFileRecord] {
-        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        return files.filter { file in
+        tableQuery.apply(
+            to: scoped(files), sorting: TableComparator(field: sort.field, order: ascending ? .forward : .reverse),
+            identity: \.id
+        )
+    }
+
+    private func scoped(_ files: [OpenFileRecord]) -> [OpenFileRecord] {
+        files.filter { file in
             (userID == nil || file.userID == userID) && (pid == nil || file.pid == pid)
                 && (!locksOnly || file.hasLock) && (kind == nil || file.kind == kind)
-                && (query.isEmpty || [file.path, file.process, file.user, String(file.pid)]
-                    .contains { $0.localizedCaseInsensitiveContains(query) }
-                    || (file.hasLock && file.lockDescription.localizedCaseInsensitiveContains(query)))
-        }.sorted { left, right in
-            let comparison: ComparisonResult
-            switch sort {
-            case .size: comparison = compare(left.size, right.size)
-            case .pid: comparison = compare(left.pid, right.pid)
-            case .descriptor:
-                comparison = left.descriptor.localizedStandardCompare(right.descriptor)
-            case .path: comparison = left.path.localizedStandardCompare(right.path)
-            case .process: comparison = left.process.localizedStandardCompare(right.process)
-            case .lock: comparison = left.lockDescription.localizedStandardCompare(right.lockDescription)
-            }
-            let order = comparison == .orderedSame ? left.id.compare(right.id) : comparison
-            return ascending ? order == .orderedAscending : order == .orderedDescending
         }
     }
 }
@@ -201,7 +221,20 @@ public enum NetworkConnectionSort: String, CaseIterable, Identifiable, Sendable 
     case remote = "Remote endpoint"
     case state = "State"
     case protocolName = "Protocol"
+    case user = "User"
     public var id: Self { self }
+
+    var field: TableField<NetworkConnectionRecord> {
+        switch self {
+        case .process: return ConnectionTableFields.process
+        case .pid: return ConnectionTableFields.pid
+        case .local: return ConnectionTableFields.local
+        case .remote: return ConnectionTableFields.remote
+        case .state: return ConnectionTableFields.state
+        case .protocolName: return ConnectionTableFields.protocolName
+        case .user: return ConnectionTableFields.user
+        }
+    }
 }
 
 public struct NetworkConnectionQuery {
@@ -222,35 +255,23 @@ public struct NetworkConnectionQuery {
         self.ascending = ascending
     }
 
+    public var tableQuery: TableQuery<NetworkConnectionRecord> { TableQuery(search: search, fields: ConnectionTableFields.all) }
+
+    public func matching(_ connections: [NetworkConnectionRecord]) -> [NetworkConnectionRecord] {
+        tableQuery.filter(scoped(connections))
+    }
+
     public func apply(to connections: [NetworkConnectionRecord]) -> [NetworkConnectionRecord] {
-        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        return connections.filter { row in
+        tableQuery.apply(
+            to: scoped(connections), sorting: TableComparator(field: sort.field, order: ascending ? .forward : .reverse),
+            identity: \.id
+        )
+    }
+
+    private func scoped(_ connections: [NetworkConnectionRecord]) -> [NetworkConnectionRecord] {
+        connections.filter { row in
             (userID == nil || row.userID == userID)
                 && (filter != .listening || row.isListening) && (filter != .active || row.isActive)
-                && (query.isEmpty || [
-                    row.process, String(row.pid), row.user, row.local, row.remote ?? "", row.state, row.protocolName
-                ].contains { $0.localizedCaseInsensitiveContains(query) })
-        }.sorted { left, right in
-            let comparison: ComparisonResult
-            switch sort {
-            case .pid: comparison = compare(left.pid, right.pid)
-            case .process: comparison = left.process.localizedStandardCompare(right.process)
-            case .local: comparison = left.local.localizedStandardCompare(right.local)
-            case .remote: comparison = (left.remote ?? "").localizedStandardCompare(right.remote ?? "")
-            case .state: comparison = left.state.compare(right.state)
-            case .protocolName: comparison = left.protocolName.compare(right.protocolName)
-            }
-            let order = comparison == .orderedSame ? left.id.compare(right.id) : comparison
-            return ascending ? order == .orderedAscending : order == .orderedDescending
         }
-    }
-}
-
-private func compare<T: Comparable>(_ left: T?, _ right: T?) -> ComparisonResult {
-    switch (left, right) {
-    case let (left?, right?): return left == right ? .orderedSame : (left < right ? .orderedAscending : .orderedDescending)
-    case (nil, nil): return .orderedSame
-    case (nil, _): return .orderedAscending
-    case (_, nil): return .orderedDescending
     }
 }

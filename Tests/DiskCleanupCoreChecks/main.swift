@@ -1,11 +1,13 @@
 import DiskCleanupCore
 import Foundation
+import TableQueryCore
 
 struct CheckRunner {
     private var failures = 0
     private let fileManager = FileManager.default
 
     mutating func run() -> Int32 {
+        checkTableQueries()
         check(
             DiskCleanupError.invalidScanLocation("/tmp/example").localizedDescription
                 == "Refusing to scan this cleanup location: /tmp/example",
@@ -36,6 +38,30 @@ struct CheckRunner {
         }
         fputs("\(failures) DiskCleanupCore check(s) failed.\n", stderr)
         return 1
+    }
+
+    private mutating func checkTableQueries() {
+        let file = DiskCleanupItem(
+            url: URL(fileURLWithPath: "/tmp/example-file"), name: "Example file", kind: .file,
+            sizeBytes: 2_048, fileCount: 1, modificationDate: nil, protectionReason: nil
+        )
+        let folder = DiskCleanupItem(
+            url: URL(fileURLWithPath: "/tmp/example-folder"), name: "Example folder", kind: .directory,
+            sizeBytes: 1_048_576, fileCount: 20, modificationDate: Date(timeIntervalSince1970: 0),
+            protectionReason: "Synthetic protected root"
+        )
+        let rows = [folder, file]
+        let query = TableQuery(search: "size > 1KB type = File removable = yes", fields: DiskCleanupTableFields.all)
+        check(query.error == nil && query.filter(rows) == [file], "disk search combines size, type, and removable filters")
+        check(
+            TableQuery(search: "contents >= 10 type = Folder", fields: DiskCleanupTableFields.all).filter(rows) == [folder]
+                && !folder.canTrash,
+            "filtering disk rows never removes their protected-file restriction"
+        )
+        check(
+            TableComparator(field: DiskCleanupTableFields.size).sorted(rows, identity: \.id) == [file, folder],
+            "disk rows sort by numeric bytes rather than formatted size"
+        )
     }
 
     private mutating func checkScanning(in fixtureRoot: URL) throws {

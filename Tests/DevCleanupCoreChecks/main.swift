@@ -1,6 +1,7 @@
 import Foundation
 import Darwin
 import DevCleanupCore
+import TableQueryCore
 
 struct CheckRunner {
     private var failures = 0
@@ -12,6 +13,7 @@ struct CheckRunner {
         checkProcessErrors()
         checkProcessTerminationPolicy()
         checkCleanupService()
+        checkTableQueries()
 
         if failures == 0 {
             print("All DevCleanupCore checks passed.")
@@ -19,6 +21,23 @@ struct CheckRunner {
         }
         fputs("\(failures) DevCleanupCore check(s) failed.\n", stderr)
         return 1
+    }
+
+    private mutating func checkTableQueries() {
+        let low = PortProcess(id: "low", pid: 10, command: "/usr/bin/example-worker --serve", port: 3_000)
+        let high = PortProcess(id: "high", pid: 2, command: "/usr/bin/other-worker --serve", port: 9_000)
+        let query = TableQuery(search: "port >= 8000 protected = no", fields: DevPortTableFields.all)
+        check(query.error == nil && query.filter([low, high]) == [high], "dev server filters combine numeric ports and protection state")
+        check(
+            TableComparator(field: DevPortTableFields.pid).sorted([low, high], identity: \.id) == [high, low],
+            "dev server PIDs sort numerically"
+        )
+        let older = CleanedProcess(pid: 10, command: "example --serve", runtime: "example-runtime", ageHours: 24)
+        let newer = CleanedProcess(pid: 2, command: "example --serve", runtime: "example-runtime", ageHours: 1)
+        check(
+            TableQuery(search: "age > 12h runtime:example", fields: CleanedProcessTableFields.all).filter([older, newer]) == [older],
+            "cleanup history age filters use the recorded age with duration units"
+        )
     }
 
     private mutating func checkParser() {
