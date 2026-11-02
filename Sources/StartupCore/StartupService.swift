@@ -11,15 +11,27 @@ public final class StartupService {
     private let currentUID: UInt32
     private let stateDirectory: URL
     private let runner: StartupCommandRunning
+    private let launchServiceDirectories: [(url: URL, domain: StartupDomain)]
     private let manager = FileManager.default
     private var cachedSystemCron: [StartupItem] = []
     private var cachedBackgroundItems: [StartupItem] = []
 
-    public init(home: URL, currentUID: UInt32, stateDirectory: URL, runner: StartupCommandRunning = NativeStartupCommandRunner()) {
+    public init(
+        home: URL, currentUID: UInt32, stateDirectory: URL,
+        runner: StartupCommandRunning = NativeStartupCommandRunner(),
+        launchServiceDirectories: [(url: URL, domain: StartupDomain)]? = nil
+    ) {
         self.home = home
         self.currentUID = currentUID
         self.stateDirectory = stateDirectory
         self.runner = runner
+        self.launchServiceDirectories = launchServiceDirectories ?? [
+            (home.appendingPathComponent("Library/LaunchAgents"), .gui(currentUID)),
+            (URL(fileURLWithPath: "/Library/LaunchAgents"), .gui(currentUID)),
+            (URL(fileURLWithPath: "/Library/LaunchDaemons"), .system),
+            (URL(fileURLWithPath: "/System/Library/LaunchAgents"), .gui(currentUID)),
+            (URL(fileURLWithPath: "/System/Library/LaunchDaemons"), .system)
+        ]
     }
 
     public func scan(
@@ -27,13 +39,7 @@ public final class StartupService {
     ) -> StartupSnapshot {
         var items: [StartupItem] = []
         var warnings: [String] = []
-        let locations: [(URL, StartupDomain)] = [
-            (home.appendingPathComponent("Library/LaunchAgents"), .gui(currentUID)),
-            (URL(fileURLWithPath: "/Library/LaunchAgents"), .gui(currentUID)),
-            (URL(fileURLWithPath: "/Library/LaunchDaemons"), .system),
-            (URL(fileURLWithPath: "/System/Library/LaunchAgents"), .gui(currentUID)),
-            (URL(fileURLWithPath: "/System/Library/LaunchDaemons"), .system)
-        ]
+        var serviceIndices: [String: Int] = [:]
         var overrides: [String: [String: Bool]] = [:]
         for domain in [StartupDomain.gui(currentUID), .system] {
             do {
@@ -41,17 +47,20 @@ public final class StartupService {
                 overrides[domain.target] = try StartupParsers.disabledServices(result.output)
             } catch { warnings.append("\(domain.label) services: \(error.localizedDescription)") }
         }
-        for (directory, domain) in locations {
+        for (directory, domain) in launchServiceDirectories {
             guard manager.fileExists(atPath: directory.path) else { continue }
             do {
                 for url in try manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).sorted(by: { $0.path < $1.path })
                 where url.pathExtension == "plist" {
                     do {
-                        let item = try readLaunchService(at: url, domain: domain, overrides: overrides[domain.target])
-                        if let index = items.firstIndex(where: { $0.id == item.id }) {
-                            items[index].restriction = "Multiple startup files use this service label. Manage it manually."
-                            warnings.append("Duplicate service label: \(item.name)")
-                        } else { items.append(item) }
+                        guard var item = try launchServiceItem(at: url, domain: domain, overrides: overrides[domain.target]) else { continue }
+                        let target = "\(domain.target)/\(item.name)"
+                        if let index = serviceIndices[target] {
+                            let restriction = "Multiple startup files use this service label in the same launchd domain. Manage it manually."
+                            items[index].restriction = restriction
+                            item.restriction = restriction
+                        } else { serviceIndices[target] = items.count }
+                        items.append(item)
                     } catch { warnings.append("\(url.lastPathComponent): \(error.localizedDescription)") }
                 }
             } catch { warnings.append("\(directory.path): \(error.localizedDescription)") }
@@ -96,29 +105,45 @@ public final class StartupService {
     public func readLaunchService(
         at url: URL, domain: StartupDomain, overrides: [String: Bool]?
     ) throws -> StartupItem {
-        let roots: [URL]
-        switch domain {
-        case let .gui(uid):
-            guard uid == currentUID else { throw StartupError("Other users' services are read-only.") }
-            roots = [
-                home.appendingPathComponent("Library/LaunchAgents"), URL(fileURLWithPath: "/Library/LaunchAgents"),
-                URL(fileURLWithPath: "/System/Library/LaunchAgents")
-            ]
-        case .system:
-            roots = [URL(fileURLWithPath: "/Library/LaunchDaemons"), URL(fileURLWithPath: "/System/Library/LaunchDaemons")]
+        guard let item = try launchServiceItem(at: url, domain: domain, overrides: overrides) else {
+            throw StartupError("This startup file is not a launch service definition.")
         }
-        guard roots.contains(where: { $0.standardizedFileURL == url.deletingLastPathComponent().standardizedFileURL }) else {
+        return item
+    }
+
+    private func launchServiceItem(
+        at url: URL, domain: StartupDomain, overrides: [String: Bool]?
+    ) throws -> StartupItem? {
+        if case let .gui(uid) = domain, uid != currentUID {
+            throw StartupError("Other users' services are read-only.")
+        }
+        guard launchServiceDirectories.contains(where: {
+            $0.domain == domain && $0.url.standardizedFileURL == url.deletingLastPathComponent().standardizedFileURL
+        }) else {
             throw StartupError("This file is outside the supported startup directories.")
         }
         let attributes = try manager.attributesOfItem(atPath: url.path)
         let parent = try manager.attributesOfItem(atPath: url.deletingLastPathComponent().path)
-        guard attributes[.type] as? FileAttributeType == .typeRegular,
+        let isLinked = attributes[.type] as? FileAttributeType == .typeSymbolicLink
+        guard attributes[.type] as? FileAttributeType == .typeRegular || isLinked,
               parent[.type] as? FileAttributeType == .typeDirectory else {
             throw StartupError("Linked or non-file startup entries are read-only.")
         }
-        let data = try Data(contentsOf: url)
-        guard let plist = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-              let label = plist["Label"] as? String else {
+        let contentsURL = isLinked ? url.resolvingSymlinksInPath() : url
+        if isLinked {
+            let target = try manager.attributesOfItem(atPath: contentsURL.path)
+            guard target[.type] as? FileAttributeType == .typeRegular else {
+                throw StartupError("Linked startup entries must point to a readable regular file.")
+            }
+        }
+        let data = try Data(contentsOf: contentsURL)
+        guard let plist = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+            throw StartupError("This startup file does not contain a property-list dictionary.")
+        }
+        let launchKeys = ["Program", "ProgramArguments", "BundleProgram", "MachServices", "Sockets", "LaunchEvents"]
+        if plist["Label"] == nil && !launchKeys.contains(where: { plist[$0] != nil }) { return nil }
+        guard let label = plist["Label"] as? String,
+              !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw StartupError("This startup file does not have a readable service label.")
         }
         let arguments = plist["ProgramArguments"] as? [String] ?? []
@@ -126,18 +151,19 @@ public final class StartupService {
         let service = LaunchService(
             label: label, url: url, domain: domain, program: program, fingerprint: startupFingerprint(data)
         )
-        var restriction: String?
+        var restriction: String? = isLinked ? "Linked startup entries are read-only." : nil
         do { _ = try StartupCommandPlanner.launchService(service, enabled: false, currentUID: currentUID) }
-        catch { restriction = error.localizedDescription }
+        catch { restriction = restriction ?? error.localizedDescription }
         let owner = (attributes[.ownerAccountID] as? NSNumber)?.uint32Value
-        let isHomeFile = url.path.hasPrefix(home.appendingPathComponent("Library/LaunchAgents").path + "/")
+        let isHomeFile = url.deletingLastPathComponent().standardizedFileURL
+            == home.appendingPathComponent("Library/LaunchAgents").standardizedFileURL
         if owner != (isHomeFile ? currentUID : 0) {
             restriction = "This startup file has unexpected ownership and is read-only."
         }
         if overrides == nil { restriction = restriction ?? "Startup state could not be verified. Refresh before changing this entry." }
         let disabled = overrides?[label] ?? (plist["Disabled"] as? Bool ?? false)
         return StartupItem(
-            id: "service/\(domain.target)/\(label)", name: label,
+            id: "service/\(domain.target)/\(url.path)", name: label,
             kind: domain == .system ? .daemon : .agent, domain: domain,
             command: arguments.isEmpty ? program : arguments.joined(separator: " "), origin: url.path,
             state: overrides == nil ? .unknown : (disabled ? .disabled : .enabled),

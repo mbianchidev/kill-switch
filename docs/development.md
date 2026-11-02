@@ -132,6 +132,8 @@ create a loopback listener to verify real `lsof` output. Lock fields are compare
 with the installed collector's complete output because macOS can omit them.
 Startup checks use mock command runners, temporary files, and a private fake
 crontab executable to exercise staging, hashes, installation, and cleanup.
+Isolated launch-directory fixtures cover updater placeholders, configuration
+plists, read-only links, duplicate labels per domain, and source revalidation.
 They never change live startup entries, request administrator access, or control
 a desktop application.
 
