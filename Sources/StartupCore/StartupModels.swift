@@ -109,9 +109,9 @@ public struct StartupError: LocalizedError {
 
 public enum StartupTableFields {
     public static let name = TableField<StartupItem>.text("name", title: "Name / schedule", aliases: ["label", "schedule"]) { $0.name }
-    public static let kind = TableField<StartupItem>.text("type", title: "Type", aliases: ["kind"], values: StartupKind.allCases.map(\.rawValue)) { $0.kind.rawValue }
-    public static let scope = TableField<StartupItem>.text("scope", title: "Scope", aliases: ["domain"], values: ["My account", "System"]) { $0.domain.label }
-    public static let state = TableField<StartupItem>.text("state", title: "State", values: StartupState.allCases.map(\.rawValue)) { $0.state.rawValue }
+    public static let kind = TableField<StartupItem>.text("type", title: "Type", aliases: ["kind"], values: StartupKind.allCases.map(\.rawValue), searchable: false) { $0.kind.rawValue }
+    public static let scope = TableField<StartupItem>.text("scope", title: "Scope", aliases: ["domain"], values: ["My account", "System"], searchable: false) { $0.domain.label }
+    public static let state = TableField<StartupItem>.text("state", title: "State", values: StartupState.allCases.map(\.rawValue), searchable: false) { $0.state.rawValue }
     public static let command = TableField<StartupItem>.text("command", title: "Command / app", aliases: ["app", "program"]) { $0.command }
     public static let origin = TableField<StartupItem>.text("path", title: "Source path", aliases: ["origin"]) { $0.origin }
     public static let enabled = TableField<StartupItem>.boolean("enabled", title: "Enabled") {

@@ -10,6 +10,7 @@ struct SystemMetricsChecks {
     static func main() {
         probeSyntheticLockIfRequested()
         checkTableQueries()
+        checkResourceAvailability()
         if !CommandLine.arguments.contains("--table-query-checks") {
             checkTopParsing()
             checkNetworkProcessParsing()
@@ -119,6 +120,9 @@ struct SystemMetricsChecks {
          -InternalBattery-0 (id=1)\t100%; charged; 0:00 remaining present: true
         """
         let assertions = """
+        Assertion status system-wide:
+           PreventUserIdleSystemSleep 1
+        Listed by owning process:
         pid 100(one): [x] PreventUserIdleSystemSleep named: "work"
         pid 200(two): [x] UserIsActive named: "input"
         pid 300(three): [x] PreventUserIdleDisplaySleep named: "display"

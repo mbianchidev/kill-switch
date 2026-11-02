@@ -13,7 +13,7 @@ struct TableSearchControls<Row>: View {
             HStack(spacing: 8) {
                 TextField(prompt, text: $search)
                     .textFieldStyle(.roundedBorder)
-                    .help("Search text, or combine comparisons such as field > value. Filters update as you type.")
+                    .help("Search identifying text, or compare other fields using field > value. AND separates clauses. Filters update as you type.")
                 Button { showFilter = true } label: { Label("Filter", systemImage: "line.3.horizontal.decrease.circle") }
                     .disabled(fields.isEmpty)
                     .popover(isPresented: $showFilter) {
@@ -116,8 +116,7 @@ private struct TableFilterEditor<Row>: View {
         guard let field else { return search }
         let value = field.kind == .text ? TableFilterSyntax.quoted(value) : value.trimmingCharacters(in: .whitespacesAndNewlines)
         let clause = "\(field.id) \(operation) \(value)"
-        let existing = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        return existing.isEmpty ? clause : existing + " " + clause
+        return TableFilterSyntax.appending(clause, to: search)
     }
     private var candidateQuery: TableQuery<Row> { TableQuery(search: candidate, fields: fields) }
 

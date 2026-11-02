@@ -23,7 +23,7 @@ struct CPUAlertRecord: Identifiable {
 
 private enum OffenderTableFields {
     static let name = TableField<CPUOffender>.text("name", title: "Process", aliases: ["command"]) { $0.name }
-    static let pid = TableField<CPUOffender>.number("pid", title: "PID") { Decimal($0.pid) }
+    static let pid = TableField<CPUOffender>.number("pid", title: "PID", searchable: true) { Decimal($0.pid) }
     static let cpu = TableField<CPUOffender>.number("cpu", title: "CPU %", aliases: ["CPU%"], unit: .percent) { $0.cpu }
     static let checks = TableField<CPUOffender>.number("checks", title: "Consecutive checks") { Decimal($0.consecutive) }
     static let all = [name, pid, cpu, checks]
@@ -32,7 +32,7 @@ private enum OffenderTableFields {
 private enum AlertTableFields {
     static let date = TableField<CPUAlertRecord>.date("date", title: "Alert time", aliases: ["time"]) { $0.date }
     static let name = TableField<CPUAlertRecord>.text("name", title: "Process", aliases: ["command"]) { $0.name }
-    static let pid = TableField<CPUAlertRecord>.number("pid", title: "PID") { Decimal($0.pid) }
+    static let pid = TableField<CPUAlertRecord>.number("pid", title: "PID", searchable: true) { Decimal($0.pid) }
     static let cpu = TableField<CPUAlertRecord>.number("cpu", title: "CPU %", aliases: ["CPU%"], unit: .percent) { $0.cpu }
     static let checks = TableField<CPUAlertRecord>.number("checks", title: "Checks") { Decimal($0.checks) }
     static let columns = [date, name, pid, cpu]

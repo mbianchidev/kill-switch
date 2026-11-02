@@ -16,7 +16,7 @@ private struct QueryFixture: Sendable {
 
 private enum QueryFields {
     static let name = TableField<QueryFixture>.text("name", title: "Process", aliases: ["command"]) { $0.name }
-    static let pid = TableField<QueryFixture>.number("pid", title: "PID") { Decimal($0.pid) }
+    static let pid = TableField<QueryFixture>.number("pid", title: "PID", searchable: true) { Decimal($0.pid) }
     static let cpu = TableField<QueryFixture>.number("cpu", title: "CPU %", aliases: ["CPU%"], unit: .percent) { $0.cpu }
     static let bytes = TableField<QueryFixture>.number("size", title: "Size", unit: .bytes) { $0.bytes.map(Decimal.init) }
     static let seconds = TableField<QueryFixture>.number("time", title: "CPU time", unit: .seconds) { $0.seconds }
@@ -51,6 +51,10 @@ extension SystemMetricsChecks {
 
         check(ids("").count == rows.count, "empty table queries retain every row")
         check(ids("CPU% > 40") == ["two", "three"], "CPU comparison excludes the exact boundary and unavailable measurements")
+        check(ids("false").isEmpty, "free text does not match synthetic boolean descriptions")
+        check(ids("40.5").isEmpty, "free text does not match unrelated raw CPU counters")
+        check(ids("cpu = 40.5") == ["two"], "non-searchable measurements remain available through explicit filters")
+        check(ids("Example AND CPU% > 40") == ["two"], "explicit AND keeps free text separate from the following filter field")
         check(ids("cpu>=40") == ["one", "two", "three"], "numeric filters accept inclusive operators without spaces")
         check(ids("\"CPU %\" <= 40%") == ["one"], "quoted column names and percentage suffixes work")
         check(ids("Example CPU% > 40 size <= 1GB") == ["two"], "free text and multiple comparisons combine with AND")
@@ -73,13 +77,13 @@ extension SystemMetricsChecks {
         for invalid in [
             "cpu >> 40", "cpu >", "unknown > 40", "cpu > forty", "cpu > 1GB", "size > 1XB",
             "pid > 2junk", "locked > yes", "modified > invalid", "modified = 2026-02-31",
-            "name:\"unfinished", "> 40", "cpu >= <= 40"
+            "name:\"unfinished", "> 40", "cpu >= <= 40", "AND pid = 2", "pid = 2 AND", "pid = 2 AND AND cpu > 1"
         ] {
             let result = query(invalid)
             check(result.error != nil && result.filter(rows).isEmpty, "invalid table query reports an error instead of silently applying: \(invalid)")
         }
 
-        let quoted = "Example \"quoted\" path\\file"
+        let quoted = "Example \"quoted\" path\\file AND"
         let literal = QueryFixture(
             id: "quoted", name: quoted, pid: 1, cpu: nil, bytes: nil, seconds: nil,
             locked: false, modified: nil, path: ""
@@ -88,6 +92,7 @@ extension SystemMetricsChecks {
             query("name = \(TableFilterSyntax.quoted(quoted))").filter([literal]).count == 1,
             "filter-builder quoting preserves quotes and backslashes"
         )
+        check(query("\"AND\"").filter([literal]).count == 1, "quoted AND remains literal search text")
 
         var sorting = TableComparator(field: QueryFields.pid)
         check(

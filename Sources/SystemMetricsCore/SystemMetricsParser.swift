@@ -15,7 +15,7 @@ public struct ParsedTopProcess {
     public let cpuTimeSeconds: Double
     public let threads: Int
     public let idleWakeUps: UInt64?
-    public let power: Double
+    public let power: Double?
     public let memoryBytes: UInt64
     public let ports: Int
     public let user: String
@@ -140,7 +140,7 @@ public enum SystemMetricsParser {
                         cpuTimeSeconds: parseCPUTime(fields[2]) ?? 0,
                         threads: parseLeadingInt(fields[3]) ?? 0,
                         idleWakeUps: parseUnsigned(fields[4]),
-                        power: parseDouble(fields[5]) ?? 0,
+                        power: parseDouble(fields[5]).flatMap { $0.isFinite && $0 >= 0 ? $0 : nil },
                         memoryBytes: parseByteCount(fields[6]) ?? 0,
                         ports: parseLeadingInt(fields[7]) ?? 0,
                         user: fields[8],
@@ -285,10 +285,17 @@ public enum SystemMetricsParser {
         )
     }
 
-    public static func parsePreventingSleepPIDs(_ output: String) -> Set<Int32> {
+    public static func parsePreventingSleepPIDs(_ output: String) -> Set<Int32>? {
+        guard output.contains("Assertion status system-wide:"), output.contains("Listed by owning process:") else {
+            return nil
+        }
         var result: Set<Int32> = []
         let pattern = #"pid\s+(\d+)\([^)]*\):.*\bPrevent[A-Za-z]*Sleep\b"#
         for line in output.components(separatedBy: .newlines) {
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("pid"),
+               line.range(of: #"^\s*pid\s+\d+\([^)]*\):"#, options: .regularExpression) == nil {
+                return nil
+            }
             guard let value = captures(pattern: pattern, in: line)?.first, let pid = Int32(value) else {
                 continue
             }

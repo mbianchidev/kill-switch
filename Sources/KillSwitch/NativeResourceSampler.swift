@@ -67,8 +67,7 @@ final class ResourceSampler {
     private var identities: [Int32: ResourceProcessIdentity] = [:]
     private let bootSession = ResourceSampler.bootSessionIdentifier()
     private var lastEnergyDate: Date?
-    private var cachedPower: [ResourceProcessIdentity: Double] = [:]
-    private var cachedPreventingSleep: Set<ResourceProcessIdentity> = []
+    private var energy = ProcessEnergyCache()
     private var cachedBattery: BatteryResourceSummary?
 
     func resetBaselines() {
@@ -96,18 +95,21 @@ final class ResourceSampler {
         )
         var sampledEnergy = false
         if policy.usesTop && (lastEnergyDate.map { now.timeIntervalSince($0) >= Double(policy.intervalSeconds) } ?? true) {
+            lastEnergyDate = now
             do {
-                let power = try samplePower()
-                cachedPower = Dictionary(uniqueKeysWithValues: power.compactMap { pid, value in
-                    identities[pid].map { ($0, value) }
-                })
-                cachedPreventingSleep = Set(samplePreventingSleepPIDs().compactMap { identities[$0] })
-                cachedBattery = sampleBattery()
-                lastEnergyDate = now
+                energy.updatePower(try samplePower(), identities: identities)
                 sampledEnergy = true
             } catch {
+                energy.updatePower(nil, identities: identities)
                 warnings.append("Energy: \(error.localizedDescription)")
             }
+            do {
+                energy.updateSleepAssertions(try samplePreventingSleepPIDs(), identities: identities)
+            } catch {
+                energy.updateSleepAssertions(nil, identities: identities)
+                warnings.append("Sleep assertions: \(error.localizedDescription)")
+            }
+            cachedBattery = sampleBattery()
         }
         var networkProcesses: [Int32: ParsedNetworkProcess] = [:]
         var networkSampledAt: Date?
@@ -142,8 +144,7 @@ final class ResourceSampler {
                     pid: process.pid,
                     name: application?.name ?? native?.name ?? fallbackName,
                     user: native?.user ?? process.user,
-                    cpu: native?.cpu ?? process.cpu,
-                    measuredCPU: native?.cpu,
+                    cpu: native?.cpu,
                     cpuTimeSeconds: native?.cpuTimeSeconds ?? process.cpuTimeSeconds,
                     threads: native?.threads,
                     idleWakeUps: native?.idleWakeUps,
@@ -152,10 +153,10 @@ final class ResourceSampler {
                     gpuTimeSeconds: nil,
                     memoryBytes: native?.memoryBytes ?? process.memoryBytes,
                     openFileCount: native?.openFileCount,
-                    power: identity.flatMap { cachedPower[$0] } ?? 0,
+                    power: energy.power(for: identity),
                     power12Hour: nil,
                     appNap: nil,
-                    preventsSleep: identity.map { cachedPreventingSleep.contains($0) } ?? false,
+                    preventsSleep: energy.preventsSleep(for: identity),
                     diskReadBytes: native?.diskReadBytes,
                     diskWrittenBytes: native?.diskWrittenBytes,
                     diskSampledAt: native?.sampledAt,
@@ -178,8 +179,7 @@ final class ResourceSampler {
                     pid: native.pid,
                     name: native.name,
                     user: native.user,
-                    cpu: native.cpu ?? 0,
-                    measuredCPU: native.cpu,
+                    cpu: native.cpu,
                     cpuTimeSeconds: native.cpuTimeSeconds,
                     threads: native.threads,
                     idleWakeUps: native.idleWakeUps,
@@ -188,10 +188,10 @@ final class ResourceSampler {
                     gpuTimeSeconds: nil,
                     memoryBytes: native.memoryBytes,
                     openFileCount: native.openFileCount,
-                    power: cachedPower[native.identity] ?? 0,
+                    power: energy.power(for: native.identity),
                     power12Hour: nil,
                     appNap: nil,
-                    preventsSleep: cachedPreventingSleep.contains(native.identity),
+                    preventsSleep: energy.preventsSleep(for: native.identity),
                     diskReadBytes: native.diskReadBytes,
                     diskWrittenBytes: native.diskWrittenBytes,
                     diskSampledAt: native.sampledAt,
@@ -383,8 +383,9 @@ final class ResourceSampler {
         }
         var power: [Int32: Double] = [:]
         for process in try SystemMetricsParser.parseTop(result.standardOutput).processes {
-            power[process.pid] = process.power
+            if let value = process.power { power[process.pid] = value }
         }
+        guard !power.isEmpty else { throw parseError("The energy sampler returned no readable process power measurements.") }
         return power
     }
 
@@ -424,14 +425,15 @@ final class ResourceSampler {
         )
     }
 
-    private func samplePreventingSleepPIDs() -> Set<Int32> {
-        guard
-            let result = try? CommandRunner.run("/usr/bin/pmset", arguments: ["-g", "assertions"]),
-            result.succeeded
-        else {
-            return []
+    private func samplePreventingSleepPIDs() throws -> Set<Int32> {
+        let result = try CommandRunner.run(
+            "/usr/bin/pmset", arguments: ["-g", "assertions"], environment: ["LC_ALL": "C"]
+        )
+        guard result.succeeded else { throw commandError(result, name: "sleep assertion sampler") }
+        guard let pids = SystemMetricsParser.parsePreventingSleepPIDs(result.standardOutput) else {
+            throw parseError("The sleep assertion sampler returned an unreadable response.")
         }
-        return SystemMetricsParser.parsePreventingSleepPIDs(result.standardOutput)
+        return pids
     }
 
     private func sampleBattery() -> BatteryResourceSummary {

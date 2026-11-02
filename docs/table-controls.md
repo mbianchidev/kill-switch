@@ -22,14 +22,17 @@ are not sortable.
 
 ## Apply and reset filters
 
-Type into search to filter immediately. Plain words search readable field
-values; use double quotes to keep a phrase together. Separate terms and
-comparisons combine with **AND**.
+Type into search to filter immediately. Plain words search identifying fields
+such as names, PIDs, paths, commands, owners, and endpoints, not hidden counters
+or synthetic Yes/No strings. Use comparisons for measurements, types, and states.
+Use double quotes to keep a phrase together. Separate terms and comparisons
+combine with **AND**; the explicit `AND` keyword keeps clause boundaries clear.
 
 Choose **Filter** to build a comparison without memorizing field syntax:
 select a field, comparison, and value, then choose **Apply**. Where available,
 the **Values** menu offers predefined values; the value remains editable.
-Apply appends the comparison to the current search.
+Apply appends the comparison with an explicit `AND`, so existing search words
+cannot be absorbed into a multiword field name.
 
 **Reset filters** clears free text and comparison expressions and restores any
 inline type, state, or reported-lock filters. Process tables return to
@@ -49,6 +52,8 @@ Watchdog filtering does not stop monitoring or notifications for hidden rows.
 
 Field names are case-insensitive. Use a short field name or the column name,
 such as `cpu`, `CPU%`, `size`, `pid`, or `CPU time`.
+Multiword contains filters accept attached colons, such as
+`Local endpoint:8080` or `Local endpoint :8080`.
 
 | Expression | Where it applies |
 | --- | --- |
@@ -87,6 +92,13 @@ IPv6 addresses such as `::1` and endpoints such as `127.0.0.1:9000` remain plain
 search text. Quote literal comparison characters, for example `"CPU > 40"`.
 Inside a quoted value, use `\"` for a quote and `\\` for a backslash; the filter
 builder escapes text values automatically.
+Quote `"AND"` when searching for that word literally.
+
+CPU rates remain unavailable until two readable, lifetime-matched samples exist.
+Energy and sleep assertions are collected only while Energy is visible. Processes
+not present in a successful read remain unknown, including newly created or
+reused PIDs. A failed refresh clears availability rather than inventing zero
+power or a definite No; the failure remains visible.
 
 The **Find process** history search accepts name, PID, and user expressions,
 such as `pid > 100 user:example`, including exited processes. It does not claim

@@ -23,7 +23,11 @@ One shared monitor samples CPU, memory, disk, and network every **6 seconds**
 throughout the app's lifetime, including when another tab is selected or the
 window is hidden. `nettop` and `netstat` therefore run continuously, not just
 while Network is selected. Energy's heavier power/battery collection runs at
-most once every **15 seconds**, only while Energy is visible. Memory-pressure
+most once every **15 seconds**, only while Energy is visible. Power and sleep
+assertions retain separate read availability: never-read, failed, and
+not-yet-observed process lifetimes remain unavailable rather than becoming
+zero power or No. The energy summary totals reported values and shows N/A
+when none are readable. Memory-pressure
 queries run only while Memory is selected.
 
 Graphs connect measured samples without smoothing. CPU shows separate stacked
@@ -108,8 +112,9 @@ single entry point in the dedicated **Open files** tab beside Resources.
 Both use `lsof`'s NUL-delimited field output, with numeric addresses/ports and
 full command names. They refresh
 every ten seconds only while visible. Names with spaces remain intact; control
-characters use `lsof` display escapes. Search and sorting use the displayed
-values for text; numeric comparisons and sorting use underlying counters rather
+characters use `lsof` display escapes. Plain search covers identifying text;
+protocol, state, type, and measurement filters use explicit comparisons.
+Numeric comparisons and sorting use underlying counters rather
 than formatted strings. macOS can omit protected processes, files, and sockets;
 short-lived connections between samples may be missed.
 

@@ -64,41 +64,45 @@ public struct TableField<Row>: Identifiable, Sendable {
     public let aliases: [String]
     public let kind: TableFieldKind
     public let predefinedValues: [String]
+    public let searchable: Bool
     fileprivate let value: @Sendable (Row) -> TableValue?
 
     private init(
         _ id: String, title: String, aliases: [String], kind: TableFieldKind,
-        predefinedValues: [String] = [], value: @escaping @Sendable (Row) -> TableValue?
+        predefinedValues: [String] = [], searchable: Bool, value: @escaping @Sendable (Row) -> TableValue?
     ) {
         self.id = id
         self.title = title
         self.aliases = aliases
         self.kind = kind
         self.predefinedValues = predefinedValues
+        self.searchable = searchable
         self.value = value
     }
 
     public static func text(
-        _ id: String, title: String, aliases: [String] = [], values: [String] = [],
+        _ id: String, title: String, aliases: [String] = [], values: [String] = [], searchable: Bool = true,
         value: @escaping @Sendable (Row) -> String?
     ) -> Self {
-        Self(id, title: title, aliases: aliases, kind: .text, predefinedValues: values) { value($0).map(TableValue.text) }
+        Self(id, title: title, aliases: aliases, kind: .text, predefinedValues: values, searchable: searchable) {
+            value($0).map(TableValue.text)
+        }
     }
 
     public static func number(
-        _ id: String, title: String, aliases: [String] = [], unit: TableNumberUnit = .count,
+        _ id: String, title: String, aliases: [String] = [], unit: TableNumberUnit = .count, searchable: Bool = false,
         value: @escaping @Sendable (Row) -> Decimal?
     ) -> Self {
-        Self(id, title: title, aliases: aliases, kind: .number(unit)) { row in
+        Self(id, title: title, aliases: aliases, kind: .number(unit), searchable: searchable) { row in
             value(row).flatMap { $0.isNaN ? nil : .number($0) }
         }
     }
 
     public static func number(
-        _ id: String, title: String, aliases: [String] = [], unit: TableNumberUnit = .count,
+        _ id: String, title: String, aliases: [String] = [], unit: TableNumberUnit = .count, searchable: Bool = false,
         value: @escaping @Sendable (Row) -> Double?
     ) -> Self {
-        number(id, title: title, aliases: aliases, unit: unit) { row -> Decimal? in
+        number(id, title: title, aliases: aliases, unit: unit, searchable: searchable) { row -> Decimal? in
             value(row).flatMap { $0.isFinite ? Decimal(string: String($0), locale: Locale(identifier: "en_US_POSIX")) : nil }
         }
     }
@@ -106,7 +110,7 @@ public struct TableField<Row>: Identifiable, Sendable {
     public static func boolean(
         _ id: String, title: String, aliases: [String] = [], value: @escaping @Sendable (Row) -> Bool?
     ) -> Self {
-        Self(id, title: title, aliases: aliases, kind: .boolean, predefinedValues: ["Yes", "No"]) {
+        Self(id, title: title, aliases: aliases, kind: .boolean, predefinedValues: ["Yes", "No"], searchable: false) {
             value($0).map(TableValue.boolean)
         }
     }
@@ -114,7 +118,7 @@ public struct TableField<Row>: Identifiable, Sendable {
     public static func date(
         _ id: String, title: String, aliases: [String] = [], value: @escaping @Sendable (Row) -> Date?
     ) -> Self {
-        Self(id, title: title, aliases: aliases, kind: .date) { value($0).map(TableValue.date) }
+        Self(id, title: title, aliases: aliases, kind: .date, searchable: false) { value($0).map(TableValue.date) }
     }
 }
 
@@ -175,6 +179,12 @@ public enum TableFilterSyntax {
     public static func quoted(_ value: String) -> String {
         "\"" + value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
     }
+
+    public static func appending(_ clause: String, to search: String) -> String {
+        let existing = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        let clause = clause.trimmingCharacters(in: .whitespacesAndNewlines)
+        return existing.isEmpty ? clause : existing + " AND " + clause
+    }
 }
 
 public struct TableQuery<Row>: Sendable {
@@ -195,7 +205,7 @@ public struct TableQuery<Row>: Sendable {
         return terms.allSatisfy { term in
             switch term {
             case let .text(text):
-                return fields.contains { $0.value(row)?.searchText.localizedCaseInsensitiveContains(text) == true }
+                return fields.contains { $0.searchable && $0.value(row)?.searchText.localizedCaseInsensitiveContains(text) == true }
             case let .comparison(index, operation, expected):
                 guard let actual = fields[index].value(row) else { return false }
                 if operation == .contains {
@@ -234,7 +244,7 @@ private enum TableTerm: Sendable {
 }
 
 private enum TableToken {
-    case word(String, quoted: Bool), operation(String)
+    case word(String, quoted: Bool), operation(String), boundary
 }
 
 private struct TableParseError: Error {
@@ -245,13 +255,25 @@ private func normalizedField(_ value: String) -> String {
     value.lowercased().filter { $0.isLetter || $0.isNumber }
 }
 
+private func fieldSuffix(_ words: [String], aliases: [String: Int]) -> (start: Int, field: Int)? {
+    for start in words.indices {
+        if let field = aliases[normalizedField(words[start...].joined(separator: " "))] {
+            return (start, field)
+        }
+    }
+    return nil
+}
+
 private func tokenizeTableQuery(_ search: String) -> Result<[TableToken], TableParseError> {
     let characters = Array(search)
     var tokens: [TableToken] = []
     var word = ""
     var index = 0
     func finishWord() {
-        if !word.isEmpty { tokens.append(.word(word, quoted: false)); word = "" }
+        if !word.isEmpty {
+            tokens.append(word.uppercased() == "AND" ? .boundary : .word(word, quoted: false))
+            word = ""
+        }
     }
     while index < characters.count {
         let character = characters[index]
@@ -307,18 +329,21 @@ private func parseTableQuery<Row>(
     case let .failure(error): return .failure(error)
     }
     var tokens: [TableToken] = []
-    // Keep endpoint colons literal unless they follow a known filter field.
+    // Resolve full field-name suffixes, but keep bare IPv6 endpoints literal.
     for token in raw {
-        if case let .word(text, quoted: false) = token, let colon = text.firstIndex(of: ":") {
+        if case let .word(text, quoted: false) = token, !text.hasPrefix("::"), let colon = text.firstIndex(of: ":") {
             let prefix = String(text[..<colon])
-            let previousIsField: Bool
-            if case let .word(previous, _) = tokens.last { previousIsField = aliases[normalizedField(previous)] != nil }
-            else { previousIsField = false }
-            if aliases[normalizedField(prefix)] != nil || (prefix.isEmpty && previousIsField) || text == ":" {
+            var words: [String] = []
+            for previous in tokens.reversed() {
+                guard case let .word(word, _) = previous else { break }
+                words.insert(word, at: 0)
+            }
+            if !prefix.isEmpty { words.append(prefix) }
+            if fieldSuffix(words, aliases: aliases) != nil || text == ":" {
                 if !prefix.isEmpty { tokens.append(.word(prefix, quoted: false)) }
                 tokens.append(.operation(":"))
                 let value = String(text[text.index(after: colon)...])
-                if !value.isEmpty { tokens.append(.word(value, quoted: false)) }
+                if !value.isEmpty { tokens.append(value.uppercased() == "AND" ? .boundary : .word(value, quoted: false)) }
                 continue
             }
         }
@@ -326,23 +351,36 @@ private func parseTableQuery<Row>(
     }
     var terms: [TableTerm] = []
     var index = 0
+    var hasClause = false
     while index < tokens.count {
+        if case .boundary = tokens[index] {
+            guard hasClause, index + 1 < tokens.count else {
+                return .failure(TableParseError(message: "AND must separate complete search terms or filters. Quote it to search for the word literally."))
+            }
+            hasClause = false
+            index += 1
+            continue
+        }
         var words: [String] = []
         while index < tokens.count, case let .word(word, _) = tokens[index] {
             words.append(word)
             index += 1
         }
         if index == tokens.count { terms += words.map(TableTerm.text); break }
+        if case .boundary = tokens[index] {
+            terms += words.map(TableTerm.text)
+            hasClause = hasClause || !words.isEmpty
+            continue
+        }
         guard case let .operation(rawOperation) = tokens[index],
               let operation = TableOperation(rawValue: rawOperation == "==" ? "=" : rawOperation) else {
             return .failure(TableParseError(message: "Use =, !=, >, >=, <, <=, or : between a field and its value."))
         }
-        guard let start = words.indices.first(where: { aliases[normalizedField(words[$0...].joined(separator: " "))] != nil }),
-              let fieldIndex = aliases[normalizedField(words[start...].joined(separator: " "))] else {
+        guard let suffix = fieldSuffix(words, aliases: aliases) else {
             return .failure(TableParseError(message: "Unknown filter field '\(words.last ?? "")'. Use a column name or a supported short name."))
         }
-        terms += words[..<start].map(TableTerm.text)
-        let field = fields[fieldIndex]
+        terms += words[..<suffix.start].map(TableTerm.text)
+        let field = fields[suffix.field]
         index += 1
         guard index < tokens.count, case let .word(rawValue, _) = tokens[index] else {
             return .failure(TableParseError(message: "Enter a value after \(field.title) \(rawOperation)."))
@@ -364,7 +402,8 @@ private func parseTableQuery<Row>(
         guard let expected = parseTableValue(value, kind: field.kind) else {
             return .failure(TableParseError(message: "Invalid value '\(value)' for \(field.title). \(tableValueHint(field.kind))"))
         }
-        terms.append(.comparison(fieldIndex, operation, expected))
+        terms.append(.comparison(suffix.field, operation, expected))
+        hasClause = true
     }
     return .success(terms)
 }

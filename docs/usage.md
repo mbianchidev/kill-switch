@@ -66,7 +66,8 @@ available in the summary.
 Within **Network**, switch between **Connections** and **Traffic by process**.
 Connections includes TCP listeners, active connections, bound UDP sockets, and
 Unix sockets visible to this account. Search addresses/ports, process, PID,
-owner, protocol, or state, then filter listeners/active connections and sort.
+or owner; use comparisons such as `protocol = TCP state = LISTEN` for protocol
+and state. Filter listeners/active connections and sort in either direction.
 Connections refresh every ten seconds only while visible.
 
 The [resource reference](system-diagnostics.md#resources) describes all five

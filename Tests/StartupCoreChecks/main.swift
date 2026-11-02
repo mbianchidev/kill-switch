@@ -324,6 +324,10 @@ struct StartupCoreChecks {
             check(item.state == .enabled, "user launch agents are discoverable from synthetic plists")
             let query = TableQuery(search: "state = Enabled type = \"Launch agents\"", fields: StartupTableFields.all)
             check(query.error == nil && query.filter([item]).count == 1, "startup search accepts predefined state and type values")
+            check(
+                TableQuery(search: "Enabled", fields: StartupTableFields.all).filter([item]).isEmpty,
+                "free text searches startup identifiers rather than every row's enabled-state label"
+            )
             let unknown = try service.readLaunchService(at: url, domain: .gui(getuid()), overrides: nil)
             check(unknown.state == .unknown && unknown.restriction != nil, "unverified startup state remains unknown and read-only")
             check(

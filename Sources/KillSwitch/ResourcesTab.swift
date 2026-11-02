@@ -200,8 +200,8 @@ struct ResourcesTab: View {
         case .energy:
             FlowLayout(spacing: 10) {
                 ResourceValue(
-                    label: "Energy impact",
-                    value: String(format: "%.1f", monitor.processes.reduce(0) { $0 + $1.power }),
+                    label: "Reported energy impact",
+                    value: ProcessEnergyCache.totalPower(monitor.processes.map(\.power)).map { String(format: "%.1f", $0) } ?? "N/A",
                     color: Theme.energy
                 )
                 ResourceValue(
@@ -369,7 +369,10 @@ private struct ResourceProcessRow: View {
                 .accessibilityLabel("Show history for \(process.name), PID \(process.pid)")
             switch metric {
             case .cpu:
-                value(String(format: "%.1f", process.cpu), width: 72, color: Theme.cpuUser)
+                value(
+                    process.cpu.map { String(format: "%.1f", $0) } ?? "N/A", width: 72, color: Theme.cpuUser,
+                    help: process.cpu == nil ? "CPU rates need two readable lifetime-matched samples." : nil
+                )
                 value(formatDuration(process.cpuTimeSeconds), width: 98)
                 value(
                     process.threads.map(String.init) ?? "—",
@@ -401,13 +404,16 @@ private struct ResourceProcessRow: View {
                 value("\(process.pid)", width: 72)
                 value(process.user, width: 140, alignment: .leading)
             case .energy:
-                value(String(format: "%.1f", process.power), width: 110, color: Theme.energy)
+                value(process.power.map { String(format: "%.1f", $0) } ?? "N/A", width: 110, color: Theme.energy)
                 value(
                     process.power12Hour.map { String(format: "%.2f", $0) } ?? "—",
                     width: 100
                 )
                 value(boolean(process.appNap), width: 82, help: appNapHelp)
-                value(process.preventsSleep ? "Yes" : "No", width: 120)
+                value(
+                    boolean(process.preventsSleep), width: 120,
+                    help: process.preventsSleep == nil ? "Sleep assertion state has not been read successfully for this process." : nil
+                )
                 value("\(process.pid)", width: 72)
                 value(process.user, width: 140, alignment: .leading)
             case .disk:

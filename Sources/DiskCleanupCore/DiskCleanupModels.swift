@@ -62,7 +62,7 @@ public enum DiskCleanupTableFields {
     public static let shortPath = TableField<DiskCleanupItem>.text("shortPath", title: "Abbreviated path") {
         ($0.url.standardizedFileURL.path as NSString).abbreviatingWithTildeInPath
     }
-    public static let kind = TableField<DiskCleanupItem>.text("type", title: "Type", aliases: ["kind"], values: ["File", "Folder", "Package"]) {
+    public static let kind = TableField<DiskCleanupItem>.text("type", title: "Type", aliases: ["kind"], values: ["File", "Folder", "Package"], searchable: false) {
         switch $0.kind {
         case .file: return "File"
         case .directory: return "Folder"

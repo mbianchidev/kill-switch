@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import InstallCore
 import SystemMetricsCore
+import TableQueryCore
 
 extension SystemMetricsChecks {
     static func probeSyntheticLockIfRequested() {
@@ -47,6 +48,28 @@ extension SystemMetricsChecks {
         check(snapshot.connections[2].state == "BOUND", "unconnected UDP is labelled bound, not listening TCP")
         check(snapshot.connections[3].protocolName == "Unix", "Unix socket protocol is explicit")
         check(snapshot.connections[3].localPort == nil, "Unix sockets do not invent a numeric port")
+        for search in ["Local endpoint:8080", "Local endpoint :8080", "\"Local endpoint\":8080"] {
+            check(
+                NetworkConnectionQuery(search: search).apply(to: snapshot.connections).count == 2,
+                "multiword contains fields accept attached colons: \(search)"
+            )
+        }
+        check(
+            NetworkConnectionQuery(search: "remote ::1").apply(to: snapshot.connections).isEmpty,
+            "a bare IPv6 address after a field-like search word stays literal"
+        )
+        let boundaryFixture = [
+            "p41", "cremote worker", "u501", "Lexample", "\nf4", "tIPv4", "PTCP",
+            "n127.0.0.1:9000->127.0.0.1:80", "TST=ESTABLISHED",
+            "\np43", "cother worker", "u501", "Lexample", "\nf5", "tIPv4", "PTCP",
+            "n127.0.0.1:80->127.0.0.1:9000", "TST=ESTABLISHED", ""
+        ].joined(separator: "\0")
+        let boundaryRows = ProcessInspectionParser.parseLsof(Data(boundaryFixture.utf8)).connections
+        check(
+            NetworkConnectionQuery(search: TableFilterSyntax.appending("port >= 8000", to: "remote"))
+                .apply(to: boundaryRows).map(\.pid) == [41],
+            "a clause boundary cannot absorb remote search text into the remote-port field"
+        )
 
         let ownFiles = OpenFileQuery(userID: 501).apply(to: snapshot.files)
         check(ownFiles.count == 1, "open-file scope filters by numeric ownership")

@@ -139,11 +139,14 @@ They never change live startup entries, request administrator access, or control
 a desktop application.
 
 For table-query changes, `swift run SystemMetricsChecks --table-query-checks`
-runs only the shared query and activity-field checks. The full command also
-covers inspection filtering and ownership scope. Startup, disk-cleanup, and
+runs only the shared query, measurement-availability, and activity-field checks.
+The full command also covers inspection filtering and ownership scope. Startup, disk-cleanup, and
 dev-cleanup checks verify their own field definitions without running live
 operations. Numeric sort keys are projected once per row; views reuse each
 filtered snapshot rather than sorting again for every cell.
+The energy cache keys both power and verified sleep-assertion states by process
+lifetime. An empty successful assertion inventory records No only for the
+identities observed in that read; missing or failed reads remain unknown.
 
 For memory regressions, run `swift run SystemMetricsChecks --memory-stress`.
 This adds two simulated hours of 5,000 synthetic processes, checks that all
