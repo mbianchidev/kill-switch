@@ -1,4 +1,5 @@
 import SwiftUI
+import TableQueryCore
 
 /// A process currently sustaining high CPU, with how many consecutive checks
 /// it has been above the threshold.
@@ -18,6 +19,24 @@ struct CPUAlertRecord: Identifiable {
     let name: String
     let cpu: Double
     let checks: Int
+}
+
+private enum OffenderTableFields {
+    static let name = TableField<CPUOffender>.text("name", title: "Process", aliases: ["command"]) { $0.name }
+    static let pid = TableField<CPUOffender>.number("pid", title: "PID", searchable: true) { Decimal($0.pid) }
+    static let cpu = TableField<CPUOffender>.number("cpu", title: "CPU %", aliases: ["CPU%"], unit: .percent) { $0.cpu }
+    static let checks = TableField<CPUOffender>.number("checks", title: "Consecutive checks") { Decimal($0.consecutive) }
+    static let all = [name, pid, cpu, checks]
+}
+
+private enum AlertTableFields {
+    static let date = TableField<CPUAlertRecord>.date("date", title: "Alert time", aliases: ["time"]) { $0.date }
+    static let name = TableField<CPUAlertRecord>.text("name", title: "Process", aliases: ["command"]) { $0.name }
+    static let pid = TableField<CPUAlertRecord>.number("pid", title: "PID", searchable: true) { Decimal($0.pid) }
+    static let cpu = TableField<CPUAlertRecord>.number("cpu", title: "CPU %", aliases: ["CPU%"], unit: .percent) { $0.cpu }
+    static let checks = TableField<CPUAlertRecord>.number("checks", title: "Checks") { Decimal($0.checks) }
+    static let columns = [date, name, pid, cpu]
+    static let all = columns + [checks]
 }
 
 /// Watches for processes (parent-collapsed) sustaining CPU above a threshold for
@@ -215,6 +234,10 @@ final class CPUWatchdog: ObservableObject {
 
 struct CPUWatchdogTab: View {
     @ObservedObject var monitor: CPUWatchdog
+    @State private var offenderSearch = ""
+    @State private var offenderSorting = TableComparator(field: OffenderTableFields.cpu, order: .reverse)
+    @State private var alertSearch = ""
+    @State private var alertSorting = TableComparator(field: AlertTableFields.date, order: .reverse)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -308,16 +331,23 @@ struct CPUWatchdogTab: View {
     }
 
     private var offendersSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Currently above threshold (\(monitor.offenders.count))")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.7))
-            if monitor.offenders.isEmpty {
-                Text("No processes above \(Int(monitor.threshold))% CPU.")
+        let rows = TableQuery(search: offenderSearch, fields: OffenderTableFields.all)
+            .apply(to: monitor.offenders, sorting: offenderSorting, identity: { String($0.pid) })
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Currently above threshold (\(rows.count) of \(monitor.offenders.count))")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.7))
+                Spacer()
+                TableSortControls(fields: OffenderTableFields.all, sorting: $offenderSorting)
+            }
+            TableSearchControls(search: $offenderSearch, fields: OffenderTableFields.all, prompt: "Search offenders, or CPU% > 95")
+            if rows.isEmpty {
+                Text(monitor.offenders.isEmpty ? "No processes above \(Int(monitor.threshold))% CPU." : "No matching offenders. Change or reset the filters.")
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.4))
             } else {
-                ForEach(monitor.offenders) { offender in
+                ForEach(rows) { offender in
                     HStack(spacing: 12) {
                         Text(offender.name)
                             .font(.system(size: 13, weight: .medium))
@@ -346,16 +376,23 @@ struct CPUWatchdogTab: View {
     }
 
     private var alertsSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Recent alerts (\(monitor.alerts.count))")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.7))
-            if monitor.alerts.isEmpty {
-                Text("No alerts fired yet.")
+        let rows = TableQuery(search: alertSearch, fields: AlertTableFields.all)
+            .apply(to: monitor.alerts, sorting: alertSorting, identity: { $0.id.uuidString })
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Recent alerts (\(rows.count) of \(monitor.alerts.count))")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.7))
+                Spacer()
+                TableSortControls(fields: AlertTableFields.columns, sorting: $alertSorting)
+            }
+            TableSearchControls(search: $alertSearch, fields: AlertTableFields.all, prompt: "Search alerts, or checks >= 3")
+            if rows.isEmpty {
+                Text(monitor.alerts.isEmpty ? "No alerts fired yet." : "No matching alerts. Change or reset the filters.")
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.4))
             } else {
-                ForEach(monitor.alerts) { alert in
+                ForEach(rows) { alert in
                     HStack(spacing: 12) {
                         Text(alert.date.formatted(date: .omitted, time: .standard))
                             .font(.system(size: 11, design: .monospaced))

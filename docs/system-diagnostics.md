@@ -6,7 +6,9 @@
 
 The **Resources** tab defaults to the logged-in user's processes. Select
 **All processes** to include root, service accounts, and other users.
-Filter by process name, PID, or user and sort by the selected resource.
+Filter by process name, PID, user, or comparisons such as `CPU% > 40`, and sort
+any data column in either direction. The [filter guide](table-controls.md)
+covers numeric units, predefined values, and resetting filters.
 Application icons and executable names appear where macOS exposes them.
 
 | Mode | Process data | System graph and summary |
@@ -21,7 +23,14 @@ One shared monitor samples CPU, memory, disk, and network every **6 seconds**
 throughout the app's lifetime, including when another tab is selected or the
 window is hidden. `nettop` and `netstat` therefore run continuously, not just
 while Network is selected. Energy's heavier power/battery collection runs at
-most once every **15 seconds**, only while Energy is visible. Memory-pressure
+most once every **15 seconds**, only while Energy is visible. Power and sleep
+assertions retain separate read availability: never-read, failed, and
+not-yet-observed process lifetimes remain unavailable rather than becoming
+zero power or No. Each collector retains its error until its own retry succeeds,
+including on six-second ticks that skip Energy collection. Sampling another mode
+clears current power/assertion readings and starts a fresh read on returning to
+Energy. The energy summary totals reported values and shows N/A
+when none are readable. Memory-pressure
 queries run only while Memory is selected.
 
 Graphs connect measured samples without smoothing. CPU shows separate stacked
@@ -106,8 +115,10 @@ single entry point in the dedicated **Open files** tab beside Resources.
 Both use `lsof`'s NUL-delimited field output, with numeric addresses/ports and
 full command names. They refresh
 every ten seconds only while visible. Names with spaces remain intact; control
-characters use `lsof` display escapes. Search and sorting use the displayed
-values. Protected processes, files, and sockets can be omitted by macOS, and
+characters use `lsof` display escapes. Plain search covers identifying text;
+protocol, state, type, and measurement filters use explicit comparisons.
+Numeric comparisons and sorting use underlying counters rather
+than formatted strings. macOS can omit protected processes, files, and sockets;
 short-lived connections between samples may be missed.
 
 Filesystem metadata lookups use `lsof`'s two-second blocking-operation timeout.

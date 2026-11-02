@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import InstallCore
 import StartupCore
+import TableQueryCore
 
 @main
 struct StartupCoreChecks {
@@ -12,6 +13,8 @@ struct StartupCoreChecks {
         checkCronDocuments()
         checkLaunchServiceSafety()
         checkBackgroundItems()
+        checkLaunchServiceInventory()
+        checkDuplicateLaunchServices()
         checkServiceOperations()
         checkCronAndLoginOperations()
         if failures.isEmpty {
@@ -179,6 +182,120 @@ struct StartupCoreChecks {
         check(enabled.first?.source == .loginItem(changed), "live login metadata supersedes old hidden-state backups")
     }
 
+    private static func checkLaunchServiceInventory() {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("killswitch-startup-inventory-\(UUID().uuidString)", isDirectory: true)
+        do {
+            let home = directory.appendingPathComponent("home")
+            let agents = home.appendingPathComponent("Library/LaunchAgents")
+            try FileManager.default.createDirectory(at: agents, withIntermediateDirectories: true)
+            defer {
+                do { try FileManager.default.removeItem(at: directory) }
+                catch { check(false, "remove temporary startup inventory: \(error.localizedDescription)") }
+            }
+            let fixtures: [(String, [String: Any])] = [
+                ("empty-placeholder", [:]),
+                ("disabled-placeholder", ["Disabled": true]),
+                ("memory-properties", ["Version": 1, "MemoryLimits": ["Example": 32]]),
+                ("missing-label", ["ProgramArguments": ["/usr/bin/true"]]),
+                ("missing-program-label", ["Program": "/usr/bin/true"]),
+                ("missing-bundle-label", ["BundleProgram": "Contents/MacOS/Example"]),
+                ("missing-mach-label", ["MachServices": ["org.example.worker": true]]),
+                ("missing-socket-label", ["Sockets": ["Example": ["SockServiceName": "1234"]]]),
+                ("missing-event-label", ["LaunchEvents": ["org.example.event": [:]]]),
+                ("invalid-label", ["Label": 42, "Program": "/usr/bin/true"]),
+                ("blank-label", ["Label": " \n", "Program": "/usr/bin/true"])
+            ]
+            for (name, plist) in fixtures {
+                try writePlist(plist, to: agents.appendingPathComponent("\(name).plist"))
+            }
+            try Data("not a property list".utf8).write(to: agents.appendingPathComponent("malformed.plist"))
+            let service = StartupService(
+                home: home, currentUID: getuid(), stateDirectory: directory.appendingPathComponent("state"),
+                runner: MockStartupRunner(), launchServiceDirectories: [(agents, .gui(getuid()))]
+            )
+            let snapshot = service.scan()
+            let invalid = [
+                "missing-label", "missing-program-label", "missing-bundle-label", "missing-mach-label",
+                "missing-socket-label", "missing-event-label", "invalid-label", "blank-label", "malformed"
+            ]
+            check(
+                snapshot.items.isEmpty && snapshot.warnings.count == invalid.count
+                    && invalid.allSatisfy { name in snapshot.warnings.contains { $0.hasPrefix("\(name).plist:") } },
+                "non-service plists are skipped while malformed launch definitions remain scan warnings"
+            )
+        } catch { check(false, "startup inventory: \(error.localizedDescription)") }
+    }
+
+    private static func writePlist(_ plist: [String: Any], to url: URL) throws {
+        try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: url)
+    }
+
+    private static func checkDuplicateLaunchServices() {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("killswitch-startup-duplicates-\(UUID().uuidString)", isDirectory: true)
+        do {
+            let home = directory.appendingPathComponent("home")
+            let agents = home.appendingPathComponent("Library/LaunchAgents")
+            let sharedAgents = directory.appendingPathComponent("LaunchAgents")
+            let daemons = directory.appendingPathComponent("LaunchDaemons")
+            for root in [agents, sharedAgents, daemons] {
+                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            }
+            defer {
+                do { try FileManager.default.removeItem(at: directory) }
+                catch { check(false, "remove duplicate service fixtures: \(error.localizedDescription)") }
+            }
+            let fixtures: [(URL, String)] = [
+                (agents.appendingPathComponent("first.plist"), "org.example.worker"),
+                (agents.appendingPathComponent("second.plist"), "org.example.worker"),
+                (sharedAgents.appendingPathComponent("third.plist"), "org.example.worker"),
+                (daemons.appendingPathComponent("system.plist"), "org.example.worker"),
+                (agents.appendingPathComponent("protected-first.plist"), "com.apple.example.shared"),
+                (agents.appendingPathComponent("protected-second.plist"), "com.apple.example.shared"),
+                (agents.appendingPathComponent("unique.plist"), "org.example.unique")
+            ]
+            for (url, label) in fixtures {
+                try writePlist(["Label": label, "Program": "/usr/bin/true"], to: url)
+            }
+            let runner = MockStartupRunner()
+            let service = StartupService(
+                home: home, currentUID: getuid(), stateDirectory: directory.appendingPathComponent("state"),
+                runner: runner,
+                launchServiceDirectories: [(agents, .gui(getuid())), (sharedAgents, .gui(getuid())), (daemons, .system)]
+            )
+            let snapshot = service.scan()
+            check(snapshot.warnings.isEmpty, "duplicate service definitions are not failed reads: \(snapshot.warnings)")
+            check(snapshot.items.count == fixtures.count, "every duplicate service source remains visible")
+            check(Set(snapshot.items.map(\.id)).count == fixtures.count, "duplicate service sources have distinct row identities")
+            let duplicate = snapshot.items.filter { $0.name == "org.example.worker" && $0.domain == .gui(getuid()) }
+            check(
+                duplicate.count == 3 && duplicate.allSatisfy { $0.restriction?.contains("Multiple startup files") == true },
+                "all files sharing a label in one domain are read-only, including three or more definitions"
+            )
+            for item in duplicate {
+                let calls = runner.commands.count
+                do {
+                    try service.setEnabled(false, item: item)
+                    check(false, "ambiguous service sources cannot change startup")
+                } catch { check(runner.commands.count == calls, "ambiguous service sources are refused before executing commands") }
+            }
+            check(
+                snapshot.items.filter { $0.name == "com.apple.example.shared" }.count == 2,
+                "protected macOS definitions sharing a label remain separate read-only entries"
+            )
+            check(
+                snapshot.items.first { $0.domain == .system }?.restriction?.contains("Multiple startup files") != true,
+                "the same label in different launchd domains is not a duplicate"
+            )
+            check(snapshot.items.first { $0.name == "org.example.unique" }?.restriction == nil, "unrelated user services remain editable")
+            check(
+                TableQuery(search: "readOnly = no", fields: StartupTableFields.all).filter(snapshot.items).count == 1,
+                "startup read-only filters reflect duplicate and protected-service restrictions"
+            )
+        } catch { check(false, "duplicate launch service inventory: \(error.localizedDescription)") }
+    }
+
     private static func checkServiceOperations() {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("killswitch-startup-check-\(UUID().uuidString)", isDirectory: true)
@@ -195,14 +312,33 @@ struct StartupCoreChecks {
                 "Label": "org.example.worker", "ProgramArguments": ["/usr/bin/true"],
                 "RunAtLoad": true
             ]
-            try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: url)
+            try writePlist(plist, to: url)
             let runner = MockStartupRunner()
             let service = StartupService(
                 home: home, currentUID: getuid(), stateDirectory: directory.appendingPathComponent("state"),
-                runner: runner
+                runner: runner, launchServiceDirectories: [(agents, .gui(getuid()))]
             )
+            let snapshot = service.scan()
+            check(snapshot.items.count == 1 && snapshot.warnings.isEmpty, "synthetic launch-directory scans stay isolated and readable")
             let item = try service.readLaunchService(at: url, domain: .gui(getuid()), overrides: [:])
             check(item.state == .enabled, "user launch agents are discoverable from synthetic plists")
+            let query = TableQuery(search: "state = Enabled type = \"Launch agents\"", fields: StartupTableFields.all)
+            check(query.error == nil && query.filter([item]).count == 1, "startup search accepts predefined state and type values")
+            check(
+                TableQuery(search: "Enabled", fields: StartupTableFields.all).filter([item]).isEmpty,
+                "free text searches startup identifiers rather than every row's enabled-state label"
+            )
+            let unknown = try service.readLaunchService(at: url, domain: .gui(getuid()), overrides: nil)
+            check(unknown.state == .unknown && unknown.restriction != nil, "unverified startup state remains unknown and read-only")
+            check(
+                TableQuery(search: "enabled != no", fields: StartupTableFields.all).filter([unknown]).isEmpty,
+                "unknown startup state is not invented as an enabled boolean filter value"
+            )
+            let unknownCalls = runner.commands.count
+            do {
+                try service.setEnabled(false, item: unknown)
+                check(false, "unknown startup state cannot be changed")
+            } catch { check(runner.commands.count == unknownCalls, "unknown startup state is refused before executing commands") }
             try service.setEnabled(false, item: item)
             check(runner.commands.contains {
                 $0.arguments == ["disable", "gui/\(getuid())/org.example.worker"]
@@ -212,19 +348,53 @@ struct StartupCoreChecks {
 
             var changed = plist
             changed["Label"] = "org.example.replaced"
-            try PropertyListSerialization.data(fromPropertyList: changed, format: .xml, options: 0).write(to: url)
+            try writePlist(changed, to: url)
             let calls = runner.commands.count
             do {
                 try service.setEnabled(false, item: item)
                 check(false, "changed launch service is refused")
             } catch { check(runner.commands.count == calls, "changed launch service is refused before executing commands") }
 
+            let linkedTarget = directory.appendingPathComponent("linked-service-target.plist")
+            try writePlist(["Label": "org.example.linked", "Program": "/usr/bin/true"], to: linkedTarget)
             let link = agents.appendingPathComponent("linked.plist")
-            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: url)
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: linkedTarget)
+            let linkedItem = try service.readLaunchService(at: link, domain: .gui(getuid()), overrides: [:])
+            check(
+                linkedItem.restriction == "Linked startup entries are read-only." && linkedItem.origin == link.path,
+                "linked launch plists retain their source and explicit read-only restriction"
+            )
+            for enabled in [false, true] {
+                let calls = runner.commands.count
+                do {
+                    try service.setEnabled(enabled, item: linkedItem)
+                    check(false, "linked launch plists cannot change startup")
+                } catch { check(runner.commands.count == calls, "linked launch plists are refused before executing commands") }
+            }
+            let linkedSnapshot = service.scan()
+            check(linkedSnapshot.warnings.isEmpty, "readable linked launch plists are not scan failures: \(linkedSnapshot.warnings)")
+            check(
+                linkedSnapshot.items.contains {
+                    URL(fileURLWithPath: $0.origin).standardizedFileURL == link.standardizedFileURL && $0.restriction != nil
+                },
+                "readable linked launch plists remain visible and read-only in the inventory"
+            )
+            let directoryLink = agents.appendingPathComponent("directory.plist")
+            try FileManager.default.createSymbolicLink(at: directoryLink, withDestinationURL: directory)
             do {
-                _ = try service.readLaunchService(at: link, domain: .gui(getuid()), overrides: [:])
-                check(false, "linked launch plists are refused")
-            } catch { check(true, "linked launch plists are refused") }
+                _ = try service.readLaunchService(at: directoryLink, domain: .gui(getuid()), overrides: [:])
+                check(false, "links to non-file startup entries are refused")
+            } catch { check(true, "links to non-file startup entries are refused") }
+            check(service.scan().warnings.contains { $0.hasPrefix("directory.plist:") }, "non-file link targets remain scan warnings")
+            try FileManager.default.removeItem(at: directoryLink)
+            let danglingLink = agents.appendingPathComponent("missing.plist")
+            try FileManager.default.createSymbolicLink(at: danglingLink, withDestinationURL: directory.appendingPathComponent("absent.plist"))
+            check(service.scan().warnings.contains { $0.hasPrefix("missing.plist:") }, "broken startup links remain scan warnings")
+            try FileManager.default.removeItem(at: danglingLink)
+            do {
+                _ = try service.readLaunchService(at: linkedTarget, domain: .gui(getuid()), overrides: [:])
+                check(false, "direct reads outside supported startup directories are refused")
+            } catch { check(true, "direct reads outside supported startup directories are refused") }
 
             runner.fail = true
             let current = try service.readLaunchService(at: url, domain: .gui(getuid()), overrides: [:])
@@ -232,6 +402,17 @@ struct StartupCoreChecks {
                 try service.setEnabled(false, item: current)
                 check(false, "launchctl failure must propagate")
             } catch { check(error.localizedDescription.contains("synthetic failure"), "launchctl failure is actionable") }
+            runner.fail = false
+            try Data(contentsOf: url).write(to: linkedTarget)
+            try FileManager.default.removeItem(at: url)
+            try FileManager.default.createSymbolicLink(at: url, withDestinationURL: linkedTarget)
+            let replaced = try service.readLaunchService(at: url, domain: .gui(getuid()), overrides: [:])
+            check(replaced.source == current.source && replaced.restriction != nil, "identical plist contents do not make a replacement symlink editable")
+            let linkedCalls = runner.commands.count
+            do {
+                try service.setEnabled(false, item: current)
+                check(false, "a startup file replaced by a link after scanning is refused")
+            } catch { check(runner.commands.count == linkedCalls, "source revalidation refuses a new symlink before executing commands") }
         } catch { check(false, "startup operations: \(error.localizedDescription)") }
     }
 

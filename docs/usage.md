@@ -3,6 +3,11 @@
 [Documentation index](README.md) | [Installation](installation.md) |
 [CLI reference](cli.md)
 
+All data tables and record lists support two-way sorting and resettable filters.
+Search accepts text and comparisons such as `CPU% > 40` or `size >= 1GB`.
+See [sorting and filtering](table-controls.md) for field examples, units, and
+the **Filter**, **Apply**, and **Reset filters** controls.
+
 ## Menu bar (tray)
 
 KillSwitch uses a dark, translucent, Raycast-inspired interface. Like Caffeine,
@@ -46,8 +51,9 @@ continues. See [history storage and limitations](system-diagnostics.md#history-a
 
 ## Resources
 
-Filter by process name, PID, or user, sort by the active resource, and inspect
-application icons and executable names where macOS exposes them.
+Filter by process name, PID, user, or numeric comparisons; sort any data column
+in either direction. Application icons and executable names appear where macOS
+exposes them.
 **My processes** is the default; **All processes** includes other users and
 system processes without granting additional privileges.
 
@@ -60,7 +66,8 @@ available in the summary.
 Within **Network**, switch between **Connections** and **Traffic by process**.
 Connections includes TCP listeners, active connections, bound UDP sockets, and
 Unix sockets visible to this account. Search addresses/ports, process, PID,
-owner, protocol, or state, then filter listeners/active connections and sort.
+or owner; use comparisons such as `protocol = TCP state = LISTEN` for protocol
+and state. Filter listeners/active connections and sort in either direction.
 Connections refresh every ten seconds only while visible.
 
 The [resource reference](system-diagnostics.md#resources) describes all five
@@ -105,6 +112,8 @@ and recovery.
   **Temporary**, **Caches**, or **Large folders**.
 - Browse with breadcrumbs, filter by name or path, reveal items in Finder, and
   select one or more candidates.
+- Sort by item, contents, modification date, or space used; the Sort picker
+  also offers path and type. Numeric filters use bytes, not formatted size text.
 - Scans continue across tab, category, or folder changes. Completed locations
   are cached; **Rescan** applies added, updated, and removed items without
   clearing visible rows first.

@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import InstallCore
 import SystemMetricsCore
+import TableQueryCore
 
 extension SystemMetricsChecks {
     static func probeSyntheticLockIfRequested() {
@@ -42,12 +43,52 @@ extension SystemMetricsChecks {
         check(snapshot.connections.count == 4, "connections include TCP, UDP, and Unix sockets")
         check(snapshot.connections.first?.local == "[::1]:8080", "IPv6 local endpoint remains intact")
         check(snapshot.connections.first?.remote == "[::1]:50000", "IPv6 remote endpoint remains intact")
+        check(snapshot.connections.first?.localPort == 8_080 && snapshot.connections.first?.remotePort == 50_000, "IPv6 ports remain numeric filter values")
         check(snapshot.connections[1].isListening, "TCP listening state is detected")
         check(snapshot.connections[2].state == "BOUND", "unconnected UDP is labelled bound, not listening TCP")
         check(snapshot.connections[3].protocolName == "Unix", "Unix socket protocol is explicit")
+        check(snapshot.connections[3].localPort == nil, "Unix sockets do not invent a numeric port")
+        for search in ["Local endpoint:8080", "Local endpoint :8080", "\"Local endpoint\":8080"] {
+            check(
+                NetworkConnectionQuery(search: search).apply(to: snapshot.connections).count == 2,
+                "multiword contains fields accept attached colons: \(search)"
+            )
+        }
+        check(
+            NetworkConnectionQuery(search: "remote ::1").apply(to: snapshot.connections).isEmpty,
+            "a bare IPv6 address after a field-like search word stays literal"
+        )
+        for search in ["remote [::1]:50000", "local *:8080"] {
+            let query = NetworkConnectionQuery(search: search)
+            check(
+                query.tableQuery.error == nil && query.apply(to: snapshot.connections).isEmpty,
+                "punctuation-only endpoint prefixes cannot absorb a preceding search word: \(search)"
+            )
+        }
+        let boundaryFixture = [
+            "p41", "cremote worker", "u501", "Lexample", "\nf4", "tIPv4", "PTCP",
+            "n127.0.0.1:9000->127.0.0.1:80", "TST=ESTABLISHED",
+            "\np43", "cother worker", "u501", "Lexample", "\nf5", "tIPv4", "PTCP",
+            "n127.0.0.1:80->127.0.0.1:9000", "TST=ESTABLISHED", ""
+        ].joined(separator: "\0")
+        let boundaryRows = ProcessInspectionParser.parseLsof(Data(boundaryFixture.utf8)).connections
+        check(
+            NetworkConnectionQuery(search: TableFilterSyntax.appending("port >= 8000", to: "remote"))
+                .apply(to: boundaryRows).map(\.pid) == [41],
+            "a clause boundary cannot absorb remote search text into the remote-port field"
+        )
 
         let ownFiles = OpenFileQuery(userID: 501).apply(to: snapshot.files)
         check(ownFiles.count == 1, "open-file scope filters by numeric ownership")
+        check(
+            OpenFileQuery(search: "size >= 4KB pid = 42").apply(to: snapshot.files).count == 1,
+            "open-file search applies typed size and PID comparisons"
+        )
+        check(OpenFileQuery(search: "size > invalid").tableQuery.error != nil, "open-file search exposes invalid numeric filters")
+        check(
+            OpenFileQuery(search: "pid >= 0 user:root", userID: 501).apply(to: snapshot.files).isEmpty,
+            "search expressions cannot broaden the selected process ownership scope"
+        )
         let lockSearch = OpenFileQuery(search: "locked", locksOnly: true).apply(to: snapshot.files)
         check(lockSearch.count == 1 && lockSearch[0].pid == 84, "open files support path search and lock filtering")
         check(
@@ -69,6 +110,15 @@ extension SystemMetricsChecks {
         check(
             NetworkConnectionQuery(userID: 501).apply(to: snapshot.connections).count == 3,
             "connection scope filters by owner"
+        )
+        check(
+            NetworkConnectionQuery(search: "port >= 8000 protocol = TCP state = LISTEN")
+                .apply(to: snapshot.connections).count == 1,
+            "connection search combines numeric ports and predefined text values"
+        )
+        check(
+            NetworkConnectionQuery(search: "state = ESTABLISHED", filter: .listening).apply(to: snapshot.connections).isEmpty,
+            "connection preset filters combine with search rather than being overridden"
         )
         let orphan = ProcessInspectionParser.parseLsof(Data("f3\0tREG\0n/tmp/orphan\0".utf8))
         check(orphan.files.isEmpty, "file records without process ownership are rejected")

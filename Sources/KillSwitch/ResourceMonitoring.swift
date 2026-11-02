@@ -1,40 +1,59 @@
 import AppKit
 import Foundation
 import SystemMetricsCore
+import TableQueryCore
 import os
 
 typealias ResourceMetric = ResourceMetricKind
 
-enum ResourceSort: String, Identifiable {
-    case cpu = "% CPU"
-    case memory = "Memory"
-    case energy = "Energy impact"
-    case diskWritten = "Bytes written"
-    case diskRead = "Bytes read"
-    case networkReceived = "Received bytes"
-    case networkSent = "Sent bytes"
-    case name = "Name"
-    case pid = "PID"
+enum ResourceTableFields {
+    static let name = TableField<ResourceProcess>.text("name", title: "Process Name", aliases: ["process", "command"]) { $0.name }
+    static let cpu = TableField<ResourceProcess>.number("cpu", title: "% CPU", aliases: ["CPU%"], unit: .percent) { $0.cpu }
+    static let cpuTime = TableField<ResourceProcess>.number("cpuTime", title: "CPU Time", unit: .seconds) { $0.cpuTimeSeconds }
+    static let threads = TableField<ResourceProcess>.number("threads", title: "Threads") { $0.threads.map { Decimal($0) } }
+    static let wakeups = TableField<ResourceProcess>.number("wakeups", title: "Idle Wake Ups", aliases: ["idleWakeUps"]) { $0.idleWakeUps.map(Decimal.init) }
+    static let kind = TableField<ResourceProcess>.text("kind", title: "Kind", aliases: ["architecture", "type"], values: ["Apple", "Intel"], searchable: false) { $0.kind }
+    static let gpu = TableField<ResourceProcess>.number("gpu", title: "% GPU", aliases: ["GPU%"], unit: .percent) { $0.gpu }
+    static let gpuTime = TableField<ResourceProcess>.number("gpuTime", title: "GPU Time", unit: .seconds) { $0.gpuTimeSeconds }
+    static let memory = TableField<ResourceProcess>.number("memory", title: "Memory", aliases: ["mem"], unit: .bytes) { Decimal($0.memoryBytes) }
+    static let openFiles = TableField<ResourceProcess>.number("openFiles", title: "Open Files", aliases: ["files"]) { $0.openFileCount.map { Decimal($0) } }
+    static let energy = TableField<ResourceProcess>.number("energy", title: "Energy Impact", aliases: ["power"]) { $0.power }
+    static let power12Hour = TableField<ResourceProcess>.number("power12h", title: "12 hr Power", aliases: ["power12Hour"]) { $0.power12Hour }
+    static let appNap = TableField<ResourceProcess>.boolean("appNap", title: "App Nap") { $0.appNap }
+    static let preventsSleep = TableField<ResourceProcess>.boolean("preventsSleep", title: "Preventing Sleep") { $0.preventsSleep }
+    static let diskWritten = TableField<ResourceProcess>.number("written", title: "Bytes Written", aliases: ["diskWritten"], unit: .bytes) { $0.diskWrittenBytes.map(Decimal.init) }
+    static let diskRead = TableField<ResourceProcess>.number("read", title: "Bytes Read", aliases: ["diskRead"], unit: .bytes) { $0.diskReadBytes.map(Decimal.init) }
+    static let networkSent = TableField<ResourceProcess>.number("sent", title: "Sent Bytes", unit: .bytes) { $0.sentBytes.map(Decimal.init) }
+    static let networkReceived = TableField<ResourceProcess>.number("received", title: "Rcvd Bytes", aliases: ["receivedBytes", "rcvd"], unit: .bytes) { $0.receivedBytes.map(Decimal.init) }
+    static let sentPackets = TableField<ResourceProcess>.number("sentPackets", title: "Sent Packets") { $0.sentPackets.map(Decimal.init) }
+    static let receivedPackets = TableField<ResourceProcess>.number("receivedPackets", title: "Rcvd Packets", aliases: ["rcvdPackets"]) { $0.receivedPackets.map(Decimal.init) }
+    static let pid = TableField<ResourceProcess>.number("pid", title: "PID", searchable: true) { Decimal($0.pid) }
+    static let user = TableField<ResourceProcess>.text("user", title: "User", aliases: ["owner"]) { $0.user }
+    static let all = [
+        name, cpu, cpuTime, threads, wakeups, kind, gpu, gpuTime, memory, openFiles, energy, power12Hour,
+        appNap, preventsSleep, diskWritten, diskRead, networkSent, networkReceived, sentPackets, receivedPackets, pid, user
+    ]
 
-    var id: Self { self }
-
-    static func options(for metric: ResourceMetric) -> [ResourceSort] {
+    static func columns(for metric: ResourceMetric) -> [TableField<ResourceProcess>] {
+        let metrics: [TableField<ResourceProcess>]
         switch metric {
-        case .cpu:
-            return [.cpu, .name, .pid]
-        case .memory:
-            return [.memory, .name, .pid]
-        case .energy:
-            return [.energy, .name, .pid]
-        case .disk:
-            return [.diskWritten, .diskRead, .name, .pid]
-        case .network:
-            return [.networkReceived, .networkSent, .name, .pid]
+        case .cpu: metrics = [cpu, cpuTime, threads, wakeups, kind, gpu, gpuTime]
+        case .memory: metrics = [memory, threads, openFiles]
+        case .energy: metrics = [energy, power12Hour, appNap, preventsSleep]
+        case .disk: metrics = [diskWritten, diskRead]
+        case .network: metrics = [networkSent, networkReceived, sentPackets, receivedPackets]
         }
+        return [name] + metrics + [pid, user]
     }
 
-    static func defaultOption(for metric: ResourceMetric) -> ResourceSort {
-        options(for: metric)[0]
+    static func defaultField(for metric: ResourceMetric) -> TableField<ResourceProcess> {
+        switch metric {
+        case .cpu: return cpu
+        case .memory: return memory
+        case .energy: return energy
+        case .disk: return diskWritten
+        case .network: return networkReceived
+        }
     }
 }
 
@@ -43,8 +62,7 @@ struct ResourceProcess: Identifiable {
     let pid: Int32
     let name: String
     let user: String
-    let cpu: Double
-    let measuredCPU: Double?
+    let cpu: Double?
     let cpuTimeSeconds: Double
     let threads: Int?
     let idleWakeUps: UInt64?
@@ -53,10 +71,10 @@ struct ResourceProcess: Identifiable {
     let gpuTimeSeconds: Double?
     let memoryBytes: UInt64
     let openFileCount: Int?
-    let power: Double
+    let power: Double?
     var power12Hour: Double?
     let appNap: Bool?
-    let preventsSleep: Bool
+    let preventsSleep: Bool?
     let diskReadBytes: UInt64?
     let diskWrittenBytes: UInt64?
     let diskSampledAt: Date?
@@ -361,10 +379,10 @@ final class ResourceMonitor: ObservableObject {
                 if let battery = snapshot.battery {
                     self.battery = battery
                 }
-                if snapshot.sampledEnergy {
+                if snapshot.sampledEnergy, let total = ProcessEnergyCache.totalPower(sampledProcesses.map(\.power)) {
                     self.history[.energy, default: []].append(ResourceHistoryPoint(
                         date: snapshot.date,
-                        primary: sampledProcesses.reduce(0) { $0 + $1.power },
+                        primary: total,
                         secondary: nil
                     ))
                     let cutoff = snapshot.date.addingTimeInterval(-300)
@@ -454,7 +472,7 @@ final class ResourceMonitor: ObservableObject {
             return ActivityProcessSample(
                 process: ActivityProcessDescriptor(identity: identity, name: process.name, user: process.user),
                 values: ActivityValues(
-                    cpu: process.measuredCPU, memory: Double(process.memoryBytes),
+                    cpu: process.cpu, memory: Double(process.memoryBytes),
                     diskRead: rate.diskRead, diskWritten: rate.diskWritten,
                     received: rate.received, sent: rate.sent
                 )
@@ -509,10 +527,12 @@ final class ResourceMonitor: ObservableObject {
         lastEnergyHistorySample = now
 
         let cutoff = now.addingTimeInterval(-12 * 3_600)
-        for process in processes.sorted(by: { $0.power > $1.power }).prefix(50)
-        where process.power > 0 {
-            guard let identity = process.identity else { continue }
-            energyHistory[identity, default: []].append(EnergySample(date: now, value: process.power))
+        let measured = processes.compactMap { process -> (identity: ResourceProcessIdentity, power: Double)? in
+            guard let identity = process.identity, let power = process.power, power > 0 else { return nil }
+            return (identity, power)
+        }
+        for process in measured.sorted(by: { $0.power > $1.power }).prefix(50) {
+            energyHistory[process.identity, default: []].append(EnergySample(date: now, value: process.power))
         }
 
         for identity in Array(energyHistory.keys) {

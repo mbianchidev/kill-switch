@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import DevCleanupCore
+import TableQueryCore
 
 /// Lists processes on notable dev ports and auto-kills long-running dev servers
 /// owned by the current user, while protecting system/IDE/MCP/Copilot processes.
@@ -260,6 +261,10 @@ struct DevCleanupTab: View {
     @State private var exclusionText = ""
     @State private var copiedProcessID: Int32?
     @State private var copyFeedbackRevision = 0
+    @State private var portSearch = ""
+    @State private var portSorting = TableComparator(field: DevPortTableFields.port)
+    @State private var cleanedSearch = ""
+    @State private var cleanedSorting = TableComparator(field: CleanedProcessTableFields.age, order: .reverse)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -516,16 +521,23 @@ struct DevCleanupTab: View {
     }
 
     private var portsSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Running dev servers & notable ports (\(monitor.portProcesses.count))")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.7))
-            if monitor.portProcesses.isEmpty {
-                Text("Nothing listening on tracked ports.")
+        let rows = TableQuery(search: portSearch, fields: DevPortTableFields.all)
+            .apply(to: monitor.portProcesses, sorting: portSorting, identity: \.id)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Running dev servers & notable ports (\(rows.count) of \(monitor.portProcesses.count))")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.7))
+                Spacer()
+                TableSortControls(fields: DevPortTableFields.columns, sorting: $portSorting)
+            }
+            TableSearchControls(search: $portSearch, fields: DevPortTableFields.all, prompt: "Search commands, or port >= 8000")
+            if rows.isEmpty {
+                Text(monitor.portProcesses.isEmpty ? "Nothing listening on tracked ports." : "No matching dev servers or ports. Change or reset the filters.")
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.4))
             } else {
-                ForEach(monitor.portProcesses) { proc in
+                ForEach(rows) { proc in
                     let isCopied = copiedProcessID == proc.pid
                     HStack(spacing: 12) {
                         Text(":\(String(proc.port))")
@@ -589,16 +601,23 @@ struct DevCleanupTab: View {
     }
 
     private var cleanedSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Auto-killed dev servers (\(monitor.cleaned.count))")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.7))
-            if monitor.cleaned.isEmpty {
-                Text("No long-running dev servers cleaned up.")
+        let rows = TableQuery(search: cleanedSearch, fields: CleanedProcessTableFields.all)
+            .apply(to: monitor.cleaned, sorting: cleanedSorting, identity: { String($0.pid) })
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Auto-killed dev servers (\(rows.count) of \(monitor.cleaned.count))")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.7))
+                Spacer()
+                TableSortControls(fields: CleanedProcessTableFields.all, sorting: $cleanedSorting)
+            }
+            TableSearchControls(search: $cleanedSearch, fields: CleanedProcessTableFields.all, prompt: "Search cleanup records, or age > 12h")
+            if rows.isEmpty {
+                Text(monitor.cleaned.isEmpty ? "No long-running dev servers cleaned up." : "No matching cleanup records. Change or reset the filters.")
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.4))
             } else {
-                ForEach(monitor.cleaned) { proc in
+                ForEach(rows) { proc in
                     VStack(alignment: .leading, spacing: 2) {
                         HStack {
                             Text(proc.runtime.uppercased())

@@ -1,22 +1,24 @@
 import Charts
 import SwiftUI
 import SystemMetricsCore
+import TableQueryCore
 
 struct ResourcesTab: View {
     @ObservedObject var monitor: ResourceMonitor
     @State private var metric: ResourceMetric = .cpu
-    @State private var sort: ResourceSort = .cpu
+    @State private var sorting = TableComparator(field: ResourceTableFields.cpu, order: .reverse)
     @State private var searchText = ""
     @State private var showConnections = true
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
+        let rows = metric == .network && showConnections ? [] : visibleProcesses
+        return VStack(spacing: 0) {
+            header(count: rows.count)
             Divider()
             if metric == .network && showConnections {
-                NetworkConnectionsPanel(showAllUsers: monitor.showAllUsers)
+                NetworkConnectionsPanel(showAllUsers: $monitor.showAllUsers)
             } else {
-                processTable
+                processTable(rows)
             }
             Divider()
             if metric != .energy {
@@ -27,22 +29,18 @@ struct ResourcesTab: View {
             instrumentRail
         }
         .background(Theme.background)
-        .onChange(of: metric) { newMetric in
-            sort = ResourceSort.defaultOption(for: newMetric)
-            monitor.setMetric(newMetric)
-        }
         .onAppear { monitor.setMetric(metric) }
         .onDisappear { monitor.setMetric(nil) }
     }
 
-    private var header: some View {
+    private func header(count: Int) -> some View {
         VStack(spacing: 10) {
             HStack(spacing: 12) {
                 Label("Resources", systemImage: "waveform.path.ecg")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.white)
 
-                Picker("Resource", selection: $metric) {
+                Picker("Resource", selection: metricSelection) {
                     ForEach(ResourceMetric.allCases) { metric in
                         Text(metric.rawValue).tag(metric)
                     }
@@ -69,29 +67,12 @@ struct ResourcesTab: View {
             }
 
             if !(metric == .network && showConnections) {
+                TableSearchControls(
+                    search: $searchText, fields: ResourceTableFields.all, prompt: "Search processes, or CPU% > 40",
+                    resetAdditional: { monitor.showAllUsers = false }
+                )
                 HStack(spacing: 10) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundColor(.white.opacity(0.45))
-                        TextField("Filter by process, PID, or user", text: $searchText)
-                            .textFieldStyle(.plain)
-                            .foregroundColor(.white)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.black.opacity(0.22))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border))
-                    )
-
-                    Picker("Sort", selection: $sort) {
-                        ForEach(ResourceSort.options(for: metric)) { option in
-                            Text(option.rawValue).tag(option)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .frame(width: 160)
+                    TableSortControls(fields: ResourceTableFields.columns(for: metric), sorting: $sorting)
 
                     Button {
                         monitor.refresh()
@@ -101,7 +82,7 @@ struct ResourcesTab: View {
                     .buttonStyle(.borderless)
                     .help("Refresh now")
 
-                    Text("\(visibleProcesses.count) processes")
+                    Text("\(count) processes")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(.white.opacity(0.45))
 
@@ -126,11 +107,11 @@ struct ResourcesTab: View {
         .background(Theme.panel)
     }
 
-    private var processTable: some View {
+    private func processTable(_ rows: [ResourceProcess]) -> some View {
         ScrollView([.horizontal, .vertical]) {
             LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
                 Section {
-                    ForEach(Array(visibleProcesses.enumerated()), id: \.element.pid) { index, process in
+                    ForEach(Array(rows.enumerated()), id: \.element.pid) { index, process in
                         ResourceProcessRow(
                             process: process,
                             metric: metric,
@@ -143,7 +124,7 @@ struct ResourcesTab: View {
                         )
                     }
                 } header: {
-                    ResourceTableHeader(metric: metric)
+                    ResourceTableHeader(metric: metric, sorting: $sorting)
                 }
             }
             .frame(minWidth: tableWidth, alignment: .leading)
@@ -219,8 +200,8 @@ struct ResourcesTab: View {
         case .energy:
             FlowLayout(spacing: 10) {
                 ResourceValue(
-                    label: "Energy impact",
-                    value: String(format: "%.1f", monitor.processes.reduce(0) { $0 + $1.power }),
+                    label: "Reported energy impact",
+                    value: ProcessEnergyCache.totalPower(monitor.processes.map(\.power)).map { String(format: "%.1f", $0) } ?? "N/A",
                     color: Theme.energy
                 )
                 ResourceValue(
@@ -263,41 +244,24 @@ struct ResourcesTab: View {
     }
 
     private var visibleProcesses: [ResourceProcess] {
-        var result = monitor.processes
-        if !monitor.showAllUsers {
-            result = result.filter { $0.user == monitor.currentUsername }
+        let scoped = monitor.processes.filter {
+            monitor.showAllUsers || $0.user == monitor.currentUsername
         }
 
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !query.isEmpty {
-            result = result.filter {
-                $0.name.localizedCaseInsensitiveContains(query) ||
-                $0.user.localizedCaseInsensitiveContains(query) ||
-                String($0.pid).contains(query)
+        return TableQuery(search: searchText, fields: ResourceTableFields.all)
+            .apply(to: scoped, sorting: sorting, identity: { String($0.pid) })
+    }
+
+    private var metricSelection: Binding<ResourceMetric> {
+        Binding(
+            get: { metric },
+            set: { selected in
+                guard selected != metric else { return }
+                metric = selected
+                sorting = TableComparator(field: ResourceTableFields.defaultField(for: selected), order: .reverse)
+                monitor.setMetric(selected)
             }
-        }
-
-        switch sort {
-        case .cpu:
-            result.sort { $0.cpu > $1.cpu }
-        case .memory:
-            result.sort { $0.memoryBytes > $1.memoryBytes }
-        case .energy:
-            result.sort { $0.power > $1.power }
-        case .diskWritten:
-            result.sort { ($0.diskWrittenBytes ?? 0) > ($1.diskWrittenBytes ?? 0) }
-        case .diskRead:
-            result.sort { ($0.diskReadBytes ?? 0) > ($1.diskReadBytes ?? 0) }
-        case .networkReceived:
-            result.sort { ($0.receivedBytes ?? 0) > ($1.receivedBytes ?? 0) }
-        case .networkSent:
-            result.sort { ($0.sentBytes ?? 0) > ($1.sentBytes ?? 0) }
-        case .name:
-            result.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        case .pid:
-            result.sort { $0.pid < $1.pid }
-        }
-        return result
+        )
     }
 
     private var chartTitle: String {
@@ -329,52 +293,63 @@ struct ResourcesTab: View {
 
 private struct ResourceTableHeader: View {
     let metric: ResourceMetric
+    @Binding var sorting: TableComparator<ResourceProcess>
 
     var body: some View {
         HStack(spacing: 0) {
-            ResourceTableCell("Process Name", width: 250, alignment: .leading, isHeader: true)
+            TableSortHeader(field: ResourceTableFields.name, sorting: $sorting)
+                .padding(.horizontal, 10)
+                .frame(width: 250)
             switch metric {
             case .cpu:
-                ResourceTableCell("% CPU", width: 72, isHeader: true)
-                ResourceTableCell("CPU Time", width: 98, isHeader: true)
-                ResourceTableCell("Threads", width: 72, isHeader: true)
-                ResourceTableCell("Idle Wake Ups", width: 104, isHeader: true)
-                ResourceTableCell("Kind", width: 72, isHeader: true)
-                ResourceTableCell("% GPU", width: 72, isHeader: true)
-                ResourceTableCell("GPU Time", width: 90, isHeader: true)
-                ResourceTableCell("PID", width: 72, isHeader: true)
-                ResourceTableCell("User", width: 140, alignment: .leading, isHeader: true)
+                header(ResourceTableFields.cpu, width: 72)
+                header(ResourceTableFields.cpuTime, width: 98)
+                header(ResourceTableFields.threads, width: 72)
+                header(ResourceTableFields.wakeups, width: 104)
+                header(ResourceTableFields.kind, width: 72)
+                header(ResourceTableFields.gpu, width: 72)
+                header(ResourceTableFields.gpuTime, width: 90)
+                header(ResourceTableFields.pid, width: 72)
+                header(ResourceTableFields.user, width: 140, alignment: .leading)
             case .memory:
-                ResourceTableCell("Memory", width: 100, isHeader: true)
-                ResourceTableCell("Threads", width: 76, isHeader: true)
-                ResourceTableCell("Open Files", width: 86, isHeader: true)
-                ResourceTableCell("PID", width: 72, isHeader: true)
-                ResourceTableCell("User", width: 140, alignment: .leading, isHeader: true)
+                header(ResourceTableFields.memory, width: 100)
+                header(ResourceTableFields.threads, width: 76)
+                header(ResourceTableFields.openFiles, width: 86)
+                header(ResourceTableFields.pid, width: 72)
+                header(ResourceTableFields.user, width: 140, alignment: .leading)
             case .energy:
-                ResourceTableCell("Energy Impact", width: 110, isHeader: true)
-                ResourceTableCell("12 hr Power", width: 100, isHeader: true)
-                ResourceTableCell("App Nap", width: 82, isHeader: true)
-                ResourceTableCell("Preventing Sleep", width: 120, isHeader: true)
-                ResourceTableCell("PID", width: 72, isHeader: true)
-                ResourceTableCell("User", width: 140, alignment: .leading, isHeader: true)
+                header(ResourceTableFields.energy, width: 110)
+                header(ResourceTableFields.power12Hour, width: 100)
+                header(ResourceTableFields.appNap, width: 82)
+                header(ResourceTableFields.preventsSleep, width: 120)
+                header(ResourceTableFields.pid, width: 72)
+                header(ResourceTableFields.user, width: 140, alignment: .leading)
             case .disk:
-                ResourceTableCell("Bytes Written", width: 118, isHeader: true)
-                ResourceTableCell("Bytes Read", width: 118, isHeader: true)
-                ResourceTableCell("PID", width: 72, isHeader: true)
-                ResourceTableCell("User", width: 140, alignment: .leading, isHeader: true)
+                header(ResourceTableFields.diskWritten, width: 118)
+                header(ResourceTableFields.diskRead, width: 118)
+                header(ResourceTableFields.pid, width: 72)
+                header(ResourceTableFields.user, width: 140, alignment: .leading)
             case .network:
-                ResourceTableCell("Sent Bytes", width: 110, isHeader: true)
-                ResourceTableCell("Rcvd Bytes", width: 110, isHeader: true)
-                ResourceTableCell("Sent Packets", width: 110, isHeader: true)
-                ResourceTableCell("Rcvd Packets", width: 110, isHeader: true)
-                ResourceTableCell("PID", width: 72, isHeader: true)
-                ResourceTableCell("User", width: 140, alignment: .leading, isHeader: true)
+                header(ResourceTableFields.networkSent, width: 110)
+                header(ResourceTableFields.networkReceived, width: 110)
+                header(ResourceTableFields.sentPackets, width: 110)
+                header(ResourceTableFields.receivedPackets, width: 110)
+                header(ResourceTableFields.pid, width: 72)
+                header(ResourceTableFields.user, width: 140, alignment: .leading)
             }
-            ResourceTableCell("", width: 42, isHeader: true)
+            Color.clear.frame(width: 42)
         }
+        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+        .foregroundColor(.white.opacity(0.52))
         .frame(height: 30)
         .background(Color(red: 0.105, green: 0.075, blue: 0.16))
         .overlay(alignment: .bottom) { Divider() }
+    }
+
+    private func header(_ field: TableField<ResourceProcess>, width: CGFloat, alignment: Alignment = .trailing) -> some View {
+        TableSortHeader(field: field, sorting: $sorting, alignment: alignment)
+            .frame(width: width)
+            .padding(.horizontal, 6)
     }
 }
 
@@ -394,7 +369,10 @@ private struct ResourceProcessRow: View {
                 .accessibilityLabel("Show history for \(process.name), PID \(process.pid)")
             switch metric {
             case .cpu:
-                value(String(format: "%.1f", process.cpu), width: 72, color: Theme.cpuUser)
+                value(
+                    process.cpu.map { String(format: "%.1f", $0) } ?? "N/A", width: 72, color: Theme.cpuUser,
+                    help: process.cpu == nil ? "CPU rates need two readable lifetime-matched samples." : nil
+                )
                 value(formatDuration(process.cpuTimeSeconds), width: 98)
                 value(
                     process.threads.map(String.init) ?? "—",
@@ -426,13 +404,16 @@ private struct ResourceProcessRow: View {
                 value("\(process.pid)", width: 72)
                 value(process.user, width: 140, alignment: .leading)
             case .energy:
-                value(String(format: "%.1f", process.power), width: 110, color: Theme.energy)
+                value(process.power.map { String(format: "%.1f", $0) } ?? "N/A", width: 110, color: Theme.energy)
                 value(
                     process.power12Hour.map { String(format: "%.2f", $0) } ?? "—",
                     width: 100
                 )
                 value(boolean(process.appNap), width: 82, help: appNapHelp)
-                value(process.preventsSleep ? "Yes" : "No", width: 120)
+                value(
+                    boolean(process.preventsSleep), width: 120,
+                    help: process.preventsSleep == nil ? "Sleep assertion state has not been read successfully for this process." : nil
+                )
                 value("\(process.pid)", width: 72)
                 value(process.user, width: 140, alignment: .leading)
             case .disk:
@@ -533,7 +514,6 @@ private struct ResourceTableCell: View {
     let text: String
     let width: CGFloat
     let alignment: Alignment
-    let isHeader: Bool
     let color: Color
     let helpText: String?
 
@@ -541,22 +521,20 @@ private struct ResourceTableCell: View {
         _ text: String,
         width: CGFloat,
         alignment: Alignment = .trailing,
-        isHeader: Bool = false,
         color: Color = .white.opacity(0.68),
         help: String? = nil
     ) {
         self.text = text
         self.width = width
         self.alignment = alignment
-        self.isHeader = isHeader
         self.color = color
         self.helpText = help
     }
 
     var body: some View {
         Text(text)
-            .font(.system(size: isHeader ? 10 : 11, weight: isHeader ? .semibold : .regular, design: .monospaced))
-            .foregroundColor(isHeader ? .white.opacity(0.52) : color)
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundColor(color)
             .lineLimit(1)
             .frame(width: width, alignment: alignment)
             .padding(.horizontal, 6)

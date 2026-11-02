@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import InstallCore
+import TableQueryCore
 
 public enum StartupKind: String, CaseIterable, Identifiable, Sendable {
     case loginApp = "Login apps"
@@ -104,6 +105,21 @@ public struct StartupError: LocalizedError {
     public let message: String
     public init(_ message: String) { self.message = message }
     public var errorDescription: String? { message }
+}
+
+public enum StartupTableFields {
+    public static let name = TableField<StartupItem>.text("name", title: "Name / schedule", aliases: ["label", "schedule"]) { $0.name }
+    public static let kind = TableField<StartupItem>.text("type", title: "Type", aliases: ["kind"], values: StartupKind.allCases.map(\.rawValue), searchable: false) { $0.kind.rawValue }
+    public static let scope = TableField<StartupItem>.text("scope", title: "Scope", aliases: ["domain"], values: ["My account", "System"], searchable: false) { $0.domain.label }
+    public static let state = TableField<StartupItem>.text("state", title: "State", values: StartupState.allCases.map(\.rawValue), searchable: false) { $0.state.rawValue }
+    public static let command = TableField<StartupItem>.text("command", title: "Command / app", aliases: ["app", "program"]) { $0.command }
+    public static let origin = TableField<StartupItem>.text("path", title: "Source path", aliases: ["origin"]) { $0.origin }
+    public static let enabled = TableField<StartupItem>.boolean("enabled", title: "Enabled") {
+        $0.state == .unknown ? nil : $0.state == .enabled
+    }
+    public static let readOnly = TableField<StartupItem>.boolean("readOnly", title: "Read-only") { $0.restriction != nil }
+    public static let columns = [name, kind, scope, state, command]
+    public static let all = columns + [origin, enabled, readOnly]
 }
 
 public struct StartupCommand: Equatable, Sendable {

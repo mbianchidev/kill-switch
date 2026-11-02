@@ -10,11 +10,17 @@ let package = Package(
             path: "Sources/CSQLite"
         ),
         .target(
+            name: "TableQueryCore",
+            path: "Sources/TableQueryCore"
+        ),
+        .target(
             name: "DiskCleanupCore",
+            dependencies: ["TableQueryCore"],
             path: "Sources/DiskCleanupCore"
         ),
         .target(
             name: "DevCleanupCore",
+            dependencies: ["TableQueryCore"],
             path: "Sources/DevCleanupCore"
         ),
         .target(
@@ -27,7 +33,7 @@ let package = Package(
         ),
         .target(
             name: "SystemMetricsCore",
-            dependencies: ["CSQLite"],
+            dependencies: ["CSQLite", "TableQueryCore"],
             path: "Sources/SystemMetricsCore"
         ),
         .target(
@@ -36,7 +42,7 @@ let package = Package(
         ),
         .target(
             name: "StartupCore",
-            dependencies: ["InstallCore"],
+            dependencies: ["InstallCore", "TableQueryCore"],
             path: "Sources/StartupCore"
         ),
         .executableTarget(
@@ -48,7 +54,8 @@ let package = Package(
                 "KeepAwakeCore",
                 "ScreenTimeCore",
                 "StartupCore",
-                "SystemMetricsCore"
+                "SystemMetricsCore",
+                "TableQueryCore"
             ],
             path: "Sources/KillSwitch"
         ),
@@ -59,12 +66,12 @@ let package = Package(
         ),
         .executableTarget(
             name: "DiskCleanupCoreChecks",
-            dependencies: ["DiskCleanupCore"],
+            dependencies: ["DiskCleanupCore", "TableQueryCore"],
             path: "Tests/DiskCleanupCoreChecks"
         ),
         .executableTarget(
             name: "DevCleanupCoreChecks",
-            dependencies: ["DevCleanupCore"],
+            dependencies: ["DevCleanupCore", "TableQueryCore"],
             path: "Tests/DevCleanupCoreChecks"
         ),
         .executableTarget(
@@ -74,7 +81,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "SystemMetricsChecks",
-            dependencies: ["InstallCore", "SystemMetricsCore"],
+            dependencies: ["InstallCore", "SystemMetricsCore", "TableQueryCore"],
             path: "Tests/SystemMetricsChecks"
         ),
         .executableTarget(
@@ -84,7 +91,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "StartupCoreChecks",
-            dependencies: ["InstallCore", "StartupCore"],
+            dependencies: ["InstallCore", "StartupCore", "TableQueryCore"],
             path: "Tests/StartupCoreChecks"
         )
     ]

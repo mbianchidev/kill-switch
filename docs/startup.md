@@ -7,6 +7,11 @@ running process. Search by app/service name, command, or path; filter by entry
 type and enabled state, then choose a sort field and direction. Select a row
 to read its complete source and command.
 
+Every data-column header supports both sort directions. Search also accepts
+comparisons such as `state = Enabled` or `readOnly = no`. **Reset filters**
+clears search and restores the type/state pickers; see the
+[shared filter guide](table-controls.md).
+
 ## Supported entries
 
 | Entry | Discovery | Control |
@@ -18,6 +23,18 @@ to read its complete source and command.
 | App-owned login/background items | **Load background items**, using administrator-authorized `sfltool dumpbtm` | Read-only inventory; use **Login Items settings** for the macOS-managed switch |
 | Your cron jobs | Current account's `crontab -l` | Comment/uncomment only the selected job |
 | Root's cron jobs | **Load system cron**, with administrator approval | Same job-level edits, with administrator approval |
+
+Empty updater placeholders and configuration-only plists without a service
+label are not launch service registrations and are omitted. Definitions with
+launch configuration but a missing or invalid label still produce a warning.
+Service labels are never inferred from filenames.
+
+Readable symbolic-link service files stay visible as read-only entries.
+Multiple files declaring the same label in one launchd domain are shown
+separately and all stay read-only; their restriction is shown on each row
+rather than reported as a failed read. Matching labels in different domains
+are separate services. Broken links, non-file targets, malformed definitions,
+and failed reads still produce warnings.
 
 Cron discovery covers user and root crontabs, including `@reboot` and standard
 calendar macros. It does not edit `/etc/crontab`, periodic scripts, or device
@@ -34,8 +51,9 @@ jobs, delete apps, or rewrite launch-agent/daemon plists. Enabling a service
 allows future launches; it does not immediately start it.
 
 The app rereads a service's source before changing it, refuses changed files,
-unexpected ownership, symlink entries, unsafe labels, other users' GUI domains,
-and protected macOS services. It checks the resulting `launchctl` override.
+unexpected ownership, edits through symlink entries, unsafe labels, other
+users' GUI domains, and protected macOS services. It checks the resulting
+`launchctl` override.
 If current state cannot be read, that entry stays unknown/read-only.
 Vendor apps can recreate their registrations or override changes later.
 

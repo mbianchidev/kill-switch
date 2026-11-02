@@ -4,6 +4,7 @@ import Foundation
 import InstallCore
 import SwiftUI
 import SystemMetricsCore
+import TableQueryCore
 import os
 
 final class ProcessInspectionMonitor: ObservableObject {
@@ -78,8 +79,7 @@ struct OpenFilesTab: View {
     @State private var search = ""
     @State private var locksOnly = false
     @State private var kind = "All types"
-    @State private var sort: OpenFileSort = .path
-    @State private var ascending = true
+    @State private var sorting = TableComparator(field: OpenFileTableFields.path)
     @State private var selected: OpenFileRecord.ID?
 
     init(resourceMonitor: ResourceMonitor) {
@@ -97,9 +97,15 @@ struct OpenFilesTab: View {
                 ProcessScopePicker(monitor: resourceMonitor)
             }
             Divider()
+            TableSearchControls(
+                search: $search, fields: OpenFileTableFields.all, prompt: "Search files, or size > 1MB",
+                resetAdditional: {
+                    locksOnly = false
+                    kind = "All types"
+                    resourceMonitor.showAllUsers = false
+                }
+            )
             HStack(spacing: 10) {
-                TextField("Search path, process, PID, user, or lock", text: $search)
-                    .textFieldStyle(.roundedBorder)
                 Toggle("Reported locks", isOn: $locksOnly)
                     .toggleStyle(.checkbox)
                 Picker("Type", selection: $kind) {
@@ -108,26 +114,24 @@ struct OpenFilesTab: View {
                     Text("Directories").tag("DIR")
                     Text("Unix sockets").tag("unix")
                 }.frame(width: 160)
-                Picker("Sort", selection: $sort) {
-                    ForEach(OpenFileSort.allCases) { Text($0.rawValue).tag($0) }
-                }.frame(width: 150)
-                SortDirectionButton(ascending: $ascending)
+                TableSortControls(fields: OpenFileTableFields.columns, sorting: $sorting)
+                Spacer()
                 inspectionRefresh(monitor)
             }
 
             InspectionStatus(monitor: monitor, count: rows.count, noun: "open files")
-            Table(rows, selection: $selected) {
-                TableColumn("Path") { Text($0.path).help($0.path) }
+            Table(rows, selection: $selected, sortOrder: tableSortOrder($sorting)) {
+                TableColumn("Path", sortUsing: TableComparator(field: OpenFileTableFields.path)) { Text($0.path).help($0.path) }
                     .width(min: 230, ideal: 360)
-                TableColumn("Process") { Text($0.process) }
+                TableColumn("Process", sortUsing: TableComparator(field: OpenFileTableFields.process)) { Text($0.process) }
                     .width(min: 110, ideal: 150)
-                TableColumn("PID") { Text(String($0.pid)) }.width(55)
-                TableColumn("User") { Text($0.user) }.width(95)
-                TableColumn("FD") { Text($0.descriptor) }.width(45)
-                TableColumn("Access") { Text($0.accessDescription) }.width(85)
-                TableColumn("Lock") { Text($0.lockDescription) }.width(110)
-                TableColumn("Type") { Text($0.kind) }.width(55)
-                TableColumn("Size") { Text($0.size.map(formatBytes) ?? "N/A") }.width(90)
+                TableColumn("PID", sortUsing: TableComparator(field: OpenFileTableFields.pid)) { Text(String($0.pid)) }.width(55)
+                TableColumn("User", sortUsing: TableComparator(field: OpenFileTableFields.user)) { Text($0.user) }.width(95)
+                TableColumn("FD", sortUsing: TableComparator(field: OpenFileTableFields.descriptor)) { Text($0.descriptor) }.width(45)
+                TableColumn("Access", sortUsing: TableComparator(field: OpenFileTableFields.access)) { Text($0.accessDescription) }.width(85)
+                TableColumn("Lock", sortUsing: TableComparator(field: OpenFileTableFields.lock)) { Text($0.lockDescription) }.width(110)
+                TableColumn("Type", sortUsing: TableComparator(field: OpenFileTableFields.kind)) { Text($0.kind) }.width(55)
+                TableColumn("Size", sortUsing: TableComparator(field: OpenFileTableFields.size)) { Text($0.size.map(formatBytes) ?? "N/A") }.width(90)
             }
             .font(.system(size: 11, design: .monospaced))
             .scrollContentBackground(.hidden)
@@ -154,49 +158,49 @@ struct OpenFilesTab: View {
     }
 
     private var visible: [OpenFileRecord] {
-        OpenFileQuery(
+        let query = OpenFileQuery(
             search: search, userID: showAllUsers ? nil : getuid(), locksOnly: locksOnly,
-            kind: kind == "All types" ? nil : kind, sort: sort, ascending: ascending
-        ).apply(to: monitor.files)
+            kind: kind == "All types" ? nil : kind
+        )
+        return sorting.sorted(query.matching(monitor.files), identity: \.id)
     }
 }
 
 struct NetworkConnectionsPanel: View {
-    let showAllUsers: Bool
+    @Binding var showAllUsers: Bool
     @StateObject private var monitor = ProcessInspectionMonitor()
     @State private var search = ""
     @State private var filter: NetworkConnectionFilter = .all
-    @State private var sort: NetworkConnectionSort = .process
-    @State private var ascending = true
+    @State private var sorting = TableComparator(field: ConnectionTableFields.process)
     @State private var selected: NetworkConnectionRecord.ID?
 
     var body: some View {
         let rows = visible
         return VStack(alignment: .leading, spacing: 10) {
+            TableSearchControls(
+                search: $search, fields: ConnectionTableFields.all, prompt: "Search connections, or port >= 8000",
+                resetAdditional: { filter = .all; showAllUsers = false }
+            )
             HStack {
-                TextField("Search process, PID, endpoint, port, or state", text: $search)
-                    .textFieldStyle(.roundedBorder)
                 Picker("Connection state", selection: $filter) {
                     ForEach(NetworkConnectionFilter.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 260)
-                Picker("Sort", selection: $sort) {
-                    ForEach(NetworkConnectionSort.allCases) { Text($0.rawValue).tag($0) }
-                }.frame(width: 160)
-                SortDirectionButton(ascending: $ascending)
+                TableSortControls(fields: ConnectionTableFields.all, sorting: $sorting)
+                Spacer()
                 inspectionRefresh(monitor)
             }
             InspectionStatus(monitor: monitor, count: rows.count, noun: "connections")
-            Table(rows, selection: $selected) {
-                TableColumn("Process") { Text($0.process) }.width(min: 110, ideal: 140)
-                TableColumn("PID") { Text(String($0.pid)) }.width(55)
-                TableColumn("User") { Text($0.user) }.width(90)
-                TableColumn("Protocol") { Text("\($0.protocolName) \($0.family == "unix" ? "" : $0.family)") }.width(90)
-                TableColumn("Local endpoint") { Text($0.local).help($0.local) }.width(min: 150, ideal: 200)
-                TableColumn("Remote endpoint") { Text($0.remote ?? "None").help($0.remote ?? "No remote endpoint") }
+            Table(rows, selection: $selected, sortOrder: tableSortOrder($sorting)) {
+                TableColumn("Process", sortUsing: TableComparator(field: ConnectionTableFields.process)) { Text($0.process) }.width(min: 110, ideal: 140)
+                TableColumn("PID", sortUsing: TableComparator(field: ConnectionTableFields.pid)) { Text(String($0.pid)) }.width(55)
+                TableColumn("User", sortUsing: TableComparator(field: ConnectionTableFields.user)) { Text($0.user) }.width(90)
+                TableColumn("Protocol", sortUsing: TableComparator(field: ConnectionTableFields.protocolDisplay)) { Text($0.protocolDescription) }.width(90)
+                TableColumn("Local endpoint", sortUsing: TableComparator(field: ConnectionTableFields.local)) { Text($0.local).help($0.local) }.width(min: 150, ideal: 200)
+                TableColumn("Remote endpoint", sortUsing: TableComparator(field: ConnectionTableFields.remote)) { Text($0.remote ?? "None").help($0.remote ?? "No remote endpoint") }
                     .width(min: 150, ideal: 200)
-                TableColumn("State") { Text($0.state) }.width(125)
+                TableColumn("State", sortUsing: TableComparator(field: ConnectionTableFields.state)) { Text($0.state) }.width(125)
             }
             .font(.system(size: 11, design: .monospaced))
             .scrollContentBackground(.hidden)
@@ -221,20 +225,8 @@ struct NetworkConnectionsPanel: View {
     }
 
     private var visible: [NetworkConnectionRecord] {
-        NetworkConnectionQuery(
-            search: search, userID: showAllUsers ? nil : getuid(), filter: filter, sort: sort, ascending: ascending
-        ).apply(to: monitor.connections)
-    }
-}
-
-struct SortDirectionButton: View {
-    @Binding var ascending: Bool
-    var body: some View {
-        Button { ascending.toggle() } label: {
-            Image(systemName: ascending ? "arrow.up" : "arrow.down")
-        }
-        .help(ascending ? "Ascending; click for descending" : "Descending; click for ascending")
-        .accessibilityLabel(ascending ? "Sort ascending" : "Sort descending")
+        let query = NetworkConnectionQuery(search: search, userID: showAllUsers ? nil : getuid(), filter: filter)
+        return sorting.sorted(query.matching(monitor.connections), identity: \.id)
     }
 }
 
