@@ -290,16 +290,15 @@ public enum SystemMetricsParser {
             return nil
         }
         var result: Set<Int32> = []
-        let pattern = #"pid\s+(\d+)\([^)]*\):.*\bPrevent[A-Za-z]*Sleep\b"#
+        let pattern = #"^\s*pid\s+(\d+)\(.*?\):\s*\[[^\]]*\]\s+(?:[\d:.]+\s+)?([A-Za-z][A-Za-z0-9]*)\b"#
         for line in output.components(separatedBy: .newlines) {
-            if line.trimmingCharacters(in: .whitespaces).hasPrefix("pid"),
-               line.range(of: #"^\s*pid\s+\d+\([^)]*\):"#, options: .regularExpression) == nil {
+            guard line.trimmingCharacters(in: .whitespaces).hasPrefix("pid") else { continue }
+            guard let values = captures(pattern: pattern, in: line), values.count == 2, let pid = Int32(values[0]) else {
                 return nil
             }
-            guard let value = captures(pattern: pattern, in: line)?.first, let pid = Int32(value) else {
-                continue
+            if values[1].hasPrefix("Prevent") && values[1].hasSuffix("Sleep") {
+                result.insert(pid)
             }
-            result.insert(pid)
         }
         return result
     }

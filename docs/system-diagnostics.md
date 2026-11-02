@@ -26,7 +26,10 @@ while Network is selected. Energy's heavier power/battery collection runs at
 most once every **15 seconds**, only while Energy is visible. Power and sleep
 assertions retain separate read availability: never-read, failed, and
 not-yet-observed process lifetimes remain unavailable rather than becoming
-zero power or No. The energy summary totals reported values and shows N/A
+zero power or No. Each collector retains its error until its own retry succeeds,
+including on six-second ticks that skip Energy collection. Sampling another mode
+clears current power/assertion readings and starts a fresh read on returning to
+Energy. The energy summary totals reported values and shows N/A
 when none are readable. Memory-pressure
 queries run only while Memory is selected.
 

@@ -98,7 +98,9 @@ CPU rates remain unavailable until two readable, lifetime-matched samples exist.
 Energy and sleep assertions are collected only while Energy is visible. Processes
 not present in a successful read remain unknown, including newly created or
 reused PIDs. A failed refresh clears availability rather than inventing zero
-power or a definite No; the failure remains visible.
+power or a definite No. Its error stays visible between collection attempts and
+clears only when that collector succeeds. Sampling another resource mode clears
+current Energy readings; return to Energy to collect them again.
 
 The **Find process** history search accepts name, PID, and user expressions,
 such as `pid > 100 user:example`, including exited processes. It does not claim

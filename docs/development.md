@@ -147,6 +147,8 @@ filtered snapshot rather than sorting again for every cell.
 The energy cache keys both power and verified sleep-assertion states by process
 lifetime. An empty successful assertion inventory records No only for the
 identities observed in that read; missing or failed reads remain unknown.
+Mode changes clear current readings without clearing unresolved collector errors;
+every sampling tick republishes those errors until the relevant reader succeeds.
 
 For memory regressions, run `swift run SystemMetricsChecks --memory-stress`.
 This adds two simulated hours of 5,000 synthetic processes, checks that all

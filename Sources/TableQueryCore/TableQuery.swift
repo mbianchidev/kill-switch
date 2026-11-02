@@ -333,6 +333,10 @@ private func parseTableQuery<Row>(
     for token in raw {
         if case let .word(text, quoted: false) = token, !text.hasPrefix("::"), let colon = text.firstIndex(of: ":") {
             let prefix = String(text[..<colon])
+            if !prefix.isEmpty && normalizedField(prefix).isEmpty {
+                tokens.append(token)
+                continue
+            }
             var words: [String] = []
             for previous in tokens.reversed() {
                 guard case let .word(word, _) = previous else { break }

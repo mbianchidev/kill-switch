@@ -100,17 +100,19 @@ final class ResourceSampler {
                 energy.updatePower(try samplePower(), identities: identities)
                 sampledEnergy = true
             } catch {
-                energy.updatePower(nil, identities: identities)
-                warnings.append("Energy: \(error.localizedDescription)")
+                energy.failPower(error.localizedDescription)
             }
             do {
                 energy.updateSleepAssertions(try samplePreventingSleepPIDs(), identities: identities)
             } catch {
-                energy.updateSleepAssertions(nil, identities: identities)
-                warnings.append("Sleep assertions: \(error.localizedDescription)")
+                energy.failSleepAssertions(error.localizedDescription)
             }
             cachedBattery = sampleBattery()
+        } else if !policy.usesTop {
+            energy.clearMeasurements()
+            lastEnergyDate = nil
         }
+        warnings += energy.warnings
         var networkProcesses: [Int32: ParsedNetworkProcess] = [:]
         var networkSampledAt: Date?
         do {

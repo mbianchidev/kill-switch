@@ -58,6 +58,13 @@ extension SystemMetricsChecks {
             NetworkConnectionQuery(search: "remote ::1").apply(to: snapshot.connections).isEmpty,
             "a bare IPv6 address after a field-like search word stays literal"
         )
+        for search in ["remote [::1]:50000", "local *:8080"] {
+            let query = NetworkConnectionQuery(search: search)
+            check(
+                query.tableQuery.error == nil && query.apply(to: snapshot.connections).isEmpty,
+                "punctuation-only endpoint prefixes cannot absorb a preceding search word: \(search)"
+            )
+        }
         let boundaryFixture = [
             "p41", "cremote worker", "u501", "Lexample", "\nf4", "tIPv4", "PTCP",
             "n127.0.0.1:9000->127.0.0.1:80", "TST=ESTABLISHED",

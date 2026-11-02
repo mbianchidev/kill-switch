@@ -49,13 +49,28 @@ extension SystemMetricsChecks {
             )
         }
 
-        cache.updatePower(nil, identities: identities)
+        cache.failPower("Synthetic power failure")
         check(cache.power(for: known) == nil && cache.preventsSleep(for: known) == false, "a failed power read does not invent zero or discard independently readable assertions")
-        cache.updateSleepAssertions(nil, identities: identities)
+        check(cache.warnings == ["Energy: Synthetic power failure"], "collector failures remain available on skipped sampling ticks")
+        cache.failSleepAssertions("Synthetic assertion failure")
         check(cache.preventsSleep(for: known) == nil, "a failed assertion read cannot retain a definite No")
+        let failures = cache.warnings
+        check(failures.count == 2 && cache.warnings == failures, "independent collector failures persist without a new read")
+        cache.clearMeasurements()
+        check(
+            cache.power(for: known) == nil && cache.preventsSleep(for: known) == nil && cache.warnings == failures,
+            "leaving Energy clears readings without hiding collector failures"
+        )
         cache.updatePower([known.pid: 2], identities: identities)
+        check(cache.warnings == ["Sleep assertions: Synthetic assertion failure"], "a successful power retry clears only its own error")
         cache.updateSleepAssertions([known.pid], identities: identities)
         check(cache.power(for: known) == 2 && cache.preventsSleep(for: known) == true, "successful retries restore measured power and assertion state")
+        check(cache.warnings.isEmpty, "successful assertion retry clears the remaining error")
+        cache.clearMeasurements()
+        check(
+            cache.power(for: known) == nil && cache.preventsSleep(for: known) == nil && cache.warnings.isEmpty,
+            "current Energy values do not remain attached to snapshots from other modes"
+        )
         cache.updatePower([known.pid: .nan], identities: identities)
         check(cache.power(for: known) == nil, "non-finite power stays unavailable")
 
@@ -83,6 +98,23 @@ extension SystemMetricsChecks {
             "Assertion status system-wide:\nListed by owning process:\n-none-\n"
         )
         check(empty == Set<Int32>(), "a recognized empty assertion inventory is available")
+        let names = """
+        Assertion status system-wide:
+        Listed by owning process:
+        pid 43(worker(test)): [0x2] PreventUserIdleSystemSleep named: "work"
+        pid 44(worker)extra): [0x3] 00:00:01 PreventUserIdleDisplaySleep named: "display"
+        pid 45(left(open): [0x4] UserIsActive named: "input"
+        """
+        check(
+            SystemMetricsParser.parsePreventingSleepPIDs(names) == Set([Int32(43), Int32(44)]),
+            "assertion owners may contain nested or unbalanced parentheses"
+        )
+        check(
+            SystemMetricsParser.parsePreventingSleepPIDs(
+                "Assertion status system-wide:\nListed by owning process:\npid 43(Alpha): [0x2] UserIsActive named: \"PreventUserIdleSystemSleep\"\n"
+            ) == Set<Int32>(),
+            "assertion descriptions do not masquerade as the actual assertion type"
+        )
         check(
             SystemMetricsParser.parsePreventingSleepPIDs(
                 "Assertion status system-wide:\nListed by owning process:\npid invalid: unreadable\n"
