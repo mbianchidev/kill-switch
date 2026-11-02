@@ -397,11 +397,11 @@ private func parseTableQuery<Row>(
             value += suffix
             index += 1
         }
-        if operation == .contains && field.kind != .text {
-            return .failure(TableParseError(message: "Use =, !=, >, >=, <, or <= for \(field.title)."))
-        }
         if case .boolean = field.kind, operation != .equal && operation != .notEqual {
             return .failure(TableParseError(message: "Use = or != with Yes or No for \(field.title)."))
+        }
+        if operation == .contains && field.kind != .text {
+            return .failure(TableParseError(message: "Use =, !=, >, >=, <, or <= for \(field.title)."))
         }
         guard let expected = parseTableValue(value, kind: field.kind) else {
             return .failure(TableParseError(message: "Invalid value '\(value)' for \(field.title). \(tableValueHint(field.kind))"))

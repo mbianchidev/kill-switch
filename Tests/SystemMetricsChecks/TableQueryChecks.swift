@@ -82,6 +82,10 @@ extension SystemMetricsChecks {
             let result = query(invalid)
             check(result.error != nil && result.filter(rows).isEmpty, "invalid table query reports an error instead of silently applying: \(invalid)")
         }
+        check(
+            query("locked:yes").error?.contains("Use = or != with Yes or No") == true,
+            "boolean contains errors recommend only supported boolean operators"
+        )
 
         let quoted = "Example \"quoted\" path\\file AND"
         let literal = QueryFixture(
