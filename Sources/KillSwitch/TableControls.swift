@@ -114,8 +114,7 @@ private struct TableFilterEditor<Row>: View {
     private var field: TableField<Row>? { fields.first { $0.id == fieldID } }
     private var candidate: String {
         guard let field else { return search }
-        let value = field.kind == .text ? TableFilterSyntax.quoted(value) : value.trimmingCharacters(in: .whitespacesAndNewlines)
-        let clause = "\(field.id) \(operation) \(value)"
+        let clause = TableFilterSyntax.comparison(field: field, operation: operation, value: value)
         return TableFilterSyntax.appending(clause, to: search)
     }
     private var candidateQuery: TableQuery<Row> { TableQuery(search: candidate, fields: fields) }

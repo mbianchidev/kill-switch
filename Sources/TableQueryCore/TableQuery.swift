@@ -180,6 +180,11 @@ public enum TableFilterSyntax {
         "\"" + value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
     }
 
+    public static func comparison<Row>(field: TableField<Row>, operation: String, value: String) -> String {
+        let literal = field.kind == .text ? value : value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return "\(field.id) \(operation) \(quoted(literal))"
+    }
+
     public static func appending(_ clause: String, to search: String) -> String {
         let existing = search.trimmingCharacters(in: .whitespacesAndNewlines)
         let clause = clause.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -440,6 +445,12 @@ private func parseTableValue(_ text: String, kind: TableFieldKind) -> TableValue
         day.dateFormat = "yyyy-MM-dd"
         day.isLenient = false
         if let date = day.date(from: text), day.string(from: date) == text { return .date(date) }
+        guard text.range(
+            of: #"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:?\d{2})$"#,
+            options: .regularExpression
+        ) != nil,
+        let calendarDay = day.date(from: String(text.prefix(10))),
+        day.string(from: calendarDay) == String(text.prefix(10)) else { return nil }
         let timestamp = ISO8601DateFormatter()
         if let date = timestamp.date(from: text) { return .date(date) }
         timestamp.formatOptions.insert(.withFractionalSeconds)

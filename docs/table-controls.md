@@ -33,6 +33,9 @@ select a field, comparison, and value, then choose **Apply**. Where available,
 the **Values** menu offers predefined values; the value remains editable.
 Apply appends the comparison with an explicit `AND`, so existing search words
 cannot be absorbed into a multiword field name.
+The builder treats the entire value as one literal, including numeric and date
+values. Add another filter or edit search directly to combine expressions;
+text entered into Value cannot silently add another clause.
 
 **Reset filters** clears free text and comparison expressions and restores any
 inline type, state, or reported-lock filters. Process tables return to

@@ -77,7 +77,8 @@ extension SystemMetricsChecks {
         for invalid in [
             "cpu >> 40", "cpu >", "unknown > 40", "cpu > forty", "cpu > 1GB", "size > 1XB",
             "pid > 2junk", "locked > yes", "modified > invalid", "modified = 2026-02-31",
-            "name:\"unfinished", "> 40", "cpu >= <= 40", "AND pid = 2", "pid = 2 AND", "pid = 2 AND AND cpu > 1"
+            "name:\"unfinished", "> 40", "cpu >= <= 40", "AND pid = 2", "pid = 2 AND", "pid = 2 AND AND cpu > 1",
+            "modified = 2026-02-31T00:00:00Z"
         ] {
             let result = query(invalid)
             check(result.error != nil && result.filter(rows).isEmpty, "invalid table query reports an error instead of silently applying: \(invalid)")
@@ -85,6 +86,26 @@ extension SystemMetricsChecks {
         check(
             query("locked:yes").error?.contains("Use = or != with Yes or No") == true,
             "boolean contains errors recommend only supported boolean operators"
+        )
+        for (field, operation, value) in [
+            (QueryFields.cpu, ">", "40 pid = 100"),
+            (QueryFields.locked, "=", "yes AND pid = 100"),
+            (QueryFields.modified, ">=", "2026-01-01T00:00:00Z AND pid = 100")
+        ] {
+            let clause = TableFilterSyntax.comparison(field: field, operation: operation, value: value)
+            check(query(clause).error != nil, "a builder value cannot introduce another query clause: \(field.title)")
+        }
+        check(
+            ids(TableFilterSyntax.comparison(field: QueryFields.bytes, operation: ">=", value: " 1 GB ")) == ["two", "three"],
+            "builder quoting retains valid numeric units and trims surrounding whitespace"
+        )
+        check(
+            ids(TableFilterSyntax.comparison(field: QueryFields.cpu, operation: ">", value: "40")) == ["two", "three"],
+            "builder numeric values remain typed comparisons when quoted"
+        )
+        check(
+            ids(TableFilterSyntax.comparison(field: QueryFields.modified, operation: ">=", value: "2026-01-02T00:00:00Z")) == ["two"],
+            "builder date values accept complete ISO timestamps"
         )
 
         let quoted = "Example \"quoted\" path\\file AND"
