@@ -162,8 +162,17 @@ views subscribe, so a resource tick does not rebuild every tab. The native
 history-process menu creates its choices on opening and releases them after
 closing instead of maintaining a SwiftUI view for every recorded process.
 Its shortcut delegate bypasses populating choices during closed-menu key checks.
-Its descriptor catalog includes the current minute and bounded pending writes,
-so coalescing cannot hide an exited process before its measurements are saved.
+`ActivityProcessCatalog` observes every successful sample before live coalescing
+or minute aggregation, so neither can hide a short-lived process while its
+measurements await storage. It records the first observed exit per lifetime,
+retains exited descriptors for six hours, and excludes expired processes from
+delayed writes. SQLite persists exit deadlines alongside descriptors; process
+metadata and measurements are pruned together in a transaction. The first
+successful inventory reconciles restored lifetimes before applying the shorter
+window to processes that disappeared while the app was closed. Defunct states
+are excluded by both PS parsing and the native lifetime reader; sleeping and
+stopped processes remain live. Whole-Mac and running-process history still use
+the 24-hour window.
 `OpenFilesTab` subscribes only to shared process-scope changes; resource ticks
 do not rerun its file filtering and sorting.
 Sampling and inspection queues drain autoreleased objects after each work item.

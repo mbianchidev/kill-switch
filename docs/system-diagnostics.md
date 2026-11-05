@@ -66,8 +66,9 @@ process lists; the latest measurement keeps its actual collection timestamp.
 The history-process menu builds its choices only when opened and releases them
 when closed. Search, exited-process selection, and native keyboard navigation
 remain available without retaining a view for every historical process.
-Process choices include the current minute and pending writes, so short-lived
-processes and their names remain selectable while measurements await storage.
+A process-lifetime catalog observes samples before they are coalesced, so
+short-lived processes and their names remain selectable while measurements await
+storage.
 The shared monitor averages available measurements into one-minute buckets and
 saves each completed bucket, plus the current partial bucket when quitting
 normally. A crash can lose the unfinished minute. Recording does not continue while KillSwitch is
@@ -81,9 +82,19 @@ History is held in macOS's built-in SQLite database at:
 
 The directory is private (`0700`); the database and SQLite sidecars use `0600`.
 Records older than 24 hours are pruned on startup and as new buckets are saved.
-History includes measurements, process names, numeric PIDs, ownership, and
-process-lifetime/boot identities. It does not record network endpoints, open
-file paths, or process command-line arguments. Nothing is uploaded.
+Exited, terminated, and defunct processes have a shorter window: their names and
+all saved per-process measurements are deleted six hours after their exit is
+first observed. Defunct processes no longer contribute live measurements.
+Repeated observations and app restarts do not extend a recorded exit deadline.
+If an exit happened while KillSwitch was closed, the last recorded sighting is
+used after the first successful process inventory confirms the lifetime is gone.
+Running process histories and whole-Mac measurements keep the 24-hour window.
+An expired process selection returns to **Entire Mac**. Pruning failures are
+reported and retried; delayed pre-sleep writes cannot restore expired entries.
+History includes measurements, process names, numeric PIDs, ownership, last-seen
+and observed-exit times, and process-lifetime/boot identities. It does not record
+network endpoints, open file paths, or process command-line arguments. Nothing is
+uploaded.
 **Clear history** removes the saved records and in-memory graph data.
 Lifetime identities use unprivileged `KERN_PROC_PID` information, including
 other users' processes; restricted rusage counters remain unavailable rather

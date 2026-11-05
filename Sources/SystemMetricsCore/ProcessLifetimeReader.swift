@@ -17,7 +17,7 @@ public enum ProcessLifetimeReader {
         info: kinfo_proc, pid: Int32, bootSession: String
     ) -> ActivityProcessIdentity? {
         let start = info.kp_proc.p_un.__p_starttime
-        guard info.kp_proc.p_pid == pid, start.tv_sec > 0,
+        guard info.kp_proc.p_pid == pid, Int32(info.kp_proc.p_stat) != SZOMB, start.tv_sec > 0,
               start.tv_usec >= 0, start.tv_usec < 1_000_000 else { return nil }
         let seconds = UInt64(start.tv_sec)
         guard seconds <= (UInt64.max - UInt64(start.tv_usec)) / 1_000_000 else { return nil }

@@ -43,11 +43,15 @@ sample across all four graphs. **Live** returns to current readings. These
 history selections are shared with the individual resource views.
 
 Sampling runs every six seconds while KillSwitch is running. One-minute
-averages persist locally for 24 hours, across app restarts; gaps during sleep,
+averages persist locally for up to 24 hours, across app restarts; gaps during sleep,
 shutdown, or failed sampling are not recorded as zero usage. Process histories
-distinguish process lifetimes and boots, not just reused PIDs. **Clear history**
-deletes stored measurements and process names after confirmation; new sampling
-continues. See [history storage and limitations](system-diagnostics.md#history-and-storage).
+distinguish process lifetimes and boots, not just reused PIDs. An exited,
+terminated, or defunct process's history and menu entry are deleted six hours
+after its exit is observed. A selected process that expires returns the graphs
+to **Entire Mac**. Running processes and whole-Mac history keep the 24-hour window.
+**Clear history** deletes stored measurements and process names after
+confirmation; new sampling continues. See
+[history storage and limitations](system-diagnostics.md#history-and-storage).
 
 ## Resources
 

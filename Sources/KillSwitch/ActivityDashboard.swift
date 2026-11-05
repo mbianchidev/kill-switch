@@ -92,7 +92,7 @@ struct ActivityDashboard: View {
                 .frame(height: 230)
                 .scrollContentBackground(.hidden)
 
-                Text("Live samples every 6 seconds. History uses one-minute averages and stays on this Mac for 24 hours. Select exited processes from History for. N/A means a measurement is unavailable.")
+                Text("Live samples every 6 seconds. History uses one-minute averages and stays on this Mac for up to 24 hours. Exited-process history is deleted 6 hours after exit is observed. Select recent exited processes from History for. N/A means a measurement is unavailable.")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
