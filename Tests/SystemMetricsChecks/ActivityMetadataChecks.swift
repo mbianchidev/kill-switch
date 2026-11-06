@@ -22,6 +22,7 @@ extension SystemMetricsChecks {
         let updated = process(103, "Updated live worker", user: "updated-user")
         let unchanged = process(104, "Unchanged live worker")
         let closing = process(105, "Newly exited worker")
+        let olderClosing = process(105, "Older exited worker", user: "older-user")
         let unsampled = process(106, "Inventory-only worker")
         let directory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
             .appendingPathComponent(".build/followup-metadata/fixture-\(UUID().uuidString)", isDirectory: true)
@@ -69,6 +70,9 @@ extension SystemMetricsChecks {
             }
 
             let firstPrune = start.addingTimeInterval(6 + ActivityProcessCatalog.terminatedRetention)
+            observe([original, unchanged, olderClosing], now: firstPrune.addingTimeInterval(-6))
+            let lastClosingSighting = firstPrune.addingTimeInterval(-1)
+            observe([original, unchanged, closing], now: lastClosingSighting)
             observe([updated, unchanged, unsampled], now: firstPrune)
             check(catalog.needsPruning, "an expiry requests pruning between completed minute buckets")
             check(
@@ -145,14 +149,31 @@ extension SystemMetricsChecks {
                 !retriedRecords.contains { $0.process.id == nextExpiring.id },
                 "pruning retry removes the second expired lifetime"
             )
+            let finalizedClosing = ActivityProcessRecord(
+                process: closing, lastSeen: lastClosingSighting, terminatedAt: firstPrune
+            )
+            check(
+                retriedRecords.contains(finalizedClosing),
+                "pruning acknowledges the exited lifetime's final descriptor and verified last sighting before its bucket is saved"
+            )
 
             let metadataOnly = process(107, "New live inventory-only worker")
             let minuteSave = secondPrune.addingTimeInterval(6)
             observe([updated, metadataOnly], now: minuteSave)
             let minuteRecords = catalog.pendingRecords
+            check(
+                !minuteRecords.contains { $0.process.id == closing.id },
+                "the delayed bucket cannot rely on already-acknowledged termination metadata remaining pending"
+            )
             buffer.append(ActivitySnapshot(
                 date: secondPrune, system: ActivityValues(cpu: 40),
-                processes: [ActivityProcessSample(process: original, values: ActivityValues(cpu: 50))]
+                processes: [
+                    ActivityProcessSample(process: original, values: ActivityValues(cpu: 50)),
+                    ActivityProcessSample(
+                        process: olderClosing,
+                        values: ActivityValues(cpu: 60)
+                    )
+                ]
             ), now: minuteSave)
             try metadataSQL("DELETE FROM metadata_writes;", at: url)
             try buffer.flush(processCatalog: &catalog) { snapshot, records in
@@ -176,8 +197,33 @@ extension SystemMetricsChecks {
                 "a minute save includes live inventory metadata missing from its measurement bucket"
             )
             check(
+                savedRecords[closing.id] == finalizedClosing,
+                "a delayed bucket preserves the finalized name, owner, last sighting, and exit deadline"
+            )
+            check(
+                try store.history(process: closing.id, since: start, until: minuteSave).map(\.values.cpu) == [20, 60],
+                "protecting finalized metadata still saves historical process measurements from the delayed bucket"
+            )
+            let reopened = try ActivityHistoryStore(url: url)
+            check(
+                try reopened.processRecords(since: start).contains(finalizedClosing),
+                "restarting after the delayed write reloads the finalized process metadata"
+            )
+            check(
                 catalog.pendingRecords.isEmpty && !catalog.needsPruning && buffer.count == 0,
                 "successful minute persistence clears the full pending metadata and measurement bucket"
+            )
+            let activeFallback = process(103, "Active fallback worker", user: "active-user")
+            let activeDate = minuteSave.addingTimeInterval(6)
+            try store.save(ActivitySnapshot(
+                date: activeDate, system: ActivityValues(cpu: 70),
+                processes: [ActivityProcessSample(process: activeFallback, values: ActivityValues(cpu: 80))]
+            ), now: activeDate)
+            check(
+                try store.processRecords(since: start).contains(
+                    ActivityProcessRecord(process: activeFallback, lastSeen: activeDate)
+                ),
+                "sample-derived metadata still updates a live row when no authoritative catalog record is pending"
             )
         } catch {
             check(false, "synthetic pruning metadata writes: \(error.localizedDescription)")

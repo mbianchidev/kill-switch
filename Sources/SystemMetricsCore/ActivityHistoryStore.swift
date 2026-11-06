@@ -110,6 +110,7 @@ public final class ActivityHistoryStore {
                         INSERT INTO processes(key, boot, pid, start, name, user, last_seen) VALUES(?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(key) DO UPDATE SET name = excluded.name, user = excluded.user,
                             last_seen = MAX(last_seen, excluded.last_seen)
+                        WHERE processes.terminated_at IS NULL
                         """, bindings: [
                             .text(process.identity.key), .text(process.identity.bootSession),
                             .number(Double(process.identity.pid)), .text(String(process.identity.startTime)),
