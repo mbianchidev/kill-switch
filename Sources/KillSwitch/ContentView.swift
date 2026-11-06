@@ -1,6 +1,6 @@
 import SwiftUI
 
-private enum MainTab: Hashable {
+enum MainTab: Hashable {
     case dashboard
     case resources
     case openFiles
@@ -16,13 +16,24 @@ private enum MainTab: Hashable {
 
 @MainActor
 struct ContentView: View {
-    @State private var selectedTab: MainTab = .dashboard
+    @State private var selectedTab: MainTab
     // Keep model lifetimes stable without observing updates across the entire tab hierarchy.
     private let diagnostics = DiagnosticsController.shared
     @State private var watchdog = CPUWatchdog()
-    private let resourceMonitor = ResourceMonitor.shared
+    private let resourceMonitor: ResourceMonitor
     @State private var diskCleanupMonitor = DiskCleanupMonitor()
     private let updater = UpdateChecker.shared
+    private let startsServices: Bool
+
+    init(
+        resourceMonitor: ResourceMonitor = .shared,
+        initialTab: MainTab = .dashboard,
+        startsServices: Bool = true
+    ) {
+        self.resourceMonitor = resourceMonitor
+        self.startsServices = startsServices
+        _selectedTab = State(initialValue: initialTab)
+    }
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -66,6 +77,7 @@ struct ContentView: View {
         .background(Theme.background)
         .safeAreaInset(edge: .top) { UpdateBanner(updater: updater) }
         .onAppear {
+            guard startsServices else { return }
             watchdog.start()
             updater.startPeriodicChecks()
             AppStartupConfirmation.contentDidAppear()

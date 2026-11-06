@@ -10,6 +10,14 @@ struct ResourcesTab: View {
     @State private var searchText = ""
     @State private var showConnections = true
 
+    init(monitor: ResourceMonitor, initialMetric: ResourceMetric = .cpu) {
+        self.monitor = monitor
+        _metric = State(initialValue: initialMetric)
+        _sorting = State(initialValue: TableComparator(
+            field: ResourceTableFields.defaultField(for: initialMetric), order: .reverse
+        ))
+    }
+
     var body: some View {
         let rows = metric == .network && showConnections ? [] : visibleProcesses
         return VStack(spacing: 0) {

@@ -205,6 +205,41 @@ There is no separate formatter or linter configuration. Match the existing
 Swift style and keep failure messages actionable. Add regression checks in the
 existing executable target for the subsystem you change.
 
+### Measure isolated UI footprint
+
+Build a separate release probe; the compile-time entry point is absent from
+normal app and package builds:
+
+```bash
+swift build -c release --scratch-path .build/performance \
+  -Xswiftc -DKILLSWITCH_PERFORMANCE_PROBE --product KillSwitch
+PROBE="$(swift build -c release --scratch-path .build/performance \
+  -Xswiftc -DKILLSWITCH_PERFORMANCE_PROBE --show-bin-path)/KillSwitch"
+swift scripts/measure-footprint.swift "$PROBE" .build/footprint.json \
+  30 3 1000 "$(git rev-parse HEAD)"
+```
+
+This runs five scenarios with synthetic process rows and 51 six-second history
+samples. The dashboard includes the navigation shell; CPU, Memory, and Energy
+render their resource views directly. AppKit renders offscreen without opening,
+activating, or controlling a desktop window. No real collectors, user history,
+cleanup, updates, startup changes, or privileged diagnostics run.
+
+The external harness reads kernel CPU time, resident memory, and physical
+footprint every 100 ms. CPU uses one-core normalization: 100% is one logical
+CPU core, not the whole machine. It excludes the first two seconds for average
+and p95 CPU, and reports median memory from the final third of the run.
+Peak RSS includes `wait4`'s maximum; peak physical footprint is an observed
+peak, not the lifetime kernel peak. `wait4` CPU includes waited child processes;
+the synthetic scenarios launch none.
+
+Retain reports outside Git and compare identical durations, counts, hardware,
+OS, toolchain, and build settings over multiple runs. These probes complement
+`SystemMetricsChecks --memory-stress`; they do not measure interactive
+VoiceOver behavior, live-collector overhead, a full 24-hour database, or
+extended-run growth. They are not the controlled-environment recurring
+performance baseline requested in [#37](https://github.com/mbianchidev/kill-switch/issues/37).
+
 ## Build and verify the app and DMG
 
 Run on macOS from the checkout:

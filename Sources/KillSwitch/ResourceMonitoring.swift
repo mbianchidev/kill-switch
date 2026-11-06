@@ -254,6 +254,24 @@ final class ResourceMonitor: ObservableObject {
     private var selectedRange: ActivityHistoryRange = .live
     private var selectedProcess: ActivityProcessIdentity?
 
+#if KILLSWITCH_PERFORMANCE_PROBE
+    func publishPerformanceSample(_ snapshot: ResourceSnapshot) {
+        let activity = activitySnapshot(snapshot)
+        liveHistory.append(activity)
+        processes = snapshot.processes
+        cpu = snapshot.cpu
+        memory = snapshot.memory
+        disk = snapshot.disk
+        network = snapshot.network ?? .unavailable
+        battery = snapshot.battery ?? .unavailable
+        liveActivity = activity
+        timeline = liveHistory.snapshots.map { $0.point(for: focusedProcess) }
+        historyProcesses = activity.processes.map(\.process)
+        lastUpdated = snapshot.date
+        errorMessage = snapshot.warnings.isEmpty ? nil : snapshot.warnings.joined(separator: "\n")
+    }
+#endif
+
     func start() {
         samplingQueue.async { [weak self] in
             guard let self, !self.running else { return }
