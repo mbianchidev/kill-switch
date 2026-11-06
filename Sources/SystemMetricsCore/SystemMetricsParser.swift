@@ -197,6 +197,7 @@ public enum SystemMetricsParser {
             ).map(String.init)
             guard
                 fields.count == 7,
+                fields[2].first != "Z", fields[2].first != "X",
                 let pid = Int32(fields[0]),
                 let cpu = parseDouble(fields[3]),
                 let cpuTime = parseCPUTime(fields[4]),

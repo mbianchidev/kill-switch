@@ -9,6 +9,7 @@ import SystemMetricsCore
 struct ResourceSnapshot {
     let date: Date
     let processes: [ResourceProcess]
+    let processInventory: ActivityProcessInventory
     let cpu: CPUResourceSummary
     let memory: MemoryResourceSummary
     let disk: DiskResourceSummary
@@ -78,7 +79,7 @@ final class ResourceSampler {
         previousNetwork = nil
     }
 
-    func sample(metric: ResourceMetric?) throws -> ResourceSnapshot {
+    func sample(metric: ResourceMetric?, trackedPIDs: Set<Int32> = []) throws -> ResourceSnapshot {
         let now = Date()
         let policy = ResourceSamplingPolicy.forMetric(metric ?? .cpu)
         if let previousProcessDate {
@@ -121,9 +122,8 @@ final class ResourceSampler {
         } catch {
             warnings.append("Process traffic: \(error.localizedDescription)")
         }
-        identities = identities.filter { pid, identity in
-            ProcessLifetimeReader.read(pid: pid, bootSession: bootSession) == identity
-        }
+        let processInventory = sampleLifetimeInventory(pids: Set(identities.keys).union(trackedPIDs))
+        identities = identities.filter { pid, identity in processInventory[pid] == .present(identity) }
 
         var processes: [ResourceProcess] = []
         processes.reserveCapacity(parsedProcesses.count)
@@ -240,6 +240,7 @@ final class ResourceSampler {
         return ResourceSnapshot(
             date: Date(),
             processes: processes,
+            processInventory: processInventory,
             cpu: cpu,
             memory: memory,
             disk: disk,
@@ -741,6 +742,12 @@ final class ResourceSampler {
             result[pid] = identity
         }
         return result
+    }
+
+    private func sampleLifetimeInventory(pids: Set<Int32>) -> ActivityProcessInventory {
+        ActivityProcessInventory(Dictionary(uniqueKeysWithValues: pids.map { pid in
+            (pid, ProcessLifetimeReader.presence(pid: pid, bootSession: bootSession))
+        }))
     }
 
     private func processUsage(pid: Int32) -> rusage_info_v4? {

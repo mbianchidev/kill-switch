@@ -84,6 +84,10 @@ extension SystemMetricsChecks {
         let process = ActivityProcessDescriptor(identity: identity, name: "Example worker", user: "sample-user")
         checkLiveHistory(start: start, process: process)
         checkHistoryProcessDescriptors(start: start, process: process)
+        checkActivityProcessRetention(start: start, process: process)
+        checkProcessInventoryRetention(start: start, process: process)
+        checkPruningMetadataWrites()
+        checkClearingActivityHistory()
         let initial = ActivitySnapshot(
             date: start, system: ActivityValues(cpu: 10, memory: 100),
             processes: [ActivityProcessSample(process: process, values: ActivityValues(cpu: 20, memory: 200))]
@@ -196,6 +200,7 @@ extension SystemMetricsChecks {
         }
         var history = ActivityLiveHistory()
         var accumulator = ActivityAccumulator()
+        var catalog = ActivityProcessCatalog()
         for index in 0..<1_200 {
             autoreleasepool {
                 let values = ActivityValues(
@@ -208,13 +213,14 @@ extension SystemMetricsChecks {
                 )
                 history.append(snapshot)
                 _ = accumulator.append(snapshot)
+                catalog.observe(snapshot.processes.map(\.process), now: snapshot.date)
             }
         }
         check(history.snapshots.count == 51, "two synthetic hours with 5,000 processes retain only five live minutes")
         check(history.snapshots.last?.processes.count == 5_000, "memory bounds do not drop processes")
         check(accumulator.current?.processes.count == 5_000, "minute averages still include every synthetic process")
         check(
-            history.processDescriptors(archived: [], accumulator: accumulator, pending: ActivityWriteBuffer()).count == 5_000,
+            catalog.processes.count == 5_000,
             "the bounded selector catalog includes every synthetic process"
         )
         var usage = rusage()
@@ -231,6 +237,7 @@ extension SystemMetricsChecks {
         var history = ActivityLiveHistory()
         var accumulator = ActivityAccumulator()
         var pending = ActivityWriteBuffer()
+        var catalog = ActivityProcessCatalog()
         let brief = ActivitySnapshot(
             date: start, system: ActivityValues(),
             processes: [ActivityProcessSample(process: process, values: ActivityValues(cpu: 1))]
@@ -240,11 +247,13 @@ extension SystemMetricsChecks {
         )
         history.append(brief)
         _ = accumulator.append(brief)
+        catalog.observe(brief.processes.map(\.process), now: brief.date)
         history.append(exited)
         _ = accumulator.append(exited)
+        catalog.observe([], inventory: ActivityProcessInventory([process.id.pid: .absent]), now: exited.date)
         check(history.snapshots.last?.processes.isEmpty == true, "rapid refresh can replace a short-lived process measurement")
         check(
-            history.processDescriptors(archived: [], accumulator: accumulator, pending: pending) == [process],
+            catalog.processes == [process],
             "a coalesced short-lived process keeps its selector name and lifetime identity in the current minute"
         )
 
@@ -253,9 +262,10 @@ extension SystemMetricsChecks {
         )
         history.append(resumed)
         if let completed = accumulator.append(resumed) { pending.append(completed, now: resumed.date) }
+        catalog.observe([], inventory: ActivityProcessInventory([process.id.pid: .absent]), now: resumed.date)
         check(pending.count == 1, "the pre-sleep minute remains queued until persistence succeeds")
         check(
-            history.processDescriptors(archived: [], accumulator: accumulator, pending: pending) == [process],
+            catalog.processes == [process],
             "descriptors awaiting persistence remain selectable even after the live window expires"
         )
         do {
@@ -263,7 +273,7 @@ extension SystemMetricsChecks {
             check(false, "synthetic selector persistence failure must propagate")
         } catch {
             check(
-                history.processDescriptors(archived: [], accumulator: accumulator, pending: pending) == [process],
+                catalog.processes == [process],
                 "storage failure does not hide a queued process name"
             )
         }
@@ -271,17 +281,100 @@ extension SystemMetricsChecks {
             var archived: [ActivityProcessDescriptor] = []
             try pending.flush { archived.append(contentsOf: $0.processes.map(\.process)) }
             check(
-                history.processDescriptors(archived: archived, accumulator: accumulator, pending: pending) == [process],
+                archived == [process] && catalog.processes == [process],
                 "successful persistence hands process descriptors to the archive without losing selection"
             )
         } catch { check(false, "persist synthetic selector descriptors: \(error.localizedDescription)") }
         history.removeAll()
         accumulator = ActivityAccumulator()
         pending = ActivityWriteBuffer()
+        catalog = ActivityProcessCatalog()
         check(
-            history.processDescriptors(archived: [], accumulator: accumulator, pending: pending).isEmpty,
+            catalog.processes.isEmpty,
             "clear history releases selector descriptors along with measurements"
         )
+    }
+
+    private static func checkActivityProcessRetention(start: Date, process: ActivityProcessDescriptor) {
+        var catalog = ActivityProcessCatalog()
+        catalog.observe([process], now: start)
+        let terminatedAt = start.addingTimeInterval(6)
+        catalog.observe([], inventory: ActivityProcessInventory([process.id.pid: .absent]), now: terminatedAt)
+        catalog.prune(now: terminatedAt.addingTimeInterval(21_599))
+        check(catalog.processes == [process], "an exited process remains selectable until six hours after its observed exit")
+        catalog.prune(now: terminatedAt.addingTimeInterval(21_600))
+        check(catalog.processes.isEmpty, "an exited process is removed exactly six hours after its observed exit")
+        check(catalog.needsPruning, "process expiry requests persistent pruning even without a completed minute")
+        check(
+            catalog.pendingRecords.first?.terminatedAt == terminatedAt,
+            "repeated absent samples do not move the original termination time"
+        )
+        let oldSnapshot = ActivitySnapshot(
+            date: start, system: ActivityValues(cpu: 10),
+            processes: [ActivityProcessSample(process: process, values: ActivityValues(cpu: 20))]
+        )
+        let retained = catalog.retainingProcesses(in: oldSnapshot)
+        check(retained.processes.isEmpty && retained.system.cpu == 10, "late pre-sleep writes cannot restore expired processes or erase global history")
+        catalog.restore([ActivityProcessRecord(process: process, lastSeen: start)])
+        check(catalog.processes.isEmpty, "reopening storage cannot restore an expired process awaiting persistent deletion")
+        catalog.markPersisted()
+        check(catalog.pendingRecords.isEmpty && !catalog.needsPruning, "successful persistence acknowledges process changes")
+
+        var active = ActivityProcessCatalog()
+        active.observe([process], now: start)
+        active.prune(now: start.addingTimeInterval(21_600))
+        check(active.processes == [process], "collector failures cannot turn an unconfirmed live process into an expired one")
+        let muchLater = start.addingTimeInterval(86_400)
+        active.observe([process], now: muchLater)
+        check(active.processes == [process], "old or idle processes are retained while their lifetime is still present")
+        check(active.records[process.id]?.terminatedAt == nil, "a monitoring gap is not proof of process termination")
+        active.observe(
+            [], inventory: ActivityProcessInventory([process.id.pid: .absent]), now: muchLater.addingTimeInterval(6)
+        )
+        check(active.processes == [process], "the six-hour clock starts at exit rather than process creation or an old measurement")
+
+        let replacement = ActivityProcessDescriptor(
+            identity: ActivityProcessIdentity(
+                bootSession: process.id.bootSession, pid: process.id.pid, startTime: process.id.startTime + 1
+            ),
+            name: "Replacement worker", user: "sample-user"
+        )
+        var reused = ActivityProcessCatalog()
+        reused.observe([process], now: start)
+        reused.observe([replacement], now: terminatedAt)
+        reused.observe([replacement], now: terminatedAt.addingTimeInterval(21_600))
+        check(reused.processes == [replacement], "expiry of an exited lifetime does not remove a replacement sharing its PID")
+
+        var restored = ActivityProcessCatalog()
+        restored.restore([
+            ActivityProcessRecord(process: process, lastSeen: start, terminatedAt: terminatedAt),
+            ActivityProcessRecord(process: replacement, lastSeen: start)
+        ])
+        restored.observe([replacement], now: terminatedAt.addingTimeInterval(21_599))
+        check(restored.records[process.id]?.terminatedAt == terminatedAt, "restarts preserve a recorded exit deadline")
+        check(restored.records[replacement.id]?.terminatedAt == nil, "reconciliation preserves a confirmed live process after an offline gap")
+        restored.observe([replacement], now: terminatedAt.addingTimeInterval(21_600))
+        check(restored.processes == [replacement], "an app restart does not grant exited processes another six hours")
+
+        var offlineExit = ActivityProcessCatalog()
+        offlineExit.restore([ActivityProcessRecord(process: process, lastSeen: start)])
+        offlineExit.observe(
+            [], inventory: ActivityProcessInventory([process.id.pid: .absent]), now: start.addingTimeInterval(21_600)
+        )
+        check(offlineExit.processes.isEmpty, "an exit while the app was closed ages from the last observed presence")
+
+        var unpersisted = ActivityProcessCatalog()
+        unpersisted.observe([process], now: start)
+        unpersisted.observe([], inventory: ActivityProcessInventory([process.id.pid: .absent]), now: terminatedAt)
+        let unsavedRecord = ActivityProcessRecord(process: process, lastSeen: start, terminatedAt: terminatedAt)
+        check(unpersisted.pendingRecords == [unsavedRecord], "a never-persisted catalog starts with pending termination metadata")
+        let pendingCutoff = start.addingTimeInterval(ActivityHistoryStore.retention)
+        unpersisted.prune(now: pendingCutoff.addingTimeInterval(-1))
+        check(unpersisted.pendingRecords == [unsavedRecord], "unsaved process metadata is still pending just before the 24-hour cutoff")
+        unpersisted.prune(now: pendingCutoff)
+        check(unpersisted.pendingRecords == [unsavedRecord], "unsaved process metadata is still pending exactly at the inclusive 24-hour cutoff")
+        unpersisted.prune(now: pendingCutoff.addingTimeInterval(1))
+        check(unpersisted.pendingRecords.isEmpty, "unsaved process metadata is removed strictly after the 24-hour cutoff")
     }
 
     private static func checkProcessLifetimeReader() {
@@ -293,10 +386,122 @@ extension SystemMetricsChecks {
         let identity = ProcessLifetimeReader.identity(info: info, pid: 42, bootSession: "synthetic-boot")
         check(identity?.startTime == 1_800_000_000_123_456, "unprivileged lifetime decoding does not exclude other users")
         check(ProcessLifetimeReader.identity(info: info, pid: 43, bootSession: "synthetic-boot") == nil, "lifetime decoding verifies the requested PID")
+        info.kp_proc.p_stat = Int8(SZOMB)
+        check(ProcessLifetimeReader.identity(info: info, pid: 42, bootSession: "synthetic-boot") == nil, "native sampling does not treat defunct processes as live lifetimes")
+        info.kp_proc.p_stat = Int8(SSLEEP)
+        check(ProcessLifetimeReader.identity(info: info, pid: 42, bootSession: "synthetic-boot") == identity, "sleeping processes keep their live lifetime identity")
         info.kp_proc.p_un.__p_starttime.tv_usec = -1
         check(ProcessLifetimeReader.identity(info: info, pid: 42, bootSession: "synthetic-boot") == nil, "invalid lifetime timestamps are not invented")
         let own = ProcessLifetimeReader.read(pid: getpid(), bootSession: "synthetic-check-boot")
         check(own?.pid == getpid() && (own?.startTime ?? 0) > 0, "the native KERN_PROC_PID reader identifies the synthetic checks process")
+    }
+
+    private static func checkProcessInventoryRetention(start: Date, process: ActivityProcessDescriptor) {
+        let unknown = ActivityProcessInventory([process.id.pid: .unavailable])
+        let present = ActivityProcessInventory([process.id.pid: .present(process.id)])
+        let absent = ActivityProcessInventory([process.id.pid: .absent])
+        let defunct = ActivityProcessInventory([process.id.pid: .defunct])
+        let resumed = start.addingTimeInterval(7 * 3_600)
+        let confirmedExit = ActivityProcessDescriptor(
+            identity: ActivityProcessIdentity(bootSession: process.id.bootSession, pid: process.id.pid + 1, startTime: 300),
+            name: "Confirmed exited worker", user: "sample-user"
+        )
+        var restored = ActivityProcessCatalog()
+        restored.restore([
+            ActivityProcessRecord(process: process, lastSeen: start),
+            ActivityProcessRecord(process: confirmedExit, lastSeen: start, terminatedAt: start.addingTimeInterval(6))
+        ])
+        restored.observe([], inventory: unknown, now: resumed)
+        check(restored.processes == [process], "an unreadable restored lifetime remains selectable while confirmed exits are pruned")
+        check(restored.records[process.id]?.lastSeen == start, "unknown reads do not invent a new last-seen timestamp")
+        check(restored.records[process.id]?.terminatedAt == nil, "a successful resource sample with an unreadable identity does not confirm an offline exit")
+        restored.observe([], now: resumed.addingTimeInterval(6))
+        restored.observe([], inventory: unknown, now: resumed.addingTimeInterval(12))
+        check(restored.processes == [process], "repeated omitted or unavailable lifetime reads preserve the unresolved restored lifetime")
+        restored.observe([], inventory: absent, now: resumed.addingTimeInterval(18))
+        check(restored.processes.isEmpty, "confirmed absence eventually expires an unresolved offline lifetime")
+        check(restored.pendingRecords.first { $0.process.id == process.id }?.terminatedAt == start, "unknown retries do not lose the restored lifetime's original offline exit deadline")
+
+        var readable = ActivityProcessCatalog()
+        readable.restore([ActivityProcessRecord(process: process, lastSeen: start)])
+        readable.observe([], inventory: present, now: resumed)
+        check(readable.processes == [process] && readable.records[process.id]?.lastSeen == resumed, "a readable matching lifetime stays live without a resource measurement")
+        let observedExit = resumed.addingTimeInterval(6)
+        readable.observe([], inventory: absent, now: observedExit)
+        readable.observe([], inventory: defunct, now: observedExit.addingTimeInterval(6))
+        readable.observe([], inventory: unknown, now: observedExit.addingTimeInterval(12))
+        check(readable.records[process.id]?.terminatedAt == observedExit, "a verified live reconciliation clears the offline marker and repeated exit states do not extend its deadline")
+        readable.observe([], inventory: unknown, now: observedExit.addingTimeInterval(21_600))
+        check(readable.processes.isEmpty, "confirmed exits still reach their six-hour deadline during identity failures")
+
+        let replacement = ActivityProcessDescriptor(
+            identity: ActivityProcessIdentity(
+                bootSession: process.id.bootSession, pid: process.id.pid, startTime: process.id.startTime + 1
+            ),
+            name: "Verified replacement", user: "sample-user"
+        )
+        var replaced = ActivityProcessCatalog()
+        replaced.restore([ActivityProcessRecord(process: process, lastSeen: start)])
+        replaced.observe([], inventory: unknown, now: resumed)
+        replaced.observe([replacement], now: resumed.addingTimeInterval(6))
+        check(replaced.processes == [replacement], "a verified replacement confirms only the prior same-PID lifetime's offline exit")
+        var zombie = ActivityProcessCatalog()
+        zombie.restore([ActivityProcessRecord(process: process, lastSeen: start)])
+        zombie.observe([process], inventory: defunct, now: resumed)
+        check(zombie.processes.isEmpty, "a verified defunct PID cannot be revived by a stale resource descriptor")
+
+        let afterDay = start.addingTimeInterval(ActivityHistoryStore.retention + 1)
+        var interrupted = ActivityProcessCatalog()
+        interrupted.observe([process], now: start)
+        interrupted.prune(now: afterDay)
+        interrupted.observe([], inventory: unknown, now: afterDay.addingTimeInterval(6))
+        check(interrupted.processes == [process], "the 24-hour cutoff does not expire an unconfirmed lifetime during collector failures")
+        interrupted.observe([], inventory: absent, now: afterDay.addingTimeInterval(12))
+        check(interrupted.processes.isEmpty && interrupted.needsPruning, "a confirmed exit after a gap over 24 hours expires immediately with its SQLite history")
+        let record = ActivityProcessRecord(
+            process: process, lastSeen: start, terminatedAt: start.addingTimeInterval(ActivityHistoryStore.retention)
+        )
+        check(!record.isExpired(now: start.addingTimeInterval(86_400)), "confirmed-exit history is retained exactly at SQLite's inclusive 24-hour boundary")
+        check(record.isExpired(now: afterDay), "confirmed-exit history expires strictly beyond SQLite's 24-hour boundary even before six hours")
+        var unresolved = ActivityProcessCatalog()
+        unresolved.restore([ActivityProcessRecord(process: process, lastSeen: start)])
+        unresolved.observe([], inventory: unknown, now: afterDay)
+        unresolved.observe([], inventory: unknown, now: afterDay.addingTimeInterval(6))
+        check(unresolved.processes == [process], "repeated unknown reads preserve restored lifetimes even beyond the normal history window")
+
+        let wrongPID = ActivityProcessInventory([process.id.pid + 1: .present(process.id)])
+        check(wrongPID[process.id.pid + 1] == .unavailable, "a mismatched inventory PID cannot verify presence or a replacement")
+        check(ActivityProcessInventory()[process.id.pid] == .unavailable, "omitted inventory PIDs remain unknown rather than absent")
+        check(ActivityProcessInventory(processes: [process, replacement])[process.id.pid] == .unavailable, "conflicting same-PID descriptors do not invent a verified lifetime")
+        checkLifetimePresenceDecoding(process: process)
+    }
+
+    private static func checkLifetimePresenceDecoding(process: ActivityProcessDescriptor) {
+        var info = kinfo_proc()
+        info.kp_proc.p_pid = process.id.pid
+        info.kp_proc.p_stat = Int8(SSLEEP)
+        info.kp_proc.p_un.__p_starttime.tv_sec = 1_800_000_000
+        info.kp_proc.p_un.__p_starttime.tv_usec = 123_456
+        func decode(status: Int32 = 0, size: Int = MemoryLayout<kinfo_proc>.size, error: Int32 = 0) -> ProcessLifetimePresence {
+            ProcessLifetimeReader.presence(
+                info: info, pid: process.id.pid, bootSession: process.id.bootSession, status: status, size: size, error: error
+            )
+        }
+        check(decode().identity?.startTime == 1_800_000_000_123_456, "matching readable lifetime presence remains distinct from missing resource counters")
+        check(decode(size: 0) == .absent, "a successful empty KERN_PROC_PID response confirms absence")
+        check(decode(status: -1, error: ESRCH) == .absent, "a no-such-process kernel error confirms absence")
+        check(decode(status: -1, error: EPERM) == .unavailable, "a restricted lifetime read does not confirm absence")
+        check(decode(status: -1, error: ENOMEM) == .unavailable, "a failed lifetime read with an unusable buffer remains unknown")
+        check(decode(size: MemoryLayout<kinfo_proc>.size - 1) == .unavailable, "a truncated lifetime response does not confirm absence")
+        info.kp_proc.p_pid += 1
+        check(decode() == .unavailable, "a returned PID mismatch cannot verify a replacement")
+        info.kp_proc.p_pid = process.id.pid
+        info.kp_proc.p_stat = Int8(SZOMB)
+        check(decode() == .defunct, "a verified zombie state confirms a defunct lifetime")
+        info.kp_proc.p_stat = Int8(SSTOP)
+        check(decode().identity != nil, "stopped processes remain present rather than defunct")
+        info.kp_proc.p_un.__p_starttime.tv_usec = -1
+        check(decode() == .unavailable, "an unreadable lifetime timestamp remains unavailable rather than absent")
     }
 
     private static func checkActivityStore(
@@ -364,9 +569,117 @@ extension SystemMetricsChecks {
                 check(true, "history refuses a symlink database")
             }
             try checkHistoryMigration(directory: directory, start: start)
+            try checkTerminatedProcessStorage(directory: directory, initial: initial, process: process, start: start)
         } catch {
             check(false, "activity history store: \(error.localizedDescription)")
         }
+    }
+
+    private static func checkTerminatedProcessStorage(
+        directory: URL, initial: ActivitySnapshot, process: ActivityProcessDescriptor, start: Date
+    ) throws {
+        let url = directory.appendingPathComponent("process-retention.sqlite")
+        let replacement = ActivityProcessDescriptor(
+            identity: ActivityProcessIdentity(
+                bootSession: process.id.bootSession, pid: process.id.pid, startTime: process.id.startTime + 1
+            ),
+            name: "Replacement worker", user: "sample-user"
+        )
+        var catalog = ActivityProcessCatalog()
+        catalog.observe([process], now: start)
+        let terminatedAt = start.addingTimeInterval(6)
+        do {
+            let store = try ActivityHistoryStore(url: url)
+            try store.save(initial, now: start, processRecords: catalog.pendingRecords)
+            catalog.markPersisted()
+            catalog.observe([replacement], now: terminatedAt)
+            try store.save(ActivitySnapshot(
+                date: terminatedAt, system: ActivityValues(cpu: 30),
+                processes: [ActivityProcessSample(process: replacement, values: ActivityValues(cpu: 40))]
+            ), now: terminatedAt, processRecords: catalog.pendingRecords)
+        }
+
+        let reopened = try ActivityHistoryStore(url: url)
+        let records = try reopened.processRecords(since: start)
+        check(records.first { $0.process.id == process.id }?.terminatedAt == terminatedAt, "SQLite preserves the first observed termination across restarts")
+        check(records.contains { $0.process.id == replacement.id && $0.terminatedAt == nil }, "SQLite does not mark a live replacement as terminated")
+        let expiry = terminatedAt.addingTimeInterval(21_600)
+        try reopened.prune(now: expiry.addingTimeInterval(-1))
+        check(try reopened.processes(since: start).count == 2, "persistent process history is retained just before its six-hour exit deadline")
+
+        var restored = ActivityProcessCatalog()
+        restored.restore(records)
+        restored.observe([replacement], now: expiry)
+        let trigger = try CommandRunner.run("/usr/bin/sqlite3", arguments: [url.path, """
+            CREATE TRIGGER reject_expiry BEFORE DELETE ON processes
+            BEGIN SELECT RAISE(FAIL, 'synthetic deletion failure'); END;
+            """])
+        guard trigger.succeeded else {
+            throw ActivityHistoryError(message: "create synthetic pruning failure: \(trigger.standardError)")
+        }
+        do {
+            try reopened.prune(now: expiry, processRecords: restored.pendingRecords)
+            check(false, "persistent expiry failures must be reported")
+        } catch {
+            check(
+                try reopened.history(process: process.id, since: start, until: expiry).count == 1,
+                "failed pruning rolls back measurement deletion together with process metadata"
+            )
+            check(try reopened.processes(since: start).count == 2, "failed pruning does not partly delete process records")
+        }
+        let drop = try CommandRunner.run("/usr/bin/sqlite3", arguments: [url.path, "DROP TRIGGER reject_expiry;"])
+        guard drop.succeeded else {
+            throw ActivityHistoryError(message: "remove synthetic pruning failure: \(drop.standardError)")
+        }
+        try reopened.prune(now: expiry, processRecords: restored.pendingRecords)
+        restored.markPersisted()
+        check(try reopened.processes(since: start) == [replacement], "persistent expiry deletes only the terminated lifetime at six hours")
+        check(
+            try reopened.history(process: process.id, since: start, until: expiry).isEmpty,
+            "expiry deletes all saved measurements for the terminated process, not just its selector entry"
+        )
+        check(
+            try reopened.history(process: replacement.id, since: start, until: expiry).count == 1,
+            "live-process measurements older than six hours remain available"
+        )
+        check(
+            try reopened.history(process: nil, since: start, until: expiry).map(\.values.cpu) == [10, 30],
+            "process expiry preserves whole-Mac measurements within the 24-hour window"
+        )
+        try reopened.save(restored.retainingProcesses(in: initial), now: expiry)
+        check(try reopened.processes(since: start) == [replacement], "a delayed bucket cannot reinsert an expired process")
+        let secondReopen = try ActivityHistoryStore(url: url)
+        check(try secondReopen.processes(since: start) == [replacement], "expired process removal survives another database reopen")
+        try checkLongGapProcessStorage(directory: directory, initial: initial, process: process, start: start)
+    }
+
+    private static func checkLongGapProcessStorage(
+        directory: URL, initial: ActivitySnapshot, process: ActivityProcessDescriptor, start: Date
+    ) throws {
+        let store = try ActivityHistoryStore(url: directory.appendingPathComponent("gap-retention.sqlite"))
+        var catalog = ActivityProcessCatalog()
+        catalog.observe([process], now: start)
+        try store.save(initial, now: start, processRecords: catalog.pendingRecords)
+        catalog.markPersisted()
+        let boundary = start.addingTimeInterval(ActivityHistoryStore.retention)
+        catalog.observe([], inventory: ActivityProcessInventory([process.id.pid: .absent]), now: boundary)
+        try store.save(
+            ActivitySnapshot(date: boundary, system: ActivityValues(cpu: 30), processes: []),
+            now: boundary, processRecords: catalog.pendingRecords
+        )
+        catalog.markPersisted()
+        let retainedProcesses = try store.processes(since: start)
+        check(catalog.processes == [process] && retainedProcesses == [process], "the catalog and SQLite both retain a confirmed exit exactly at 24 hours")
+        let beyondBoundary = boundary.addingTimeInterval(1)
+        catalog.prune(now: beyondBoundary)
+        try store.save(
+            ActivitySnapshot(date: beyondBoundary, system: ActivityValues(cpu: 40), processes: []),
+            now: beyondBoundary, processRecords: catalog.pendingRecords
+        )
+        let expiredProcesses = try store.processes(since: start)
+        check(catalog.processes.isEmpty && expiredProcesses.isEmpty, "the catalog and SQLite both remove a confirmed exit once its last sighting exceeds 24 hours")
+        check(try store.history(process: process.id, since: start, until: beyondBoundary).isEmpty, "long-gap confirmed-exit pruning removes the matching measurements")
+        check(try store.history(process: nil, since: start, until: beyondBoundary).map(\.values.cpu) == [30, 40], "long-gap process pruning preserves available whole-Mac measurements")
     }
 
     private static func checkHistoryMigration(directory: URL, start: Date) throws {
@@ -396,6 +709,50 @@ extension SystemMetricsChecks {
             let latest = try migrated.history(process: nil, since: start, until: start.addingTimeInterval(60)).last
             check(latest?.values.cpuSystem == 20 && latest?.values.cpuUser == 50, "migrated history stores new CPU breakdowns")
         }
+        let versionTwoURL = directory.appendingPathComponent("version-two.sqlite")
+        let versionTwo = try CommandRunner.run("/usr/bin/sqlite3", arguments: [versionTwoURL.path, """
+            CREATE TABLE samples (
+                process TEXT NOT NULL, time REAL NOT NULL, cpu REAL, memory REAL,
+                disk_read REAL, disk_written REAL, received REAL, sent REAL, cpu_system REAL, cpu_user REAL,
+                PRIMARY KEY (process, time)
+            );
+            CREATE TABLE processes (
+                key TEXT PRIMARY KEY, boot TEXT NOT NULL, pid INTEGER NOT NULL,
+                start TEXT NOT NULL, name TEXT NOT NULL, user TEXT NOT NULL, last_seen REAL NOT NULL
+            );
+            INSERT INTO processes VALUES('legacy-boot/91/100', 'legacy-boot', 91, '100', 'Live worker', 'sample-user', \(start.timeIntervalSince1970));
+            INSERT INTO processes VALUES('legacy-boot/92/200', 'legacy-boot', 92, '200', 'Exited worker', 'sample-user', \(start.timeIntervalSince1970));
+            INSERT INTO samples VALUES('legacy-boot/91/100', \(start.timeIntervalSince1970), 10, 100, NULL, NULL, NULL, NULL, NULL, NULL);
+            INSERT INTO samples VALUES('legacy-boot/92/200', \(start.timeIntervalSince1970), 20, 200, NULL, NULL, NULL, NULL, NULL, NULL);
+            PRAGMA user_version = 2;
+            """])
+        guard versionTwo.succeeded else {
+            throw ActivityHistoryError(message: "create synthetic version-two history: \(versionTwo.standardError)")
+        }
+        let migratedProcesses = try ActivityHistoryStore(url: versionTwoURL)
+        let legacyRecords = try migratedProcesses.processRecords(since: start)
+        check(legacyRecords.count == 2 && legacyRecords.allSatisfy { $0.terminatedAt == nil }, "version-two migration preserves names without inventing exit times")
+        guard let live = legacyRecords.first(where: { $0.process.id.pid == 91 })?.process,
+              let exited = legacyRecords.first(where: { $0.process.id.pid == 92 })?.process else {
+            throw ActivityHistoryError(message: "synthetic migration lost process descriptors.")
+        }
+        var catalog = ActivityProcessCatalog()
+        catalog.restore(legacyRecords)
+        let resumed = start.addingTimeInterval(21_600)
+        catalog.observe(
+            [live], inventory: ActivityProcessInventory([live.id.pid: .present(live.id), exited.id.pid: .absent]),
+            now: resumed
+        )
+        try migratedProcesses.prune(now: resumed, processRecords: catalog.pendingRecords)
+        check(try migratedProcesses.processes(since: start) == [live], "migration reconciles old exited processes without expiring a confirmed live process")
+        check(
+            try migratedProcesses.history(process: live.id, since: start, until: resumed).count == 1,
+            "migration keeps the older measurements of a process that is still alive"
+        )
+        check(
+            try migratedProcesses.history(process: exited.id, since: start, until: resumed).isEmpty,
+            "migration removes an old exited process's measurements at the six-hour boundary"
+        )
         let newer = try CommandRunner.run("/usr/bin/sqlite3", arguments: [url.path, "PRAGMA user_version = 99;"])
         guard newer.succeeded else {
             check(false, "prepare synthetic future schema")

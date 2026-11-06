@@ -250,7 +250,7 @@ final class ResourceMonitor: ObservableObject {
     private var writeBuffer = ActivityWriteBuffer()
     private var rates = ActivityRateTracker()
     private var liveHistory = ActivityLiveHistory()
-    private var archivedProcesses: [ActivityProcessDescriptor] = []
+    private var processCatalog = ActivityProcessCatalog()
     private var selectedRange: ActivityHistoryRange = .live
     private var selectedProcess: ActivityProcessIdentity?
 
@@ -300,12 +300,15 @@ final class ResourceMonitor: ObservableObject {
                     throw ActivityHistoryError(message: "the database is unavailable; history could not be cleared.")
                 }
                 try store.clear()
+                self.processCatalog.resetKeepingLiveProcesses()
                 self.liveHistory.removeAll()
-                self.archivedProcesses.removeAll()
                 self.accumulator = ActivityAccumulator()
                 self.writeBuffer = ActivityWriteBuffer()
+                self.energyHistory.removeAll()
+                self.lastEnergyHistorySample = nil
                 self.publishTimeline(now: Date())
                 DispatchQueue.main.async {
+                    self.history.removeAll()
                     self.historyError = nil
                     self.historyNotice = nil
                 }
@@ -344,7 +347,10 @@ final class ResourceMonitor: ObservableObject {
         let metric = activeMetric
 
         do {
-            let snapshot = try sampler.sample(metric: metric)
+            let trackedPIDs = Set(
+                processCatalog.records.values.filter { $0.terminatedAt == nil }.map { $0.process.id.pid }
+            )
+            let snapshot = try sampler.sample(metric: metric, trackedPIDs: trackedPIDs)
             var sampledProcesses = snapshot.processes
             if snapshot.sampledEnergy {
                 updateEnergyHistory(processes: sampledProcesses, now: snapshot.date)
@@ -362,11 +368,13 @@ final class ResourceMonitor: ObservableObject {
             }
 
             let activity = activitySnapshot(snapshot)
+            processCatalog.observe(
+                activity.processes.map(\.process), inventory: snapshot.processInventory, now: snapshot.date
+            )
             liveHistory.append(activity)
             if let completed = accumulator.append(activity) {
                 enqueueHistory(completed, now: snapshot.date)
             }
-            flushPendingHistory(now: snapshot.date)
             publishTimeline(now: snapshot.date)
 
             DispatchQueue.main.async { [weak self] in
@@ -394,6 +402,7 @@ final class ResourceMonitor: ObservableObject {
             }
         } catch {
             logger.error("Resource sampling failed: \(error.localizedDescription)")
+            publishTimeline(now: Date())
             DispatchQueue.main.async { [weak self] in
                 self?.errorMessage = error.localizedDescription
             }
@@ -408,8 +417,9 @@ final class ResourceMonitor: ObservableObject {
             )
             let url = applicationSupport.appendingPathComponent("KillSwitch/ActivityHistory/activity.sqlite")
             let historyStore = try ActivityHistoryStore(url: url)
-            try historyStore.prune(now: Date())
-            archivedProcesses = try historyStore.processes(since: Date().addingTimeInterval(-ActivityHistoryStore.retention))
+            let now = Date()
+            try historyStore.prune(now: now)
+            processCatalog.restore(try historyStore.processRecords(since: now.addingTimeInterval(-ActivityHistoryStore.retention)))
             store = historyStore
             DispatchQueue.main.async { self.historyError = nil }
             publishTimeline(now: Date())
@@ -430,6 +440,15 @@ final class ResourceMonitor: ObservableObject {
     }
 
     private func publishTimeline(now: Date) {
+        processCatalog.prune(now: now)
+        if processCatalog.needsPruning {
+            energyHistory = energyHistory.filter { processCatalog.records[$0.key] != nil }
+        }
+        flushPendingHistory(now: now)
+        let expiredSelection = selectedProcess.flatMap { processCatalog.records[$0] == nil ? $0 : nil }
+        if expiredSelection != nil {
+            selectedProcess = nil
+        }
         let cutoff = now.addingTimeInterval(-selectedRange.seconds)
         var points: [ActivityHistoryPoint] = []
         do {
@@ -445,14 +464,15 @@ final class ResourceMonitor: ObservableObject {
         }
         points.append(contentsOf: live)
 
-        let sorted = liveHistory.processDescriptors(
-            archived: archivedProcesses, accumulator: accumulator, pending: writeBuffer
-        ).sorted {
+        let sorted = processCatalog.processes.sorted {
             if $0.name != $1.name { return $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             if $0.identity.pid != $1.identity.pid { return $0.identity.pid < $1.identity.pid }
             return $0.identity.key < $1.identity.key
         }
         DispatchQueue.main.async {
+            if let expiredSelection, self.focusedProcess == expiredSelection {
+                self.focusedProcess = nil
+            }
             self.timeline = points
             if self.historyProcesses != sorted {
                 self.historyProcesses = sorted
@@ -510,10 +530,16 @@ final class ResourceMonitor: ObservableObject {
     }
 
     private func flushPendingHistory(now: Date) {
-        guard writeBuffer.count > 0, let store else { return }
+        guard let store, writeBuffer.count > 0 || processCatalog.needsPruning else { return }
         do {
-            try writeBuffer.flush { try store.save($0, now: now) }
-            archivedProcesses = try store.processes(since: now.addingTimeInterval(-ActivityHistoryStore.retention))
+            try writeBuffer.flush(processCatalog: &processCatalog) { snapshot, records in
+                try store.save(snapshot, now: now, processRecords: records)
+            }
+            if processCatalog.needsPruning {
+                let terminationRecords = processCatalog.pendingTerminationRecords
+                try store.prune(now: now, processRecords: terminationRecords)
+                processCatalog.markPersisted(terminationRecords)
+            }
             DispatchQueue.main.async { self.historyError = nil }
         } catch {
             reportHistoryError(error)

@@ -162,8 +162,32 @@ views subscribe, so a resource tick does not rebuild every tab. The native
 history-process menu creates its choices on opening and releases them after
 closing instead of maintaining a SwiftUI view for every recorded process.
 Its shortcut delegate bypasses populating choices during closed-menu key checks.
-Its descriptor catalog includes the current minute and bounded pending writes,
-so coalescing cannot hide an exited process before its measurements are saved.
+`ActivityProcessCatalog` reconciles samples with explicit per-PID lifetime
+evidence before live coalescing or minute aggregation, so neither can hide a
+short-lived process while its measurements await storage. Missing measurements
+or descriptors do not prove an exit. A matching lifetime, verified absence,
+defunct state, or replacement identity resolves a restored record; unavailable
+reads preserve unresolved lifetimes for later retries. Confirmed exits keep
+their original deadline, dating verified downtime exits from the last saved
+sighting. Exited descriptors expire after six hours or when their last sighting
+is more than 24 hours old, and delayed writes exclude expired processes. SQLite
+persists exit deadlines alongside descriptors; process metadata and measurements
+are pruned together in a transaction. Defunct states are excluded by both PS
+parsing and the native lifetime reader; sleeping and stopped processes remain
+live. Whole-Mac and running-process history still use the 24-hour window.
+Pruning-only ticks persist pending termination records without rewriting the
+live inventory. Successful pruning acknowledges only those saved records;
+dirty live metadata stays pending for the next minute save, and failed pruning
+preserves pending changes for retry. Minute saves persist all pending process
+metadata, including lifetimes absent from the completed measurement bucket.
+Queued minute saves reuse one snapshot of the latest pending metadata throughout
+the drain and acknowledge it only after every queued save succeeds. A later
+failure leaves that metadata pending for retry, preventing older bucket
+descriptors from overwriting the current process name or user during recovery.
+Sample-derived metadata updates skip already-terminated rows, so delayed
+buckets cannot overwrite finalized names, owners, or last-sighting times after
+pruning acknowledges an exit. Historical measurements are still saved;
+authoritative lifecycle records remain responsible for metadata changes.
 `OpenFilesTab` subscribes only to shared process-scope changes; resource ticks
 do not rerun its file filtering and sorting.
 Sampling and inspection queues drain autoreleased objects after each work item.

@@ -50,36 +50,38 @@ public final class ActivityHistoryStore {
             sqlite3_busy_timeout(database, 2_000)
             var version: Int32 = 0
             try query("PRAGMA user_version") { version = sqlite3_column_int($0, 0) }
-            guard (0...2).contains(version) else {
+            guard (0...3).contains(version) else {
                 throw ActivityHistoryError(message: "unsupported database version \(version); history was not changed.")
             }
             try execute("PRAGMA auto_vacuum = INCREMENTAL")
             try execute("PRAGMA journal_mode = WAL")
             try execute("PRAGMA synchronous = NORMAL")
             try execute("PRAGMA secure_delete = ON")
-            if version == 1 {
+            try transaction {
+                if version == 1 {
+                    try execute("ALTER TABLE samples ADD COLUMN cpu_system REAL; ALTER TABLE samples ADD COLUMN cpu_user REAL;")
+                }
                 try execute("""
-                    BEGIN IMMEDIATE;
-                    ALTER TABLE samples ADD COLUMN cpu_system REAL;
-                    ALTER TABLE samples ADD COLUMN cpu_user REAL;
-                    PRAGMA user_version = 2;
-                    COMMIT;
+                    CREATE TABLE IF NOT EXISTS samples (
+                        process TEXT NOT NULL, time REAL NOT NULL,
+                        cpu REAL, memory REAL, disk_read REAL, disk_written REAL, received REAL, sent REAL,
+                        cpu_system REAL, cpu_user REAL,
+                        PRIMARY KEY (process, time)
+                    );
+                    CREATE INDEX IF NOT EXISTS samples_time ON samples(time);
+                    CREATE TABLE IF NOT EXISTS processes (
+                        key TEXT PRIMARY KEY, boot TEXT NOT NULL, pid INTEGER NOT NULL,
+                        start TEXT NOT NULL, name TEXT NOT NULL, user TEXT NOT NULL, last_seen REAL NOT NULL
+                    );
+                    """)
+                if version < 3 {
+                    try execute("ALTER TABLE processes ADD COLUMN terminated_at REAL")
+                }
+                try execute("""
+                    CREATE INDEX IF NOT EXISTS processes_terminated ON processes(terminated_at);
+                    PRAGMA user_version = 3;
                     """)
             }
-            try execute("""
-                CREATE TABLE IF NOT EXISTS samples (
-                    process TEXT NOT NULL, time REAL NOT NULL,
-                    cpu REAL, memory REAL, disk_read REAL, disk_written REAL, received REAL, sent REAL,
-                    cpu_system REAL, cpu_user REAL,
-                    PRIMARY KEY (process, time)
-                );
-                CREATE INDEX IF NOT EXISTS samples_time ON samples(time);
-                CREATE TABLE IF NOT EXISTS processes (
-                    key TEXT PRIMARY KEY, boot TEXT NOT NULL, pid INTEGER NOT NULL,
-                    start TEXT NOT NULL, name TEXT NOT NULL, user TEXT NOT NULL, last_seen REAL NOT NULL
-                );
-                PRAGMA user_version = 2;
-                """)
         } catch {
             sqlite3_close(database)
             database = nil
@@ -93,36 +95,40 @@ public final class ActivityHistoryStore {
         }
     }
 
-    public func save(_ snapshot: ActivitySnapshot, now: Date) throws {
-        try execute("BEGIN IMMEDIATE")
-        do {
+    public func save(
+        _ snapshot: ActivitySnapshot, now: Date, processRecords: [ActivityProcessRecord] = []
+    ) throws {
+        try transaction {
             let timestamp = snapshot.date.timeIntervalSince1970
+            let updatedIdentities = Set(processRecords.map(\.process.id))
             try execute("DELETE FROM samples WHERE time = ?", bindings: [.number(timestamp)])
             try insert(values: snapshot.system, key: "", timestamp: timestamp)
             for sample in snapshot.processes {
                 let process = sample.process
-                try execute("""
-                    INSERT INTO processes(key, boot, pid, start, name, user, last_seen) VALUES(?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(key) DO UPDATE SET name = excluded.name, user = excluded.user,
-                        last_seen = MAX(last_seen, excluded.last_seen)
-                    """, bindings: [
-                        .text(process.identity.key), .text(process.identity.bootSession),
-                        .number(Double(process.identity.pid)), .text(String(process.identity.startTime)),
-                        .text(process.name), .text(process.user), .number(timestamp)
-                    ])
+                if !updatedIdentities.contains(process.id) {
+                    try execute("""
+                        INSERT INTO processes(key, boot, pid, start, name, user, last_seen) VALUES(?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(key) DO UPDATE SET name = excluded.name, user = excluded.user,
+                            last_seen = MAX(last_seen, excluded.last_seen)
+                        WHERE processes.terminated_at IS NULL
+                        """, bindings: [
+                            .text(process.identity.key), .text(process.identity.bootSession),
+                            .number(Double(process.identity.pid)), .text(String(process.identity.startTime)),
+                            .text(process.name), .text(process.user), .number(timestamp)
+                        ])
+                }
                 try insert(values: sample.values, key: process.identity.key, timestamp: timestamp)
             }
+            try saveProcessRecords(processRecords)
             try deleteExpired(now: now)
-            try execute("COMMIT")
-        } catch {
-            do { try execute("ROLLBACK") }
-            catch { fputs("KillSwitch history rollback failed: \(error.localizedDescription)\n", stderr) }
-            throw error
         }
     }
 
-    public func prune(now: Date) throws {
-        try deleteExpired(now: now)
+    public func prune(now: Date, processRecords: [ActivityProcessRecord] = []) throws {
+        try transaction {
+            try saveProcessRecords(processRecords)
+            try deleteExpired(now: now)
+        }
         try execute("PRAGMA incremental_vacuum(64)")
     }
 
@@ -149,19 +155,28 @@ public final class ActivityHistoryStore {
     }
 
     public func processes(since: Date) throws -> [ActivityProcessDescriptor] {
-        var result: [ActivityProcessDescriptor] = []
+        try processRecords(since: since).map(\.process)
+    }
+
+    public func processRecords(since: Date) throws -> [ActivityProcessRecord] {
+        var result: [ActivityProcessRecord] = []
         try query("""
-            SELECT boot, pid, start, name, user FROM processes
+            SELECT boot, pid, start, name, user, last_seen, terminated_at FROM processes
             WHERE last_seen >= ? ORDER BY name COLLATE NOCASE, pid
             """, bindings: [.number(since.timeIntervalSince1970)]) { statement in
                 guard let start = UInt64(text(statement, 2)) else {
                     throw ActivityHistoryError(message: "a saved process identity is invalid.")
                 }
-                result.append(ActivityProcessDescriptor(
-                    identity: ActivityProcessIdentity(
-                        bootSession: text(statement, 0), pid: sqlite3_column_int(statement, 1), startTime: start
+                result.append(ActivityProcessRecord(
+                    process: ActivityProcessDescriptor(
+                        identity: ActivityProcessIdentity(
+                            bootSession: text(statement, 0), pid: sqlite3_column_int(statement, 1), startTime: start
+                        ),
+                        name: text(statement, 3), user: text(statement, 4)
                     ),
-                    name: text(statement, 3), user: text(statement, 4)
+                    lastSeen: Date(timeIntervalSince1970: sqlite3_column_double(statement, 5)),
+                    terminatedAt: sqlite3_column_type(statement, 6) == SQLITE_NULL
+                        ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 6))
                 ))
             }
         return result
@@ -173,8 +188,45 @@ public final class ActivityHistoryStore {
 
     private func deleteExpired(now: Date) throws {
         let cutoff = now.addingTimeInterval(-Self.retention).timeIntervalSince1970
-        try execute("DELETE FROM samples WHERE time < ?", bindings: [.number(cutoff)])
-        try execute("DELETE FROM processes WHERE last_seen < ?", bindings: [.number(cutoff)])
+        let terminatedCutoff = now.addingTimeInterval(-ActivityProcessCatalog.terminatedRetention).timeIntervalSince1970
+        try execute("""
+            DELETE FROM samples WHERE time < ? OR process IN (
+                SELECT key FROM processes WHERE last_seen < ? OR terminated_at <= ?
+            )
+            """, bindings: [.number(cutoff), .number(cutoff), .number(terminatedCutoff)])
+        try execute(
+            "DELETE FROM processes WHERE last_seen < ? OR terminated_at <= ?",
+            bindings: [.number(cutoff), .number(terminatedCutoff)]
+        )
+    }
+
+    private func saveProcessRecords(_ records: [ActivityProcessRecord]) throws {
+        for record in records {
+            let process = record.process
+            try execute("""
+                INSERT INTO processes(key, boot, pid, start, name, user, last_seen, terminated_at)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET name = excluded.name, user = excluded.user,
+                    last_seen = excluded.last_seen, terminated_at = excluded.terminated_at
+                """, bindings: [
+                    .text(process.id.key), .text(process.id.bootSession), .number(Double(process.id.pid)),
+                    .text(String(process.id.startTime)), .text(process.name), .text(process.user),
+                    .number(record.lastSeen.timeIntervalSince1970),
+                    record.terminatedAt.map { .number($0.timeIntervalSince1970) } ?? .null
+                ])
+        }
+    }
+
+    private func transaction(_ work: () throws -> Void) throws {
+        try execute("BEGIN IMMEDIATE")
+        do {
+            try work()
+            try execute("COMMIT")
+        } catch {
+            do { try execute("ROLLBACK") }
+            catch { fputs("KillSwitch history rollback failed: \(error.localizedDescription)\n", stderr) }
+            throw error
+        }
     }
 
     private func insert(values: ActivityValues, key: String, timestamp: Double) throws {

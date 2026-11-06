@@ -179,6 +179,18 @@ struct SystemMetricsChecks {
         check(approximately(processes[1].cpuTimeSeconds, 1.29), "ps process CPU time")
         check(processes[1].memoryBytes == 6_832 * 1_024, "ps memory bytes")
         check(processes[1].command == "npm exec @microsoft/workiq mcp", "ps command with spaces")
+
+        let lifecycleProcesses = SystemMetricsParser.parsePSProcesses("""
+          901 sample-user R    0.0 0:00.01 1024 /synthetic/running-worker
+          902 sample-user S    0.0 0:00.01 1024 /synthetic/sleeping-worker
+          903 sample-user T    0.0 0:00.01 1024 /synthetic/stopped-worker
+          904 sample-user ZN   0.0 0:00.01    0 <defunct>
+          905 sample-user X    0.0 0:00.01    0 /synthetic/dead-worker
+        """)
+        check(
+            lifecycleProcesses.map(\.pid) == [901, 902, 903],
+            "live sampling excludes zombie and dead states without treating sleeping or stopped processes as terminated"
+        )
     }
 
     private static func checkCPUCalculations() {
