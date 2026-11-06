@@ -9,11 +9,11 @@ import SystemMetricsCore
 @MainActor
 enum PerformanceProbe {
     static func run(arguments: [String]) -> Int32 {
-        guard arguments.count == 3,
+        guard (3...4).contains(arguments.count),
               ["background", "dashboard", "cpu", "memory", "energy"].contains(arguments[0]),
               let duration = Double(arguments[1]), (3...600).contains(duration),
               let count = Int(arguments[2]), (1...5_000).contains(count) else {
-            fputs("Usage: performance-probe background|dashboard|cpu|memory|energy SECONDS(3...600) PROCESSES(1...5000)\n", stderr)
+            fputs("Usage: performance-probe background|dashboard|cpu|memory|energy SECONDS(3...600) PROCESSES(1...5000) [OFFSCREEN.png]\n", stderr)
             return 2
         }
         let scenario = arguments[0]
@@ -27,8 +27,10 @@ enum PerformanceProbe {
             ))
         }
         let view: NSHostingView<AnyView>?
+        let window: NSWindow?
         if scenario == "background" {
             view = nil
+            window = nil
         } else {
             let root: AnyView
             if scenario == "dashboard" {
@@ -39,7 +41,18 @@ enum PerformanceProbe {
             }
             let hosting = NSHostingView(rootView: AnyView(root.preferredColorScheme(.dark)))
             hosting.setFrameSize(NSSize(width: 1_280, height: 900))
+            let offscreen = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 1_280, height: 900),
+                styleMask: [.borderless], backing: .buffered, defer: false
+            )
+            offscreen.isReleasedWhenClosed = false
+            offscreen.contentView = hosting
             view = hosting
+            window = offscreen
+        }
+        defer {
+            window?.contentView = nil
+            window?.close()
         }
         let start = Date()
         var nextSample = start
@@ -59,6 +72,22 @@ enum PerformanceProbe {
                 nextSample = nextSample.addingTimeInterval(6)
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        if arguments.count == 4, let view {
+            guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+                fputs("Performance probe could not create its final offscreen image.\n", stderr)
+                return 1
+            }
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            guard let data = bitmap.representation(using: .png, properties: [:]) else {
+                fputs("Performance probe could not encode its offscreen image.\n", stderr)
+                return 1
+            }
+            do { try data.write(to: URL(fileURLWithPath: arguments[3]), options: .atomic) }
+            catch {
+                fputs("Performance image failed: \(error.localizedDescription)\n", stderr)
+                return 1
+            }
         }
         return 0
     }
