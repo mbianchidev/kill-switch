@@ -47,8 +47,13 @@ averages persist locally for up to 24 hours, across app restarts; gaps during sl
 shutdown, or failed sampling are not recorded as zero usage. Process histories
 distinguish process lifetimes and boots, not just reused PIDs. An exited,
 terminated, or defunct process's history and menu entry are deleted six hours
-after its exit is observed. A selected process that expires returns the graphs
-to **Entire Mac**. Running processes and whole-Mac history keep the 24-hour window.
+after its exit is observed, or when its last verified sighting exceeds 24 hours,
+whichever comes first. Missing resource measurements or unreadable lifetime
+identities do not establish an exit; unresolved process entries remain available
+until their presence or exit can be verified. Already-confirmed exits continue
+to expire during collector failures. A selected process that expires returns
+the graphs to **Entire Mac**. Running processes and whole-Mac history keep the
+24-hour window.
 **Clear history** deletes stored measurements and process names after
 confirmation; new sampling continues. See
 [history storage and limitations](system-diagnostics.md#history-and-storage).

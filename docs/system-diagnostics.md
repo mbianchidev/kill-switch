@@ -84,10 +84,16 @@ The directory is private (`0700`); the database and SQLite sidecars use `0600`.
 Records older than 24 hours are pruned on startup and as new buckets are saved.
 Exited, terminated, and defunct processes have a shorter window: their names and
 all saved per-process measurements are deleted six hours after their exit is
-first observed. Defunct processes no longer contribute live measurements.
+first observed, or once their last verified sighting is older than 24 hours,
+whichever comes first. Defunct processes no longer contribute live measurements.
 Repeated observations and app restarts do not extend a recorded exit deadline.
 If an exit happened while KillSwitch was closed, the last recorded sighting is
-used after the first successful process inventory confirms the lifetime is gone.
+used only after a lifetime read confirms absence, a defunct state, or a verified
+replacement sharing its PID. A readable matching lifetime stays live even if its
+resource measurements are unavailable. Missing measurements and failed identity
+reads do not confirm an exit: unresolved lifetimes remain in the menu across
+retries, while already-confirmed exits continue to expire. This does not extend
+the 24-hour window for stored measurements.
 Running process histories and whole-Mac measurements keep the 24-hour window.
 An expired process selection returns to **Entire Mac**. Pruning failures are
 reported and retried; delayed pre-sleep writes cannot restore expired entries.

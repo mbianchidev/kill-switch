@@ -2,15 +2,30 @@ import Darwin
 
 public enum ProcessLifetimeReader {
     public static func read(pid: Int32, bootSession: String) -> ActivityProcessIdentity? {
-        guard pid > 0 else { return nil }
+        presence(pid: pid, bootSession: bootSession).identity
+    }
+
+    public static func presence(pid: Int32, bootSession: String) -> ProcessLifetimePresence {
+        guard pid > 0 else { return .unavailable }
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
         var info = kinfo_proc()
         var size = MemoryLayout<kinfo_proc>.size
         let status = mib.withUnsafeMutableBufferPointer {
             sysctl($0.baseAddress, UInt32($0.count), &info, &size, nil, 0)
         }
-        guard status == 0, size == MemoryLayout<kinfo_proc>.size else { return nil }
-        return identity(info: info, pid: pid, bootSession: bootSession)
+        return presence(info: info, pid: pid, bootSession: bootSession, status: status, size: size, error: errno)
+    }
+
+    public static func presence(
+        info: kinfo_proc, pid: Int32, bootSession: String, status: Int32, size: Int, error: Int32
+    ) -> ProcessLifetimePresence {
+        guard pid > 0 else { return .unavailable }
+        if status != 0 { return error == ESRCH ? .absent : .unavailable }
+        if size == 0 { return .absent }
+        guard size == MemoryLayout<kinfo_proc>.size, info.kp_proc.p_pid == pid else { return .unavailable }
+        if Int32(info.kp_proc.p_stat) == SZOMB { return .defunct }
+        guard let identity = identity(info: info, pid: pid, bootSession: bootSession) else { return .unavailable }
+        return .present(identity)
     }
 
     public static func identity(

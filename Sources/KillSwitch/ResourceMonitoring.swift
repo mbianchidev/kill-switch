@@ -344,7 +344,10 @@ final class ResourceMonitor: ObservableObject {
         let metric = activeMetric
 
         do {
-            let snapshot = try sampler.sample(metric: metric)
+            let trackedPIDs = Set(
+                processCatalog.records.values.filter { $0.terminatedAt == nil }.map { $0.process.id.pid }
+            )
+            let snapshot = try sampler.sample(metric: metric, trackedPIDs: trackedPIDs)
             var sampledProcesses = snapshot.processes
             if snapshot.sampledEnergy {
                 updateEnergyHistory(processes: sampledProcesses, now: snapshot.date)
@@ -362,7 +365,9 @@ final class ResourceMonitor: ObservableObject {
             }
 
             let activity = activitySnapshot(snapshot)
-            processCatalog.observe(activity.processes.map(\.process), now: snapshot.date)
+            processCatalog.observe(
+                activity.processes.map(\.process), inventory: snapshot.processInventory, now: snapshot.date
+            )
             liveHistory.append(activity)
             if let completed = accumulator.append(activity) {
                 enqueueHistory(completed, now: snapshot.date)
@@ -532,8 +537,9 @@ final class ResourceMonitor: ObservableObject {
                 processCatalog.markPersisted()
             }
             if processCatalog.needsPruning {
-                try store.prune(now: now, processRecords: processCatalog.pendingRecords)
-                processCatalog.markPersisted()
+                let terminationRecords = processCatalog.pendingTerminationRecords
+                try store.prune(now: now, processRecords: terminationRecords)
+                processCatalog.markPersisted(terminationRecords)
             }
             DispatchQueue.main.async { self.historyError = nil }
         } catch {
