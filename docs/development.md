@@ -180,6 +180,10 @@ live inventory. Successful pruning acknowledges only those saved records;
 dirty live metadata stays pending for the next minute save, and failed pruning
 preserves pending changes for retry. Minute saves persist all pending process
 metadata, including lifetimes absent from the completed measurement bucket.
+Queued minute saves reuse one snapshot of the latest pending metadata throughout
+the drain and acknowledge it only after every queued save succeeds. A later
+failure leaves that metadata pending for retry, preventing older bucket
+descriptors from overwriting the current process name or user during recovery.
 `OpenFilesTab` subscribes only to shared process-scope changes; resource ticks
 do not rerun its file filtering and sorting.
 Sampling and inspection queues drain autoreleased objects after each work item.

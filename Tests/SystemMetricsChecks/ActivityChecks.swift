@@ -87,6 +87,7 @@ extension SystemMetricsChecks {
         checkActivityProcessRetention(start: start, process: process)
         checkProcessInventoryRetention(start: start, process: process)
         checkPruningMetadataWrites()
+        checkClearingActivityHistory()
         let initial = ActivitySnapshot(
             date: start, system: ActivityValues(cpu: 10, memory: 100),
             processes: [ActivityProcessSample(process: process, values: ActivityValues(cpu: 20, memory: 200))]
@@ -362,8 +363,18 @@ extension SystemMetricsChecks {
         )
         check(offlineExit.processes.isEmpty, "an exit while the app was closed ages from the last observed presence")
 
-        catalog.observe([], now: start.addingTimeInterval(86_401))
-        check(catalog.pendingRecords.isEmpty, "unsaved process metadata stays bounded by the overall history window")
+        var unpersisted = ActivityProcessCatalog()
+        unpersisted.observe([process], now: start)
+        unpersisted.observe([], inventory: ActivityProcessInventory([process.id.pid: .absent]), now: terminatedAt)
+        let unsavedRecord = ActivityProcessRecord(process: process, lastSeen: start, terminatedAt: terminatedAt)
+        check(unpersisted.pendingRecords == [unsavedRecord], "a never-persisted catalog starts with pending termination metadata")
+        let pendingCutoff = start.addingTimeInterval(ActivityHistoryStore.retention)
+        unpersisted.prune(now: pendingCutoff.addingTimeInterval(-1))
+        check(unpersisted.pendingRecords == [unsavedRecord], "unsaved process metadata is still pending just before the 24-hour cutoff")
+        unpersisted.prune(now: pendingCutoff)
+        check(unpersisted.pendingRecords == [unsavedRecord], "unsaved process metadata is still pending exactly at the inclusive 24-hour cutoff")
+        unpersisted.prune(now: pendingCutoff.addingTimeInterval(1))
+        check(unpersisted.pendingRecords.isEmpty, "unsaved process metadata is removed strictly after the 24-hour cutoff")
     }
 
     private static func checkProcessLifetimeReader() {

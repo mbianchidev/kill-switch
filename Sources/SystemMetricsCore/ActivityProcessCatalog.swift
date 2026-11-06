@@ -24,6 +24,7 @@ public struct ActivityProcessCatalog {
     public private(set) var needsPruning = false
     private var pending: [ActivityProcessIdentity: ActivityProcessRecord] = [:]
     private var restored: Set<ActivityProcessIdentity> = []
+    private var lastSampleIdentities: Set<ActivityProcessIdentity> = []
 
     public init() {}
 
@@ -39,6 +40,15 @@ public struct ActivityProcessCatalog {
             guard records[identity] == nil, pending[identity] == nil else { continue }
             records[identity] = record
             if record.terminatedAt == nil { restored.insert(identity) }
+        }
+    }
+
+    public mutating func resetKeepingLiveProcesses() {
+        let liveRecords = lastSampleIdentities.compactMap { records[$0] }
+        self = ActivityProcessCatalog()
+        for record in liveRecords {
+            update(record)
+            lastSampleIdentities.insert(record.process.id)
         }
     }
 
@@ -70,9 +80,11 @@ public struct ActivityProcessCatalog {
             }
             restored.remove(identity)
         }
+        lastSampleIdentities.removeAll(keepingCapacity: true)
         for process in processes where inventory[process.id.pid] == .present(process.id) {
             update(ActivityProcessRecord(process: process, lastSeen: now))
             restored.remove(process.id)
+            lastSampleIdentities.insert(process.id)
         }
         prune(now: now)
     }

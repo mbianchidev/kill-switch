@@ -300,12 +300,15 @@ final class ResourceMonitor: ObservableObject {
                     throw ActivityHistoryError(message: "the database is unavailable; history could not be cleared.")
                 }
                 try store.clear()
+                self.processCatalog.resetKeepingLiveProcesses()
                 self.liveHistory.removeAll()
-                self.processCatalog = ActivityProcessCatalog()
                 self.accumulator = ActivityAccumulator()
                 self.writeBuffer = ActivityWriteBuffer()
+                self.energyHistory.removeAll()
+                self.lastEnergyHistorySample = nil
                 self.publishTimeline(now: Date())
                 DispatchQueue.main.async {
+                    self.history.removeAll()
                     self.historyError = nil
                     self.historyNotice = nil
                 }
@@ -529,12 +532,8 @@ final class ResourceMonitor: ObservableObject {
     private func flushPendingHistory(now: Date) {
         guard let store, writeBuffer.count > 0 || processCatalog.needsPruning else { return }
         do {
-            try writeBuffer.flush {
-                try store.save(
-                    processCatalog.retainingProcesses(in: $0), now: now,
-                    processRecords: processCatalog.pendingRecords
-                )
-                processCatalog.markPersisted()
+            try writeBuffer.flush(processCatalog: &processCatalog) { snapshot, records in
+                try store.save(snapshot, now: now, processRecords: records)
             }
             if processCatalog.needsPruning {
                 let terminationRecords = processCatalog.pendingTerminationRecords

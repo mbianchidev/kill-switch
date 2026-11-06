@@ -324,6 +324,18 @@ public struct ActivityWriteBuffer {
         return previousCount - entries.count
     }
 
+    public mutating func flush(
+        processCatalog: inout ActivityProcessCatalog,
+        save: (ActivitySnapshot, [ActivityProcessRecord]) throws -> Void
+    ) throws {
+        guard !entries.isEmpty else { return }
+        let pendingRecords = processCatalog.pendingRecords
+        try flush {
+            try save(processCatalog.retainingProcesses(in: $0), pendingRecords)
+        }
+        processCatalog.markPersisted(pendingRecords)
+    }
+
     public mutating func flush(save: (ActivitySnapshot) throws -> Void) throws {
         while let entry = entries.first {
             try save(entry.snapshot)

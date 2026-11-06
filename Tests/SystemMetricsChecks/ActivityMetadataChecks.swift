@@ -24,7 +24,7 @@ extension SystemMetricsChecks {
         let closing = process(105, "Newly exited worker")
         let unsampled = process(106, "Inventory-only worker")
         let directory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-            .appendingPathComponent(".build/review-metadata/fixture-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(".build/followup-metadata/fixture-\(UUID().uuidString)", isDirectory: true)
         defer {
             do { try FileManager.default.removeItem(at: directory) }
             catch { check(false, "remove synthetic metadata fixture: \(error.localizedDescription)") }
@@ -34,6 +34,7 @@ extension SystemMetricsChecks {
             let url = directory.appendingPathComponent("activity.sqlite")
             let store = try ActivityHistoryStore(url: url)
             var catalog = ActivityProcessCatalog()
+            var buffer = ActivityWriteBuffer()
             func observe(_ processes: [ActivityProcessDescriptor], now: Date) {
                 catalog.observe(processes, inventory: inventory(for: processes), now: now)
             }
@@ -59,6 +60,9 @@ extension SystemMetricsChecks {
                 """, at: url)
 
             func pruneOnly(now: Date) throws {
+                try buffer.flush(processCatalog: &catalog) { snapshot, records in
+                    try store.save(snapshot, now: now, processRecords: records)
+                }
                 let records = catalog.pendingTerminationRecords
                 try store.prune(now: now, processRecords: records)
                 catalog.markPersisted(records)
@@ -67,6 +71,10 @@ extension SystemMetricsChecks {
             let firstPrune = start.addingTimeInterval(6 + ActivityProcessCatalog.terminatedRetention)
             observe([updated, unchanged, unsampled], now: firstPrune)
             check(catalog.needsPruning, "an expiry requests pruning between completed minute buckets")
+            check(
+                buffer.count == 0 && !catalog.pendingRecords.isEmpty,
+                "a pruning-only flush starts with no measurements but dirty live and termination metadata"
+            )
             try pruneOnly(now: firstPrune)
             check(
                 try metadataWriteKeys(at: url) == [closing.id.key],
@@ -142,18 +150,13 @@ extension SystemMetricsChecks {
             let minuteSave = secondPrune.addingTimeInterval(6)
             observe([updated, metadataOnly], now: minuteSave)
             let minuteRecords = catalog.pendingRecords
-            var buffer = ActivityWriteBuffer()
             buffer.append(ActivitySnapshot(
                 date: secondPrune, system: ActivityValues(cpu: 40),
                 processes: [ActivityProcessSample(process: original, values: ActivityValues(cpu: 50))]
             ), now: minuteSave)
             try metadataSQL("DELETE FROM metadata_writes;", at: url)
-            try buffer.flush {
-                try store.save(
-                    catalog.retainingProcesses(in: $0), now: minuteSave,
-                    processRecords: catalog.pendingRecords
-                )
-                catalog.markPersisted()
+            try buffer.flush(processCatalog: &catalog) { snapshot, records in
+                try store.save(snapshot, now: minuteSave, processRecords: records)
             }
             let savedRecords = Dictionary(uniqueKeysWithValues: try store.processRecords(since: start).map { ($0.process.id, $0) })
             check(
@@ -192,6 +195,103 @@ extension SystemMetricsChecks {
             ] && persistedRecords.first?.terminatedAt != nil,
             "acknowledging persisted records cannot discard a newer pending live version of the same lifetime"
         )
+        checkQueuedMetadataWrites()
+    }
+
+    private static func checkQueuedMetadataWrites() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let identity = ActivityProcessIdentity(bootSession: "synthetic-queued-metadata-boot", pid: 201, startTime: 100)
+        let original = ActivityProcessDescriptor(identity: identity, name: "Original queued worker", user: "original-user")
+        let queued = ActivityProcessDescriptor(identity: identity, name: "Later queued worker", user: "queued-user")
+        let current = ActivityProcessDescriptor(identity: identity, name: "Current live worker", user: "current-user")
+        let retried = ActivityProcessDescriptor(identity: identity, name: "Retry live worker", user: "retry-user")
+
+        for failLaterSave in [false, true] {
+            let directory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+                .appendingPathComponent(".build/followup-metadata/fixture-\(UUID().uuidString)", isDirectory: true)
+            defer {
+                do { try FileManager.default.removeItem(at: directory) }
+                catch { check(false, "remove queued metadata fixture: \(error.localizedDescription)") }
+            }
+
+            do {
+                let url = directory.appendingPathComponent("activity.sqlite")
+                let store = try ActivityHistoryStore(url: url)
+                var catalog = ActivityProcessCatalog()
+                var buffer = ActivityWriteBuffer()
+                for (index, process) in [original, queued, queued].enumerated() {
+                    let date = start.addingTimeInterval(Double(index * 60))
+                    catalog.observe([process], now: date)
+                    buffer.append(ActivitySnapshot(
+                        date: date, system: ActivityValues(cpu: Double(index + 1)),
+                        processes: [ActivityProcessSample(process: process, values: ActivityValues(cpu: Double(index + 10)))]
+                    ), now: date)
+                }
+                var now = start.addingTimeInterval(180)
+                catalog.observe([current], now: now)
+                var expectedRecords = [ActivityProcessRecord(process: current, lastSeen: now)]
+                check(
+                    buffer.count == 3 && catalog.pendingRecords == expectedRecords,
+                    "recovery starts with three older measurement buckets and dirty current name/user metadata"
+                )
+                func drain() throws {
+                    try buffer.flush(processCatalog: &catalog) { snapshot, records in
+                        check(records == expectedRecords, "every queued save receives the same latest pending metadata snapshot")
+                        try store.save(snapshot, now: now, processRecords: records)
+                        let reopened = try ActivityHistoryStore(url: url)
+                        var restarted = ActivityProcessCatalog()
+                        restarted.restore(try reopened.processRecords(since: start))
+                        check(
+                            restarted.records[identity] == expectedRecords.first,
+                            "restarting after each queued save preserves current name/user metadata instead of older bucket descriptors"
+                        )
+                    }
+                }
+                if failLaterSave {
+                    try metadataSQL("""
+                        CREATE TRIGGER reject_later_bucket BEFORE INSERT ON samples
+                        WHEN NEW.process = '' AND NEW.time = \(start.addingTimeInterval(60).timeIntervalSince1970)
+                        BEGIN SELECT RAISE(FAIL, 'synthetic later bucket failure'); END;
+                        """, at: url)
+                    do {
+                        try drain()
+                        check(false, "a later queued save failure must propagate")
+                    } catch {
+                        check(
+                            buffer.count == 2 && catalog.pendingRecords == expectedRecords,
+                            "a later save failure leaves the unsaved buckets and all dirty metadata pending for retry"
+                        )
+                        check(
+                            try store.history(process: nil, since: start, until: now).map(\.values.cpu) == [1],
+                            "a later transaction failure preserves the first committed bucket without partially writing the failed one"
+                        )
+                    }
+                    try metadataSQL("DROP TRIGGER reject_later_bucket;", at: url)
+                    now = now.addingTimeInterval(6)
+                    catalog.observe([retried], now: now)
+                    expectedRecords = [ActivityProcessRecord(process: retried, lastSeen: now)]
+                    check(
+                        !catalog.pendingRecords.isEmpty && catalog.pendingRecords == expectedRecords,
+                        "retry selects newly updated live metadata rather than the previous drain's version"
+                    )
+                }
+                try drain()
+                check(
+                    buffer.count == 0 && catalog.pendingRecords.isEmpty && !catalog.needsPruning,
+                    "a fully successful drain acknowledges its pending metadata and every queued measurement"
+                )
+                check(
+                    try store.history(process: nil, since: start, until: now).map(\.values.cpu) == [1, 2, 3],
+                    "recovery retains every system bucket across success or a partial-drain retry"
+                )
+                check(
+                    try store.history(process: identity, since: start, until: now).map(\.values.cpu) == [10, 11, 12],
+                    "recovery retains every process measurement without replacing its current descriptor"
+                )
+            } catch {
+                check(false, "queued metadata persistence: \(error.localizedDescription)")
+            }
+        }
     }
 
     @discardableResult

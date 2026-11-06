@@ -101,7 +101,12 @@ History includes measurements, process names, numeric PIDs, ownership, last-seen
 and observed-exit times, and process-lifetime/boot identities. It does not record
 network endpoints, open file paths, or process command-line arguments. Nothing is
 uploaded.
-**Clear history** removes the saved records and in-memory graph data.
+**Clear history** removes saved records, buffered measurements, in-memory graph
+data, and historical process names. It keeps only the descriptors of the last
+displayed live sample, with their actual observation times, so those processes
+remain selectable before the next sample. A live selection is preserved; a
+historical selection returns to **Entire Mac**. Retaining those live descriptors
+does not recreate any cleared measurements.
 Lifetime identities use unprivileged `KERN_PROC_PID` information, including
 other users' processes; restricted rusage counters remain unavailable rather
 than excluding their readable PS memory and network history.

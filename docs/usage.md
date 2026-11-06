@@ -54,8 +54,10 @@ until their presence or exit can be verified. Already-confirmed exits continue
 to expire during collector failures. A selected process that expires returns
 the graphs to **Entire Mac**. Running processes and whole-Mac history keep the
 24-hour window.
-**Clear history** deletes stored measurements and process names after
-confirmation; new sampling continues. See
+**Clear history** deletes stored and buffered measurements and historical process
+names after confirmation; new sampling continues. Currently displayed live
+processes stay selectable, and a selected live lifetime remains selected. A
+historical selection returns to **Entire Mac**. See
 [history storage and limitations](system-diagnostics.md#history-and-storage).
 
 ## Resources
