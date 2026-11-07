@@ -445,14 +445,39 @@ enum PerformanceProbe {
             if reactivationReleased.wait(timeout: .now() + 5) != .success { timedOut.withLock { $0 = true } }
         }
         reactivated.start(.files)
+        let warning = "Synthetic files inspection permission warning."
+        reactivated.performanceReportError(warning)
+        let status = InspectionStatus(monitor: reactivated, count: 0, noun: "files")
+        check(reactivated.errorMessage == warning && !reactivated.errorIsFromPreviousActivation
+              && status.issueLabel == "Inspection reported a warning or error",
+              "A current inspection issue must retain its detail and current warning label.")
         reactivated.refresh()
         reactivated.stop()
+        check(reactivated.errorMessage == warning && reactivated.errorIsFromPreviousActivation
+              && status.issueLabel == "Previous inspection warning or error",
+              "Hiding inspection must retain unresolved errors while explicitly labeling them as previous.")
         reactivated.start(.connections)
+        check(reactivated.isRefreshing, "A queued inspection activation must immediately show its pending refresh.")
+        check(reactivated.errorMessage == warning && reactivated.errorIsFromPreviousActivation
+              && status.issueLabel == "Previous inspection warning or error",
+              "An old inspection error must not become a current failure during re-entry or mode handoff.")
+        let currentError = "Synthetic connection inspection failed."
+        reactivated.performanceReportError(currentError)
+        check(reactivated.errorMessage == currentError && !reactivated.errorIsFromPreviousActivation
+              && status.issueLabel == "Inspection reported a warning or error",
+              "A failed retry must replace the previous warning with the current activation's error.")
         reactivated.refresh()
         reactivationReleased.signal()
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline && (reactivated.connections.isEmpty || reactivated.isRefreshing) {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
         let modes = reactivated.performanceSampleModes
         check(!modes.isEmpty && modes.allSatisfy { $0 == .connections },
               "A new inspection activation must collect only its current mode, not queued work from its predecessor.")
+        check(reactivated.lastUpdated != nil && reactivated.errorMessage == nil
+              && !reactivated.errorIsFromPreviousActivation && !reactivated.isRefreshing,
+              "A successful current inspection must clear both its unresolved issue and previous-activation state.")
         check(!timedOut.withLock { $0 }, "Controlled synthetic inspection queues must not time out.")
     }
 

@@ -195,6 +195,10 @@ every ten seconds only while visible. Queued refreshes check their activation
 before collection, so hiding does not
 start a delayed `lsof` read. Hiding releases the current rows immediately, and
 an expired in-flight activation cannot publish its results.
+Unresolved warning/error details remain available after suspension, but a new
+visit or mode labels them **Previous inspection warning or error** while its
+refresh is pending. A failed retry replaces them with the current error; a
+successful warning-free read clears them.
 Copy actions show brief confirmation, then restore their original label. A new
 value or hidden button clears that feedback; it confirms a copy action, not
 ongoing ownership of the system clipboard.

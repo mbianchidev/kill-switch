@@ -9,9 +9,17 @@ import os
 
 final class ProcessInspectionMonitor: ObservableObject {
     enum Mode: Sendable, Equatable { case files, connections, listeners }
+    private struct InspectionIssue {
+        let message: String
+        let activationID: UUID
+    }
     @Published private(set) var files: [OpenFileRecord] = []
     @Published private(set) var connections: [NetworkConnectionRecord] = []
-    @Published private(set) var errorMessage: String?
+    @Published private var issue: InspectionIssue?
+    var errorMessage: String? { issue?.message }
+    var errorIsFromPreviousActivation: Bool {
+        issue.map { $0.activationID != activationID } ?? false
+    }
     @Published private(set) var lastUpdated: Date?
     @Published private(set) var isRefreshing = false
     @Published private(set) var identities: [Int32: ActivityProcessIdentity] = [:]
@@ -48,6 +56,15 @@ final class ProcessInspectionMonitor: ObservableObject {
     var performanceSampleModes: [Mode] { queue.sync { performanceSamples } }
     func performanceEnqueue(_ work: @escaping @Sendable () -> Void) { queue.async(execute: work) }
 
+    func performanceReportError(_ message: String) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let id = activationID else {
+            preconditionFailure("A synthetic inspection error requires an active collection.")
+        }
+        issue = InspectionIssue(message: message, activationID: id)
+        isRefreshing = false
+    }
+
     func restorePerformanceFixture() {
         let fixture = Self.performanceFixture
         files = fixture.files.filter { target == nil || $0.pid == target?.pid }
@@ -68,6 +85,7 @@ final class ProcessInspectionMonitor: ObservableObject {
         let id = UUID()
         activationID = id
         self.mode = mode
+        isRefreshing = true
         queue.async { [self] in
             guard self.activationID == id else { return }
             self.timer?.cancel()
@@ -211,7 +229,9 @@ final class ProcessInspectionMonitor: ObservableObject {
                 self.projects = projects
                 self.projectErrors = projectErrors
                 self.lastUpdated = Date()
-                self.errorMessage = detail.isEmpty ? nil : "Some entries may be inaccessible: \(detail)"
+                self.issue = detail.isEmpty ? nil : InspectionIssue(
+                    message: "Some entries may be inaccessible: \(detail)", activationID: activation
+                )
                 self.isRefreshing = false
             }
         } catch {
@@ -219,7 +239,7 @@ final class ProcessInspectionMonitor: ObservableObject {
             logger.error("Process inspection failed: \(error.localizedDescription)")
             DispatchQueue.main.async {
                 guard self.activationID == activation else { return }
-                self.errorMessage = error.localizedDescription
+                self.issue = InspectionIssue(message: error.localizedDescription, activationID: activation)
                 self.isRefreshing = false
                 if self.target != nil {
                     self.files = []
@@ -410,6 +430,12 @@ struct InspectionStatus: View {
     let count: Int
     let noun: String
 
+    var issueLabel: String {
+        monitor.errorIsFromPreviousActivation
+            ? "Previous inspection warning or error"
+            : "Inspection reported a warning or error"
+    }
+
     var body: some View {
         HStack {
             Text("\(count) \(noun)")
@@ -430,7 +456,7 @@ struct InspectionStatus: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }.frame(maxHeight: 90)
             } label: {
-                Label("Inspection reported a warning or error", systemImage: "exclamationmark.triangle")
+                Label(issueLabel, systemImage: "exclamationmark.triangle")
                     .font(.system(size: 11))
             }
             .foregroundColor(.orange)
