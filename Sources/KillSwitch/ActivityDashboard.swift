@@ -5,6 +5,8 @@ import TableQueryCore
 
 struct ActivityDashboard: View {
     @ObservedObject var monitor: ResourceMonitor
+    let systemHealth: SystemHealthMonitor
+    let navigate: (MainTab) -> Void
     @State private var search = ""
     @State private var selectedDate: Date?
     @State private var sorting = TableComparator(field: ActivityTableFields.cpu, order: .reverse)
@@ -12,91 +14,107 @@ struct ActivityDashboard: View {
     private let metrics: [ResourceMetric] = [.cpu, .memory, .network, .disk]
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Label("Dashboard", systemImage: "square.grid.2x2")
-                        .font(.system(size: 17, weight: .semibold))
-                    Spacer()
-                    Text(monitor.lastUpdated.map {
-                        "Updated \($0.formatted(date: .omitted, time: .standard))"
-                    } ?? "Collecting first measurements")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(.secondary)
-                    Button { monitor.refresh() } label: { Image(systemName: "arrow.clockwise") }
-                        .accessibilityLabel("Refresh activity and retry history storage")
-                    ProcessScopePicker(monitor: monitor)
-                }
-
-                ActivityHistoryControls(monitor: monitor)
-                ActivityMonitorErrors(monitor: monitor)
-
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                    ForEach(metrics) { metric in
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Label(metric.rawValue, systemImage: activityIcon(metric))
-                                    .font(.system(size: 13, weight: .semibold))
-                                Spacer()
-                                Text(activitySummary(metric))
-                                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                            }
-                            ActivityTimelineChart(
-                                metric: metric, history: monitor.timeline, range: monitor.historyRange,
-                                now: monitor.lastUpdated ?? Date(), isProcess: monitor.focusedProcess != nil,
-                                selectedDate: selectedDate,
-                                onSelect: { selectedDate = $0 }
-                            )
-                            .frame(height: 140)
-                        }
-                        .padding(12)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.panel))
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.border))
+        let rows = liveProcesses
+        let values = displayedValues
+        return GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        Label("Dashboard", systemImage: "square.grid.2x2")
+                            .font(.system(size: 17, weight: .semibold))
+                        Spacer()
+                        Text(monitor.lastUpdated.map {
+                            "Updated \($0.formatted(date: .omitted, time: .standard))"
+                        } ?? "Collecting first measurements")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.secondary)
+                        Button { monitor.refresh() } label: { Image(systemName: "arrow.clockwise") }
+                            .accessibilityLabel("Refresh activity and retry history storage")
+                        ProcessScopePicker(monitor: monitor)
                     }
-                }
 
-                timelineScrubber
+                    SystemStatusStrip(monitor: systemHealth, navigate: navigate)
+                    ActivityHistoryControls(monitor: monitor)
+                    ActivityMonitorErrors(monitor: monitor)
 
-                HStack {
-                    Text("Live processes")
-                        .font(.system(size: 13, weight: .semibold))
-                    TableSortControls(fields: ActivityTableFields.columns, sorting: $sorting)
-                    Spacer()
-                    Text("Select a process to compare all four histories")
+                    LazyVGrid(
+                        columns: geometry.size.width >= 760
+                            ? [GridItem(.flexible()), GridItem(.flexible())] : [GridItem(.flexible())],
+                        spacing: 12
+                    ) {
+                        ForEach(metrics) { metric in
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Button { openMetric(metric) } label: {
+                                        Label(metric.rawValue, systemImage: activityIcon(metric))
+                                            .font(.system(size: 13, weight: .semibold))
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .accessibilityLabel("Open \(metric.rawValue) resources")
+                                    Spacer()
+                                    Text(activitySummary(metric, values: values))
+                                        .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.8)
+                                }
+                                ActivityTimelineChart(
+                                    metric: metric, history: monitor.timeline, range: monitor.historyRange,
+                                    now: monitor.lastUpdated ?? Date(), isProcess: monitor.focusedProcess != nil,
+                                    selectedDate: selectedDate,
+                                    onSelect: { selectedDate = $0 }
+                                )
+                                .frame(height: 120)
+                            }
+                            .padding(12)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(Theme.panel))
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.border))
+                        }
+                    }
+
+                    timelineScrubber
+
+                    HStack {
+                        Text("Live processes")
+                            .font(.system(size: 13, weight: .semibold))
+                        TableSortControls(fields: ActivityTableFields.columns, sorting: $sorting)
+                        Spacer()
+                        Text("\(rows.count) processes / select to compare histories")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    TableSearchControls(
+                        search: $search, fields: ActivityTableFields.all, prompt: "Search processes, or CPU% > 40",
+                        resetAdditional: { monitor.showAllUsers = false }
+                    )
+                    Table(rows, selection: $monitor.focusedProcess, sortOrder: tableSortOrder($sorting)) {
+                        TableColumn("Process", sortUsing: TableComparator(field: ActivityTableFields.name)) { Text($0.process.name) }
+                            .width(min: 140, ideal: 180)
+                        TableColumn("PID", sortUsing: TableComparator(field: ActivityTableFields.pid)) { Text(String($0.process.identity.pid)) }
+                            .width(55)
+                        TableColumn("CPU", sortUsing: TableComparator(field: ActivityTableFields.cpu)) { Text(formatActivityValue($0.values.cpu, metric: .cpu)) }
+                            .width(75)
+                        TableColumn("Memory", sortUsing: TableComparator(field: ActivityTableFields.memory)) { Text(formatActivityValue($0.values.memory, metric: .memory)) }
+                            .width(90)
+                        TableColumn("Received/s", sortUsing: TableComparator(field: ActivityTableFields.received)) { Text(formatByteRate($0.values.received)) }
+                            .width(100)
+                        TableColumn("Sent/s", sortUsing: TableComparator(field: ActivityTableFields.sent)) { Text(formatByteRate($0.values.sent)) }
+                            .width(100)
+                        TableColumn("Read/s", sortUsing: TableComparator(field: ActivityTableFields.read)) { Text(formatByteRate($0.values.diskRead)) }
+                            .width(100)
+                        TableColumn("Written/s", sortUsing: TableComparator(field: ActivityTableFields.written)) { Text(formatByteRate($0.values.diskWritten)) }
+                            .width(100)
+                        TableColumn("Inspect") { InspectProcessButton(process: $0.process) }.width(65)
+                    }
+                    .font(.system(size: 11, design: .monospaced))
+                    .frame(height: 230)
+                    .scrollContentBackground(.hidden)
+
+                    Text("6-second samples / 24-hour local history / exited processes kept for up to 6 hours. All charts follow the selected process and time. N/A means unavailable, not zero.")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                 }
-                TableSearchControls(
-                    search: $search, fields: ActivityTableFields.all, prompt: "Search processes, or CPU% > 40",
-                    resetAdditional: { monitor.showAllUsers = false }
-                )
-                Table(liveProcesses, selection: $monitor.focusedProcess, sortOrder: tableSortOrder($sorting)) {
-                    TableColumn("Process", sortUsing: TableComparator(field: ActivityTableFields.name)) { Text($0.process.name) }
-                        .width(min: 140, ideal: 180)
-                    TableColumn("PID", sortUsing: TableComparator(field: ActivityTableFields.pid)) { Text(String($0.process.identity.pid)) }
-                        .width(55)
-                    TableColumn("CPU", sortUsing: TableComparator(field: ActivityTableFields.cpu)) { Text(formatActivityValue($0.values.cpu, metric: .cpu)) }
-                        .width(75)
-                    TableColumn("Memory", sortUsing: TableComparator(field: ActivityTableFields.memory)) { Text(formatActivityValue($0.values.memory, metric: .memory)) }
-                        .width(90)
-                    TableColumn("Received/s", sortUsing: TableComparator(field: ActivityTableFields.received)) { Text(formatByteRate($0.values.received)) }
-                        .width(100)
-                    TableColumn("Sent/s", sortUsing: TableComparator(field: ActivityTableFields.sent)) { Text(formatByteRate($0.values.sent)) }
-                        .width(100)
-                    TableColumn("Read/s", sortUsing: TableComparator(field: ActivityTableFields.read)) { Text(formatByteRate($0.values.diskRead)) }
-                        .width(100)
-                    TableColumn("Written/s", sortUsing: TableComparator(field: ActivityTableFields.written)) { Text(formatByteRate($0.values.diskWritten)) }
-                        .width(100)
-                }
-                .font(.system(size: 11, design: .monospaced))
-                .frame(height: 230)
-                .scrollContentBackground(.hidden)
-
-                Text("Live samples every 6 seconds. History uses one-minute averages and stays on this Mac for up to 24 hours. Exited-process history is kept for up to 6 hours after exit is observed. Select recent exited processes from History for. N/A means a measurement is unavailable.")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                .padding(16)
             }
-            .padding(16)
         }
         .background(Theme.background)
         .onChange(of: monitor.historyRange) { _ in selectedDate = nil }
@@ -138,13 +156,23 @@ struct ActivityDashboard: View {
         return monitor.liveActivity?.point(for: monitor.focusedProcess).values ?? ActivityValues()
     }
 
-    private func activitySummary(_ metric: ResourceMetric) -> String {
-        let pair = displayedValues.pair(for: metric)
+    private func activitySummary(_ metric: ResourceMetric, values: ActivityValues) -> String {
+        let pair = values.pair(for: metric)
         let primary = formatActivityValue(pair.0, metric: metric)
         switch metric {
         case .disk, .network:
             return "\(primary) / \(formatActivityValue(pair.1, metric: metric))"
         default: return primary
+        }
+    }
+
+    private func openMetric(_ metric: ResourceMetric) {
+        switch metric {
+        case .cpu: navigate(.resources)
+        case .memory: navigate(.memory)
+        case .disk: navigate(.disk)
+        case .network: navigate(.network)
+        case .energy: navigate(.energy)
         }
     }
 
@@ -184,14 +212,14 @@ struct ActivityHistoryControls: View {
     @State private var processSearch = ""
 
     var body: some View {
-        HStack(spacing: 12) {
+        FlowLayout(spacing: 8) {
             ActivityProcessMenu(
                 title: focusedTitle,
                 processes: availableProcesses,
                 liveIdentities: Set(monitor.processes.compactMap(\.identity)),
                 selection: $monitor.focusedProcess
             )
-            .frame(maxWidth: 260, alignment: .leading)
+            .frame(width: 245, alignment: .leading)
             .accessibilityLabel("History for \(focusedTitle)")
 
             VStack(alignment: .leading, spacing: 3) {
@@ -207,7 +235,7 @@ struct ActivityHistoryControls: View {
                     TableQueryErrorLabel(message: error)
                 }
             }
-            .frame(maxWidth: 230)
+            .frame(width: 210)
 
             Picker("History range", selection: $monitor.historyRange) {
                 ForEach(ActivityHistoryRange.allCases) { range in
@@ -217,7 +245,10 @@ struct ActivityHistoryControls: View {
             .labelsHidden()
             .pickerStyle(.segmented)
             .frame(width: 300)
-            Spacer(minLength: 0)
+            if monitor.focusedProcess != nil {
+                Button("Entire Mac") { monitor.focusedProcess = nil }
+                    .help("Restore whole-Mac history")
+            }
             Button("Clear history", role: .destructive) { confirmClear = true }
                 .font(.system(size: 11))
         }

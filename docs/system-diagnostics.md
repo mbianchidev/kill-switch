@@ -4,7 +4,7 @@
 
 ## Resources
 
-The **Resources** tab defaults to the logged-in user's processes. Select
+The resource pages under **Performance** default to the logged-in user's processes. Select
 **All processes** to include root, service accounts, and other users.
 Filter by process name, PID, user, or comparisons such as `CPU% > 40`, and sort
 any data column in either direction. The [filter guide](table-controls.md)
@@ -17,13 +17,14 @@ Application icons and executable names appear where macOS exposes them.
 | Memory | Physical footprint or resident-memory fallback, threads, open files, PID, user | Used-memory history, current memory pressure, physical/app/cached/wired/compressed memory, swap |
 | Energy | Current and rolling power, sleep prevention, PID, user | Total impact and battery/power-source status |
 | Disk | Lifetime bytes read and written | Free/occupied capacity, read/write operations, totals, and live rates |
-| Network | Bytes and packets sent/received, plus a connections panel | Inbound/outbound totals and rates |
+| Network | Bytes and packets sent/received, with a shortcut to Connections | Inbound/outbound totals and rates |
 
 One shared monitor samples CPU, memory, disk, and network every **6 seconds**
 throughout the app's lifetime, including when another tab is selected or the
 window is hidden. `nettop` and `netstat` therefore run continuously, not just
 while Network is selected. Energy's heavier power/battery collection runs at
-most once every **15 seconds**, only while Energy is visible. Power and sleep
+most once every **15 seconds**, only while Energy is visible, including actual
+window visibility. Power and sleep
 assertions retain separate read availability: never-read, failed, and
 not-yet-observed process lifetimes remain unavailable rather than becoming
 zero power or No. Each collector retains its error until its own retry succeeds,
@@ -50,13 +51,32 @@ blocking energy queries do not turn steady traffic into alternating rates.
 
 KillSwitch uses supported macOS interfaces where available: `top`, Mach VM
 statistics, `libproc`, IOKit storage statistics, `nettop`, `netstat`,
-`memory_pressure`, and `pmset`.
+`memory_pressure`, and `pmset` for sleep assertions. Battery/power information
+uses the public IOKit power-source interface, without a `pmset -g batt`
+subprocess.
 
 macOS denies some `libproc` data for protected or other-user processes. Those
 rows remain visible in **All processes**, but restricted disk or architecture
 fields show a dash. Per-process GPU and App Nap counters are also not exposed by a
 supported public interface, so KillSwitch does not invent values for them.
-The **All processes** scope does not grant administrator privileges.
+The **All processes** scope does not grant administrator privileges. Always-
+unavailable GPU columns are not shown on the CPU page.
+
+## Native system health
+
+System, Battery, Thermal, and the dashboard share one visible-only health
+reader. CPU/model/core, OS/kernel, uptime, and load information use public
+`sysctl`, `ProcessInfo`, and `getloadavg` interfaces. Power-source descriptions
+come from IOKit; an optional readable `AppleSmartBattery` cycle counter remains
+unavailable when not exposed. Native battery readings replace the former
+Energy-only battery subprocess.
+
+Thermal pressure uses `ProcessInfo.thermalState`, not private SMC temperature or
+fan interfaces. Low Power Mode comes from `ProcessInfo`. Health polling stops
+when no relevant page is visible, and all IOKit objects/file descriptors are
+released after a read. Failed fields and verified battery absence have
+distinct presentations. These readings do not expand the persisted history or
+collect identifying serial/UUID values.
 
 ## History and storage
 
@@ -132,8 +152,10 @@ pre-sleep bucket.
 
 ## Connections and open files
 
-Network connections are in **Resources > Network**. Open-file inspection has a
-single entry point in the dedicated **Open files** tab beside Resources.
+Network connections have a dedicated **Connections** page, also linked from
+Network traffic. Open files has a dedicated page. **Inspect** buttons on
+processes, files, and listeners open a shared per-process files/connections
+sheet without a second independent collector.
 Both use `lsof`'s NUL-delimited field output, with numeric addresses/ports and
 full command names. They refresh
 every ten seconds only while visible. Names with spaces remain intact; control

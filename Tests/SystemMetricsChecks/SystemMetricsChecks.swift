@@ -21,9 +21,11 @@ struct SystemMetricsChecks {
             checkCPUCalculations()
             checkDiskCapacityCalculations()
             checkSamplingPolicies()
+            checkSystemHealth()
             checkResourceChartScales()
             checkActivityHistory()
             checkProcessInspection()
+            checkDeveloperListeners()
         }
 
         if failures.isEmpty {

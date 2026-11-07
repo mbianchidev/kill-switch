@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import TableQueryCore
 
@@ -58,6 +59,30 @@ public struct NetworkConnectionRecord: Identifiable, Equatable, Sendable {
     public var localPort: UInt16? { port(in: local) }
     public var remotePort: UInt16? { port(in: remote) }
 
+    public var browserURL: URL? {
+        guard isListening, protocolName == "TCP", let port = localPort, port > 0,
+              let separator = local.lastIndex(of: ":") else { return nil }
+        var host = String(local[..<separator])
+        if host.hasPrefix("[") && host.hasSuffix("]") { host = String(host.dropFirst().dropLast()) }
+        switch family {
+        case "IPv4":
+            if host == "*" || host == "0.0.0.0" { host = "127.0.0.1" }
+            var address = in_addr()
+            guard host.withCString({ inet_pton(AF_INET, $0, &address) }) == 1 else { return nil }
+        case "IPv6":
+            if host == "*" || host == "::" { host = "::1" }
+            var address = in6_addr()
+            guard host.withCString({ inet_pton(AF_INET6, $0, &address) }) == 1 else { return nil }
+            host = "[\(host)]"
+        default: return nil
+        }
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = host
+        components.port = Int(port)
+        return components.url
+    }
+
     private func port(in endpoint: String?) -> UInt16? {
         guard family != "unix", let last = endpoint?.split(separator: ":").last else { return nil }
         return UInt16(last)
@@ -69,9 +94,26 @@ public struct ProcessInspectionSnapshot: Sendable {
     public let connections: [NetworkConnectionRecord]
 }
 
+public struct ProcessInspectionError: LocalizedError {
+    public let message: String
+    public init(message: String) { self.message = message }
+    public var errorDescription: String? { message }
+}
+
 public enum ProcessInspectionParser {
     public static let lsofFields = "-F0pcuLfaltDinsPT"
     public static let lsofArguments = ["-nP", "-S", "2", "+c", "0", lsofFields]
+
+    public static func arguments(
+        pid: Int32? = nil, connectionsOnly: Bool = false, listenersOnly: Bool = false
+    ) throws -> [String] {
+        if let pid {
+            guard pid > 0 else { throw ProcessInspectionError(message: "A positive process ID is required.") }
+            return lsofArguments + ["-a", "-p", String(pid)]
+        }
+        if listenersOnly { return lsofArguments + ["-iTCP", "-sTCP:LISTEN"] }
+        return lsofArguments + (connectionsOnly ? ["-i", "-U"] : [])
+    }
 
     public static func parseLsof(_ data: Data) -> ProcessInspectionSnapshot {
         var files: [OpenFileRecord] = []

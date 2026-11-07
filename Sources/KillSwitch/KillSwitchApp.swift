@@ -8,7 +8,7 @@ struct KillSwitchApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .frame(minWidth: 1_000, minHeight: 650)
+                .frame(minWidth: 900, minHeight: 650)
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
@@ -26,6 +26,7 @@ struct KillSwitchApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem?
     private weak var mainWindow: NSWindow?
+    private var lastWindowVisibility: Bool?
     private let keepAwakeManager = KeepAwakeManager.shared
     private let screenTimeMonitor = ScreenTimeMonitor.shared
 
@@ -168,6 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
         mainWindow?.delegate = self
+        updateWindowVisibility()
     }
 
     @objc private func showMainWindow() {
@@ -175,11 +177,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.setActivationPolicy(.regular)
         mainWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        updateWindowVisibility()
     }
 
     private func hideMainWindow() {
         mainWindow?.orderOut(nil)
         NSApp.setActivationPolicy(.accessory)
+        updateWindowVisibility()
     }
 
     @objc private func quit() {
@@ -188,6 +192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         screenTimeMonitor.stop()
+        SystemHealthMonitor.shared.shutdown()
         ResourceMonitor.shared.shutdown()
         keepAwakeManager.deactivate()
     }
@@ -197,6 +202,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         hideMainWindow()
         return false
+    }
+
+    func windowDidMiniaturize(_ notification: Notification) { updateWindowVisibility() }
+
+    func windowDidDeminiaturize(_ notification: Notification) { updateWindowVisibility() }
+
+    func windowDidChangeOcclusionState(_ notification: Notification) { updateWindowVisibility() }
+
+    private func updateWindowVisibility() {
+        let visible = mainWindow.map { $0.isVisible && !$0.isMiniaturized && $0.occlusionState.contains(.visible) } ?? false
+        guard lastWindowVisibility != visible else { return }
+        lastWindowVisibility = visible
+        ResourceMonitor.shared.setWindowVisible(visible)
+        NotificationCenter.default.post(name: .killSwitchWindowVisibility, object: visible)
     }
 
     // MARK: NSApplicationDelegate

@@ -5,57 +5,47 @@ import TableQueryCore
 
 struct ResourcesTab: View {
     @ObservedObject var monitor: ResourceMonitor
-    @State private var metric: ResourceMetric = .cpu
+    private let metric: ResourceMetric
     @State private var sorting = TableComparator(field: ResourceTableFields.cpu, order: .reverse)
     @State private var searchText = ""
-    @State private var showConnections = true
+    @State private var samplingID = UUID()
+    @Environment(\.navigatePage) private var navigate
 
     init(monitor: ResourceMonitor, initialMetric: ResourceMetric = .cpu) {
         self.monitor = monitor
-        _metric = State(initialValue: initialMetric)
+        metric = initialMetric
         _sorting = State(initialValue: TableComparator(
             field: ResourceTableFields.defaultField(for: initialMetric), order: .reverse
         ))
     }
 
     var body: some View {
-        let rows = metric == .network && showConnections ? [] : visibleProcesses
-        return VStack(spacing: 0) {
-            header(count: rows.count)
-            Divider()
-            if metric == .network && showConnections {
-                NetworkConnectionsPanel(showAllUsers: $monitor.showAllUsers)
-            } else {
+        let rows = visibleProcesses
+        return GeometryReader { geometry in
+            VStack(spacing: 0) {
+                header(count: rows.count)
+                Divider()
                 processTable(rows)
+                Divider()
+                if metric != .energy {
+                    ActivityHistoryControls(monitor: monitor)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 10)
+                }
+                instrumentRail(compact: geometry.size.width < 900)
             }
-            Divider()
-            if metric != .energy {
-                ActivityHistoryControls(monitor: monitor)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 10)
-            }
-            instrumentRail
         }
         .background(Theme.background)
-        .onAppear { monitor.setMetric(metric) }
-        .onDisappear { monitor.setMetric(nil) }
+        .onAppear { monitor.setMetric(metric, owner: samplingID) }
+        .onDisappear { monitor.setMetric(nil, owner: samplingID) }
     }
 
     private func header(count: Int) -> some View {
         VStack(spacing: 10) {
             HStack(spacing: 12) {
-                Label("Resources", systemImage: "waveform.path.ecg")
+                Label("\(metric.rawValue) resources", systemImage: "waveform.path.ecg")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.white)
-
-                Picker("Resource", selection: metricSelection) {
-                    ForEach(ResourceMetric.allCases) { metric in
-                        Text(metric.rawValue).tag(metric)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 430)
 
                 Spacer()
 
@@ -64,17 +54,16 @@ struct ResourcesTab: View {
 
             if metric == .network {
                 HStack(spacing: 12) {
-                    Picker("Network view", selection: $showConnections) {
-                        Text("Connections").tag(true)
-                        Text("Traffic by process").tag(false)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 270)
+                    Button("Inspect connections") { navigate?(.connections) }
+                        .disabled(navigate == nil)
+                    Text("Traffic and connections share the same process ownership scope.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
                     Spacer()
                 }
             }
 
-            if !(metric == .network && showConnections) {
+            Group {
                 TableSearchControls(
                     search: $searchText, fields: ResourceTableFields.all, prompt: "Search processes, or CPU% > 40",
                     resetAdditional: { monitor.showAllUsers = false }
@@ -92,18 +81,18 @@ struct ResourcesTab: View {
 
                     Text("\(count) processes")
                         .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.45))
+                        .foregroundColor(.white.opacity(0.7))
 
                     Spacer()
 
                     if let lastUpdated = monitor.lastUpdated {
                         Text("Updated \(lastUpdated.formatted(date: .omitted, time: .standard))")
                             .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundColor(.white.opacity(0.7))
                     } else {
                         Text("Collecting system metrics…")
                             .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundColor(.white.opacity(0.7))
                     }
                 }
             }
@@ -140,8 +129,10 @@ struct ResourcesTab: View {
         .background(Color.black.opacity(0.08))
     }
 
-    private var instrumentRail: some View {
-        HStack(spacing: 16) {
+    private func instrumentRail(compact: Bool) -> some View {
+        let layout = compact ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+            : AnyLayout(HStackLayout(spacing: 16))
+        return layout {
             VStack(alignment: .leading, spacing: 8) {
                 Text(chartTitle)
                     .font(.system(size: 10, weight: .bold))
@@ -161,10 +152,10 @@ struct ResourcesTab: View {
                         )
                     }
                 }
-                .frame(minWidth: 320, idealWidth: 390, maxWidth: 440, minHeight: 132, maxHeight: 132)
+                .frame(minWidth: 300, idealWidth: 390, maxWidth: compact ? .infinity : 440, minHeight: 132, maxHeight: 132)
             }
 
-            Divider()
+            if !compact { Divider() }
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("ENTIRE MAC · NOW")
@@ -260,18 +251,6 @@ struct ResourcesTab: View {
             .apply(to: scoped, sorting: sorting, identity: { String($0.pid) })
     }
 
-    private var metricSelection: Binding<ResourceMetric> {
-        Binding(
-            get: { metric },
-            set: { selected in
-                guard selected != metric else { return }
-                metric = selected
-                sorting = TableComparator(field: ResourceTableFields.defaultField(for: selected), order: .reverse)
-                monitor.setMetric(selected)
-            }
-        )
-    }
-
     private var chartTitle: String {
         if metric == .energy { return "ENERGY IMPACT · LAST 5 MINUTES" }
         return "\(metric.rawValue.uppercased()) · \(monitor.historyRange.rawValue.uppercased())"
@@ -279,16 +258,16 @@ struct ResourcesTab: View {
 
     private var tableWidth: CGFloat {
         switch metric {
-        case .cpu: return 1_230
-        case .memory: return 720
-        case .energy: return 880
-        case .disk: return 750
-        case .network: return 970
+        case .cpu: return 1_086
+        case .memory: return 762
+        case .energy: return 922
+        case .disk: return 792
+        case .network: return 1_012
         }
     }
 
     private var memoryPressureColor: Color {
-        let pressure = monitor.memory.pressurePercent ?? 0
+        guard let pressure = monitor.memory.pressurePercent else { return .secondary }
         if pressure >= 90 { return .red }
         if pressure >= 75 { return .yellow }
         return Theme.memory
@@ -315,8 +294,6 @@ private struct ResourceTableHeader: View {
                 header(ResourceTableFields.threads, width: 72)
                 header(ResourceTableFields.wakeups, width: 104)
                 header(ResourceTableFields.kind, width: 72)
-                header(ResourceTableFields.gpu, width: 72)
-                header(ResourceTableFields.gpuTime, width: 90)
                 header(ResourceTableFields.pid, width: 72)
                 header(ResourceTableFields.user, width: 140, alignment: .leading)
             case .memory:
@@ -345,7 +322,7 @@ private struct ResourceTableHeader: View {
                 header(ResourceTableFields.pid, width: 72)
                 header(ResourceTableFields.user, width: 140, alignment: .leading)
             }
-            Color.clear.frame(width: 42)
+            Text("Inspect / Kill").frame(width: 84)
         }
         .font(.system(size: 10, weight: .semibold, design: .monospaced))
         .foregroundColor(.white.opacity(0.52))
@@ -389,12 +366,6 @@ private struct ResourceProcessRow: View {
                 )
                 value(process.idleWakeUps.map(formatNumber) ?? "—", width: 104)
                 value(process.kind ?? "—", width: 72, help: unavailableHelp(process.kind))
-                value(process.gpu.map { String(format: "%.1f", $0) } ?? "—", width: 72, help: gpuHelp)
-                value(
-                    process.gpuTimeSeconds.map(formatDuration) ?? "—",
-                    width: 90,
-                    help: gpuHelp
-                )
                 value("\(process.pid)", width: 72)
                 value(process.user, width: 140, alignment: .leading)
             case .memory:
@@ -448,6 +419,10 @@ private struct ResourceProcessRow: View {
                 value(process.user, width: 140, alignment: .leading)
             }
 
+            InspectProcessButton(process: process.identity.map {
+                ActivityProcessDescriptor(identity: $0, name: process.name, user: process.user)
+            })
+            .frame(width: 42)
             KillButton(pid: process.pid, action: onKill)
                 .frame(width: 42)
         }
@@ -486,10 +461,6 @@ private struct ResourceProcessRow: View {
     private var rowBackground: Color {
         if isSelected { return Color.white.opacity(0.11) }
         return isAlternate ? Color.white.opacity(0.025) : .clear
-    }
-
-    private var gpuHelp: String {
-        "macOS does not expose per-process GPU counters through supported public interfaces."
     }
 
     private var appNapHelp: String {

@@ -1,6 +1,41 @@
 import Darwin
+import Foundation
 
 public enum ProcessLifetimeReader {
+    public static let bootSessionIdentifier: String = {
+        var buffer = [CChar](repeating: 0, count: 128)
+        var size = buffer.count
+        if sysctlbyname("kern.bootsessionuuid", &buffer, &size, nil, 0) == 0 {
+            return String(cString: buffer)
+        }
+        fputs("KillSwitch could not read the boot identity; process history will use a new session identity.\n", stderr)
+        return UUID().uuidString
+    }()
+
+    public static func snapshot(bootSession: String = bootSessionIdentifier) throws -> [Int32: ActivityProcessIdentity] {
+        let capacity = max(256, Int(proc_listallpids(nil, 0)) + 128)
+        var pids = [Int32](repeating: 0, count: capacity)
+        let count = pids.withUnsafeMutableBytes { proc_listallpids($0.baseAddress, Int32($0.count)) }
+        guard count > 0 else { throw ProcessInspectionError(message: "macOS did not provide a process identity inventory.") }
+        var result: [Int32: ActivityProcessIdentity] = [:]
+        for pid in pids.prefix(Int(count)) where pid > 0 {
+            if let identity = read(pid: pid, bootSession: bootSession) { result[pid] = identity }
+        }
+        return result
+    }
+
+    public static func validate(_ identity: ActivityProcessIdentity, presence: ProcessLifetimePresence) throws {
+        switch presence {
+        case .present(let current) where current == identity: return
+        case .present:
+            throw ProcessInspectionError(message: "This PID now belongs to a different process. Close this inspection and select the current process.")
+        case .absent, .defunct:
+            throw ProcessInspectionError(message: "This process has exited. Its saved resource history may still be available.")
+        case .unavailable:
+            throw ProcessInspectionError(message: "macOS could not verify this process's lifetime. Refresh to retry.")
+        }
+    }
+
     public static func read(pid: Int32, bootSession: String) -> ActivityProcessIdentity? {
         presence(pid: pid, bootSession: bootSession).identity
     }

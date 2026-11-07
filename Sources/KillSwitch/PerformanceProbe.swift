@@ -5,21 +5,61 @@ import Foundation
 import SwiftUI
 import SystemMetricsCore
 
+@MainActor
+final class PerformanceProbeNavigation: ObservableObject {
+    static let shared = PerformanceProbeNavigation()
+    @Published var page: MainTab = .dashboard
+    var enabled = false
+}
+
 // This entry point is compiled only into the separately built, non-interactive probe.
 @MainActor
 enum PerformanceProbe {
     static func run(arguments: [String]) -> Int32 {
-        guard (3...4).contains(arguments.count),
-              ["background", "dashboard", "cpu", "memory", "energy"].contains(arguments[0]),
+        if arguments == ["--interface-checks"] { return interfaceChecks() }
+        if arguments == ["--native-health-check"] {
+            do {
+                let hardware = try SystemHealthReader.hardware()
+                let snapshot = SystemHealthReader.sample()
+                guard !hardware.model.isEmpty, !hardware.cpuName.isEmpty,
+                      hardware.logicalCPUCount > 0, hardware.physicalCPUCount > 0,
+                      hardware.physicalMemoryBytes > 0, snapshot.warnings.isEmpty else {
+                    fputs("Native health counters are incomplete: \(snapshot.warnings.joined(separator: "; "))\n", stderr)
+                    return 1
+                }
+                print("Native public health counters are available; no identifying hardware fields were requested.")
+                return 0
+            } catch {
+                fputs("Native health check failed: \(error.localizedDescription)\n", stderr)
+                return 1
+            }
+        }
+        guard (3...5).contains(arguments.count),
+              ["background", "dashboard", "cpu", "memory", "energy", "system", "battery", "thermal",
+               "connections", "files", "servers", "inspector", "navigation"].contains(arguments[0]),
               let duration = Double(arguments[1]), (3...600).contains(duration),
               let count = Int(arguments[2]), (1...5_000).contains(count) else {
-            fputs("Usage: performance-probe background|dashboard|cpu|memory|energy SECONDS(3...600) PROCESSES(1...5000) [OFFSCREEN.png]\n", stderr)
+            fputs("Usage: performance-probe SCENARIO SECONDS(3...600) PROCESSES(1...5000) [OFFSCREEN.png [WIDTHxHEIGHT]]; or --interface-checks\n", stderr)
             return 2
         }
         let scenario = arguments[0]
+        var width = 1_280
+        var height = 900
+        if arguments.count == 5 {
+            let dimensions = arguments[4].split(separator: "x")
+            guard dimensions.count == 2, let parsedWidth = Int(dimensions[0]), let parsedHeight = Int(dimensions[1]),
+                  (900...1_800).contains(parsedWidth), (650...1_400).contains(parsedHeight) else {
+                fputs("The offscreen size must be WIDTHxHEIGHT, between 900x650 and 1800x1400.\n", stderr)
+                return 2
+            }
+            width = parsedWidth
+            height = parsedHeight
+        }
         NSApplication.shared.setActivationPolicy(.prohibited)
         let monitor = ResourceMonitor()
         monitor.showAllUsers = true
+        SystemHealthMonitor.shared.publishPerformanceFixture()
+        PerformanceProbeNavigation.shared.enabled = scenario == "navigation"
         let now = Date()
         for index in 0..<51 {
             monitor.publishPerformanceSample(fixture(
@@ -33,16 +73,32 @@ enum PerformanceProbe {
             window = nil
         } else {
             let root: AnyView
-            if scenario == "dashboard" {
+            if scenario == "dashboard" || scenario == "navigation" {
                 root = AnyView(ContentView(resourceMonitor: monitor, startsServices: false))
-            } else {
+            } else if ["cpu", "memory", "energy"].contains(scenario) {
                 let metric: ResourceMetric = scenario == "memory" ? .memory : scenario == "energy" ? .energy : .cpu
                 root = AnyView(ResourcesTab(monitor: monitor, initialMetric: metric))
+            } else if scenario == "inspector", let process = monitor.liveActivity?.processes.first?.process {
+                root = AnyView(ProcessDetailSheet(process: process, resourceMonitor: monitor))
+            } else {
+                let page: MainTab
+                switch scenario {
+                case "system": page = .system
+                case "battery": page = .battery
+                case "thermal": page = .thermal
+                case "connections": page = .connections
+                case "files": page = .openFiles
+                case "servers": page = .devServers
+                default:
+                    fputs("The probe scenario could not be represented.\n", stderr)
+                    return 2
+                }
+                root = AnyView(ContentView(resourceMonitor: monitor, initialTab: page, startsServices: false))
             }
-            let hosting = NSHostingView(rootView: AnyView(root.preferredColorScheme(.dark)))
-            hosting.setFrameSize(NSSize(width: 1_280, height: 900))
+            let hosting = NSHostingView(rootView: AnyView(root.preferredColorScheme(.dark).environment(\.allowsLiveOperations, false)))
+            hosting.setFrameSize(NSSize(width: CGFloat(width), height: CGFloat(height)))
             let offscreen = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 1_280, height: 900),
+                contentRect: NSRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)),
                 styleMask: [.borderless], backing: .buffered, defer: false
             )
             offscreen.isReleasedWhenClosed = false
@@ -59,6 +115,11 @@ enum PerformanceProbe {
         var step = 51
         while Date().timeIntervalSince(start) < duration {
             if Date() >= nextSample {
+                if scenario == "navigation" {
+                    let pages: [MainTab] = [.dashboard, .resources, .memory, .energy, .connections, .openFiles,
+                                            .devServers, .system, .battery, .thermal]
+                    PerformanceProbeNavigation.shared.page = pages[(step - 51) % pages.count]
+                }
                 monitor.publishPerformanceSample(fixture(date: Date(), count: count, step: step))
                 step += 1
                 if let view {
@@ -73,7 +134,7 @@ enum PerformanceProbe {
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         }
-        if arguments.count == 4, let view {
+        if arguments.count >= 4, let view {
             guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
                 fputs("Performance probe could not create its final offscreen image.\n", stderr)
                 return 1
@@ -92,6 +153,66 @@ enum PerformanceProbe {
         return 0
     }
 
+    private static func interfaceChecks() -> Int32 {
+        NSApplication.shared.setActivationPolicy(.prohibited)
+        var failures: [String] = []
+        func check(_ value: Bool, _ message: String) { if !value { failures.append(message) } }
+        let pages = MainTab.sections.flatMap(\.pages)
+        check(pages.count == Set(pages).count && Set(pages) == Set(MainTab.allCases), "Every page must occur exactly once in navigation.")
+        for page in MainTab.allCases {
+            check(page.requiresCleanupConfirmation(autoKillEnabled: true) == (page == .cleanup), "Only automatic Dev cleanup needs an entry confirmation.")
+            check(!page.requiresCleanupConfirmation(autoKillEnabled: false), "Read-only cleanup entry must not request an automatic-termination confirmation.")
+        }
+        let monitor = ResourceMonitor()
+        let first = UUID()
+        let second = UUID()
+        monitor.setMetric(.cpu, owner: first)
+        monitor.setMetric(.energy, owner: second)
+        monitor.setMetric(nil, owner: first)
+        check(monitor.performanceEffectiveMetric == .energy, "An outgoing page must not clear a newer sampling lease.")
+        monitor.setWindowVisible(false)
+        check(monitor.performanceEffectiveMetric == nil, "Hidden windows must not request heavy metric collection.")
+        monitor.setWindowVisible(true)
+        check(monitor.performanceEffectiveMetric == .energy, "Showing the window must restore the selected metric.")
+        monitor.setMetric(nil, owner: second)
+        check(monitor.performanceEffectiveMetric == nil, "The active page must release its sampling lease.")
+
+        let controller = RetainedPageController()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        defer { window.contentViewController = nil; window.close() }
+        var tokens: [MainTab: UUID] = [:]
+        var activePages: Set<MainTab> = []
+        func show(_ page: MainTab) {
+            controller.show(page, content: AnyView(ProbeStateView(
+                record: { tokens[page] = $0 },
+                activation: { active in
+                    if active { activePages.insert(page) } else { activePages.remove(page) }
+                }
+            )))
+            controller.view.layoutSubtreeIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        show(.dashboard)
+        let token = tokens[.dashboard]
+        check(controller.performancePageCount == 1, "Unvisited pages must not be constructed.")
+        check(activePages == [.dashboard], "Only the selected page may receive appearance.")
+        show(.resources)
+        check(activePages == [.resources], "An outgoing page must receive disappearance before the next collector activates.")
+        show(.dashboard)
+        check(controller.performancePageCount == 2, "Returning to a visited page must reuse its controller.")
+        check(token != nil && tokens[.dashboard] == token, "Returning to a visited page must preserve its SwiftUI state.")
+        check(activePages == [.dashboard], "Returning to a page must deactivate its predecessor.")
+        if failures.isEmpty {
+            print("Interface checks passed: navigation, cleanup entry, metric leases, visibility, lazy pages, and retained state.")
+            return 0
+        }
+        for failure in failures { fputs("FAIL: \(failure)\n", stderr) }
+        return 1
+    }
+
     private static func fixture(date: Date, count: Int, step: Int) -> ResourceSnapshot {
         let processes = (0..<count).map { index in
             ResourceProcess(
@@ -100,7 +221,7 @@ enum PerformanceProbe {
                 ),
                 pid: Int32(100_000 + index), name: "Synthetic worker \(index)", user: "synthetic-user",
                 cpu: Double((index + step) % 100) / 10, cpuTimeSeconds: Double(index + step),
-                threads: 4, idleWakeUps: UInt64(index), kind: "Apple", gpu: nil, gpuTimeSeconds: nil,
+                threads: 4, idleWakeUps: UInt64(index), kind: "Apple",
                 memoryBytes: UInt64(index % 50 + 1) * 1_048_576, openFileCount: 12,
                 power: Double(index % 5), power12Hour: nil, appNap: nil, preventsSleep: false,
                 diskReadBytes: UInt64(index + step) * 4_096, diskWrittenBytes: UInt64(index + step) * 2_048,
@@ -137,5 +258,24 @@ enum PerformanceProbe {
             sampledEnergy: true, warnings: []
         )
     }
+}
+
+private struct ProbeStateView: View {
+    let record: (UUID) -> Void
+    let activation: (Bool) -> Void
+    @State private var token = UUID()
+    var body: some View {
+        ProbeStateRecorder(token: token, record: record)
+            .frame(width: 20, height: 20)
+            .onAppear { activation(true) }
+            .onDisappear { activation(false) }
+    }
+}
+
+private struct ProbeStateRecorder: NSViewRepresentable {
+    let token: UUID
+    let record: (UUID) -> Void
+    func makeNSView(context: Context) -> NSView { record(token); return NSView() }
+    func updateNSView(_ view: NSView, context: Context) { record(token) }
 }
 #endif

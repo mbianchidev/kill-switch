@@ -30,6 +30,19 @@ connection/open-file inspection runs only while its panel is visible.
 The Dev cleanup tab starts its timers on appearance and stops them on
 disappearance; opening it runs an immediate cleanup.
 
+## Navigation
+
+The grouped native sidebar keeps monitoring, investigation, management, and
+personal utilities separate. CPU, Memory, Disk activity, Network traffic, and
+Energy have individual pages. Visited pages retain their filters and sorting;
+unvisited pages are not instantiated. The dashboard's resource headings and
+system, battery, and thermal cards also open their corresponding pages.
+
+The window supports a 900 x 650 minimum. Charts become a single column in narrow
+detail areas, history controls wrap, and wide data tables remain horizontally
+scrollable. Closing or fully obscuring the window pauses optional health and
+inspection work, not the continuous resource history or watchdog.
+
 ## Dashboard
 
 The initial tab compares CPU, memory, network traffic, and disk I/O on one time
@@ -41,6 +54,11 @@ Choose **Live · 5m**, **1 hour**, **6 hours**, or **24 hours**. Drag across a c
 or use the keyboard-accessible time slider to inspect the nearest measured
 sample across all four graphs. **Live** returns to current readings. These
 history selections are shared with the individual resource views.
+
+The cards above the graphs show public system, battery, and thermal information.
+**Inspect** beside a live process opens its files and connections without
+terminating it. **Show resource history** in the inspector returns to this page
+with the same process lifetime selected.
 
 Sampling runs every six seconds while KillSwitch is running. One-minute
 averages persist locally for up to 24 hours, across app restarts; gaps during sleep,
@@ -74,8 +92,8 @@ starting separate recordings. Their summary cards remain labelled **Entire Mac**
 Memory history shows bytes used; the current memory-pressure counter remains
 available in the summary.
 
-Within **Network**, switch between **Connections** and **Traffic by process**.
-Connections includes TCP listeners, active connections, bound UDP sockets, and
+**Network traffic** includes an **Inspect connections** shortcut to the dedicated
+**Connections** page. Connections includes TCP listeners, active connections, bound UDP sockets, and
 Unix sockets visible to this account. Search addresses/ports, process, PID,
 or owner; use comparisons such as `protocol = TCP state = LISTEN` for protocol
 and state. Filter listeners/active connections and sort in either direction.
@@ -87,9 +105,9 @@ Manual kill buttons follow the [termination safety rules](#safety-and-limitation
 
 ## Open files
 
-Use the dedicated **Open files** tab beside Resources to inspect accessible file
-descriptors. This is the only open-files entry point; Resources retains resource
-usage and network connections. **My processes** is the default, and the scope
+Use the dedicated **Open files** page under **Investigate** to inspect accessible
+file descriptors. Per-process **Inspect** buttons also expose files and
+connections for one verified process lifetime. **My processes** is the default, and the scope
 picker is shared with Dashboard and Resources.
 
 The table includes path, process, PID, owner, access mode, type, size, and
@@ -100,6 +118,62 @@ field does not prove there is no lock.
 Inspection refreshes every ten seconds while this tab is visible and stops when
 you switch tabs. It does not close files or terminate processes. See the
 [inspection limitations](system-diagnostics.md#connections-and-open-files).
+
+## Process investigation
+
+Use **Inspect** from Dashboard, a resource page, Connections, Open files, or Dev
+servers. The sheet shows current resource readings for the exact selected
+lifetime, with separate searchable/sortable files and connections. Its `lsof`
+query selects that PID and verifies the lifetime before and after the read.
+Reused PIDs, verified exits, and unavailable identity reads are reported
+explicitly; unavailable reads do not claim that a process exited.
+
+The sheet is read-only. Switching between files and connections reuses one
+collection, and hiding it releases inspection snapshots and stops its timer.
+**Done** or Escape closes it. **Show resource history** selects that lifetime
+on the dashboard when its history remains available.
+
+## Dev servers
+
+This separate page is safe to open for discovery: it never starts Dev cleanup,
+terminates a process, or changes a service. It shows visible TCP listeners
+grouped by the nearest Git project, a recognized project manifest, or working
+directory. Search listener fields and numeric ports, or independently find
+project names, paths, and branches.
+
+**Copy address**, **Reveal folder**, **Open HTTP**, and **Inspect** are explicit
+actions. Not every TCP listener is an HTTP server. Wildcard listeners use a
+loopback HTTP address; malformed or non-IP endpoints do not become browser
+URLs. Project discovery reads native working-directory information and bounded
+Git metadata, including worktree `gitdir` pointers, without invoking git,
+Docker, or a shell. Missing metadata is explained; a verified working directory
+can still be shown when branch discovery fails.
+
+Listeners refresh every ten seconds only while visible. Project context is
+cached by process lifetime for at most thirty seconds and released when hidden.
+All-process scope does not grant extra privileges. Project paths and branch
+names are not added to persistent activity history.
+
+## System, Battery, and Thermal
+
+**System** shows the CPU model/architecture, physical/logical core counts,
+physical memory, macOS/kernel version, uptime, load averages, and shared CPU
+usage. Global CPU remains 0-100% across the Mac; a process's 100% represents
+one logical core. Load averages are runnable/waiting work, not percentages.
+
+**Battery** shows charge, charging state, power source, reported condition,
+cycle count, applicable time estimates, and Low Power Mode when macOS exposes
+them. A desktop's verified lack of an internal battery is distinct from a
+failed read or an attached UPS. Missing counters remain N/A.
+
+**Thermal** shows macOS's Normal, Warm, High, or Critical thermal-pressure
+assessment with a textual explanation. These states are not temperatures;
+KillSwitch does not invent sensor readings or fan speeds.
+
+One shared health monitor uses supported public interfaces at most every thirty
+seconds while one of these pages or Dashboard is visible. No privileged helper,
+serial number, hardware UUID, temperature sensor, or additional background
+recording is involved. Health details are live, not persisted.
 
 ## Startup
 
@@ -142,10 +216,12 @@ and recovery.
 
 ## Dev cleanup
 
-**Auto-kill is enabled by default.** Opening the tab immediately runs a cleanup,
+**Auto-kill is enabled by default.** Sidebar entry asks for confirmation while
+automatic termination is enabled. Confirming entry immediately runs a cleanup,
 which can terminate qualifying servers older than the saved age. Age is total
 process lifetime, not inactivity; a busy server can qualify.
-If you cannot risk that first cleanup pass, do not open the tab. The CLI
+Use **Dev servers** for read-only discovery. If you cannot risk that first
+cleanup pass, cancel the entry confirmation. The CLI
 [status command](cli.md#read-saved-status) reads settings without running cleanup.
 
 The table shows PID, command, and port for watched listeners and recognized dev

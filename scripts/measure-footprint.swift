@@ -161,10 +161,17 @@ func hardwareModel() throws -> String {
 
 do {
     let arguments = Array(CommandLine.arguments.dropFirst())
-    guard arguments.count == 6, let duration = Double(arguments[2]), (3...600).contains(duration),
+    guard (6...7).contains(arguments.count), let duration = Double(arguments[2]), (3...600).contains(duration),
           let repetitions = Int(arguments[3]), (1...10).contains(repetitions),
           let count = Int(arguments[4]), (1...5_000).contains(count) else {
-        throw MeasurementError.message("Usage: swift scripts/measure-footprint.swift PROBE REPORT.json SECONDS REPETITIONS PROCESSES REVISION")
+        throw MeasurementError.message("Usage: swift scripts/measure-footprint.swift PROBE REPORT.json SECONDS REPETITIONS PROCESSES REVISION [SCENARIO,SCENARIO]")
+    }
+    let scenarios = arguments.count == 7 ? arguments[6].split(separator: ",").map(String.init)
+        : ["background", "dashboard", "cpu", "memory", "energy"]
+    let supported: Set<String> = ["background", "dashboard", "cpu", "memory", "energy", "navigation",
+                                  "system", "battery", "thermal", "connections", "files", "servers", "inspector"]
+    guard !scenarios.isEmpty, Set(scenarios).count == scenarios.count, scenarios.allSatisfy(supported.contains) else {
+        throw MeasurementError.message("Choose unique, supported probe scenarios.")
     }
     let executable = URL(fileURLWithPath: arguments[0]).standardizedFileURL.path
     guard FileManager.default.isExecutableFile(atPath: executable) else {
@@ -177,7 +184,7 @@ do {
     var cleanupError: Error?
     var runs: [FootprintRun] = []
     do {
-        for scenario in ["background", "dashboard", "cpu", "memory", "energy"] {
+        for scenario in scenarios {
             for repetition in 1...repetitions {
                 let run = try measure(
                     executable: executable, scenario: scenario, repetition: repetition,

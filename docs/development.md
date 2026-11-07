@@ -70,7 +70,7 @@ terminate real processes.
 | [`KeepAwakeCore`](../Sources/KeepAwakeCore) | IOKit power assertions, timed sessions, and resource cleanup |
 | [`InstallCore`](../Sources/InstallCore) | Binary/symlink path safety, native command execution, whole-app validation, staging, startup confirmation, and rollback |
 | [`ScreenTimeCore`](../Sources/ScreenTimeCore) | Active-time tracking, idle breaks, daily rollover, and reminder boundaries |
-| [`SystemMetricsCore`](../Sources/SystemMetricsCore) | Resource parsing, continuous sampling policy, PID-safe history/rates, private SQLite storage, and process inspection queries |
+| [`SystemMetricsCore`](../Sources/SystemMetricsCore) | Resource/system-health parsing, continuous sampling policy, PID-safe history/rates and inspection, bounded project discovery, and private SQLite storage |
 | [`StartupCore`](../Sources/StartupCore) | Startup inventory, protected-service policy, command planning, reversible cron/login changes, and backups |
 
 [`KillSwitch`](../Sources/KillSwitch) contains the GUI and basename-dispatched
@@ -156,9 +156,15 @@ processes remain in the bounded live history and minute averages, and enforces a
 256 MiB peak-resident-memory budget for the checks process, not the full GUI.
 
 `ResourceMonitor.shared` owns the app-lifetime sampler; dashboard and resource
-views observe the same snapshots and history selection. The tab container keeps
+views observe the same snapshots and history selection. The page container keeps
 model lifetimes stable without observing their updates; only the relevant leaf
-views subscribe, so a resource tick does not rebuild every tab. The native
+views subscribe, so a resource tick does not rebuild navigation. A native
+`NSTabViewController` without a tab strip lazily creates visited
+`NSHostingController` pages and retains their SwiftUI filter/sort state.
+Metric requests carry page-specific leases, so an outgoing page cannot clear a
+newer selection. Actual window visibility gates heavier collection while
+continuous CPU, memory, disk, and traffic sampling remains unchanged.
+The native
 history-process menu creates its choices on opening and releases them after
 closing instead of maintaining a SwiftUI view for every recorded process.
 Its shortcut delegate bypasses populating choices during closed-menu key checks.
@@ -205,6 +211,17 @@ There is no separate formatter or linter configuration. Match the existing
 Swift style and keep failure messages actionable. Add regression checks in the
 existing executable target for the subsystem you change.
 
+`SystemHealthMonitor` is shared by Dashboard and the three health pages.
+Visible clients lease one thirty-second timer; no health history is accumulated.
+Hardware information is loaded off the main thread and retained once available.
+Inspection uses one serial work queue per visible panel, verifies process
+lifetimes around collection, rejects stale activation results, and releases
+row snapshots/project caches on hiding. The per-process sheet selects only its
+verified PID and shares one files/connections read. Developer listeners cache
+native working-directory/Git context by lifetime for at most thirty seconds,
+walk at most twelve ancestors, and read at most 4 KiB per metadata file without
+following a metadata-file symlink or running git.
+
 ### Measure isolated UI footprint
 
 Build a separate release probe; the compile-time entry point is absent from
@@ -232,6 +249,23 @@ and p95 CPU, and reports median memory from the final third of the run.
 Peak RSS includes `wait4`'s maximum; peak physical footprint is an observed
 peak, not the lifetime kernel peak. `wait4` CPU includes waited child processes;
 the synthetic scenarios launch none.
+
+The probe also accepts `system`, `battery`, `thermal`, `connections`, `files`,
+`servers`, `inspector`, and `navigation`. Append a comma-separated scenario list
+after the revision in the measurement command to select them. Inspection
+scenarios use 1,000 synthetic file/listener records; `PROCESSES` controls resource
+rows. Navigation cycles through ten safe pages without entering Dev cleanup.
+Run the deterministic native-state checks directly:
+
+```bash
+"$PROBE" --interface-checks
+"$PROBE" dashboard 3 1000 .build/dashboard.png 900x650
+```
+
+The optional PNG is the probe's own unshown window, never a desktop capture.
+`--native-health-check` separately verifies public native health interfaces
+without identifiers, UI interaction, or privileged diagnostics; it is not a
+synthetic measurement scenario.
 
 Retain reports outside Git and compare identical durations, counts, hardware,
 OS, toolchain, and build settings over multiple runs. These probes complement

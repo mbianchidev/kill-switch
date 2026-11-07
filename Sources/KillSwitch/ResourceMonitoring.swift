@@ -13,8 +13,6 @@ enum ResourceTableFields {
     static let threads = TableField<ResourceProcess>.number("threads", title: "Threads") { $0.threads.map { Decimal($0) } }
     static let wakeups = TableField<ResourceProcess>.number("wakeups", title: "Idle Wake Ups", aliases: ["idleWakeUps"]) { $0.idleWakeUps.map(Decimal.init) }
     static let kind = TableField<ResourceProcess>.text("kind", title: "Kind", aliases: ["architecture", "type"], values: ["Apple", "Intel"], searchable: false) { $0.kind }
-    static let gpu = TableField<ResourceProcess>.number("gpu", title: "% GPU", aliases: ["GPU%"], unit: .percent) { $0.gpu }
-    static let gpuTime = TableField<ResourceProcess>.number("gpuTime", title: "GPU Time", unit: .seconds) { $0.gpuTimeSeconds }
     static let memory = TableField<ResourceProcess>.number("memory", title: "Memory", aliases: ["mem"], unit: .bytes) { Decimal($0.memoryBytes) }
     static let openFiles = TableField<ResourceProcess>.number("openFiles", title: "Open Files", aliases: ["files"]) { $0.openFileCount.map { Decimal($0) } }
     static let energy = TableField<ResourceProcess>.number("energy", title: "Energy Impact", aliases: ["power"]) { $0.power }
@@ -30,14 +28,14 @@ enum ResourceTableFields {
     static let pid = TableField<ResourceProcess>.number("pid", title: "PID", searchable: true) { Decimal($0.pid) }
     static let user = TableField<ResourceProcess>.text("user", title: "User", aliases: ["owner"]) { $0.user }
     static let all = [
-        name, cpu, cpuTime, threads, wakeups, kind, gpu, gpuTime, memory, openFiles, energy, power12Hour,
+        name, cpu, cpuTime, threads, wakeups, kind, memory, openFiles, energy, power12Hour,
         appNap, preventsSleep, diskWritten, diskRead, networkSent, networkReceived, sentPackets, receivedPackets, pid, user
     ]
 
     static func columns(for metric: ResourceMetric) -> [TableField<ResourceProcess>] {
         let metrics: [TableField<ResourceProcess>]
         switch metric {
-        case .cpu: metrics = [cpu, cpuTime, threads, wakeups, kind, gpu, gpuTime]
+        case .cpu: metrics = [cpu, cpuTime, threads, wakeups, kind]
         case .memory: metrics = [memory, threads, openFiles]
         case .energy: metrics = [energy, power12Hour, appNap, preventsSleep]
         case .disk: metrics = [diskWritten, diskRead]
@@ -67,8 +65,6 @@ struct ResourceProcess: Identifiable {
     let threads: Int?
     let idleWakeUps: UInt64?
     let kind: String?
-    let gpu: Double?
-    let gpuTimeSeconds: Double?
     let memoryBytes: UInt64
     let openFileCount: Int?
     let power: Double?
@@ -242,6 +238,8 @@ final class ResourceMonitor: ObservableObject {
     private let logger = Logger(subsystem: "com.killswitch.app", category: "resources")
     private var timer: DispatchSourceTimer?
     private var activeMetric: ResourceMetric?
+    private var activeMetricOwner: UUID?
+    private var windowVisible = true
     private var energyHistory: [ResourceProcessIdentity: [EnergySample]] = [:]
     private var lastEnergyHistorySample: Date?
     private var running = false
@@ -255,6 +253,10 @@ final class ResourceMonitor: ObservableObject {
     private var selectedProcess: ActivityProcessIdentity?
 
 #if KILLSWITCH_PERFORMANCE_PROBE
+    var performanceEffectiveMetric: ResourceMetric? {
+        samplingQueue.sync { windowVisible ? activeMetric : nil }
+    }
+
     func publishPerformanceSample(_ snapshot: ResourceSnapshot) {
         let activity = activitySnapshot(snapshot)
         liveHistory.append(activity)
@@ -303,11 +305,17 @@ final class ResourceMonitor: ObservableObject {
         }
     }
 
-    func setMetric(_ metric: ResourceMetric?) {
+    func setMetric(_ metric: ResourceMetric?, owner: UUID) {
         samplingQueue.async { [weak self] in
-            guard let self, self.activeMetric != metric else { return }
+            guard let self else { return }
+            if metric == nil, self.activeMetricOwner != owner { return }
             self.activeMetric = metric
+            self.activeMetricOwner = metric == nil ? nil : owner
         }
+    }
+
+    func setWindowVisible(_ visible: Bool) {
+        samplingQueue.async { [weak self] in self?.windowVisible = visible }
     }
 
     func clearHistory() {
@@ -362,7 +370,7 @@ final class ResourceMonitor: ObservableObject {
 
     private func sampleNow() {
         guard running else { return }
-        let metric = activeMetric
+        let metric = windowVisible ? activeMetric : nil
 
         do {
             let trackedPIDs = Set(

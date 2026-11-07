@@ -1,29 +1,21 @@
 import SwiftUI
-
-enum MainTab: Hashable {
-    case dashboard
-    case resources
-    case openFiles
-    case startup
-    case diskCleanup
-    case cleanup
-    case watchdog
-    case screenTime
-    case diagnostics
-    case keepAwake
-    case updates
-}
+import DevCleanupCore
+import SystemMetricsCore
 
 @MainActor
 struct ContentView: View {
     @State private var selectedTab: MainTab
-    // Keep model lifetimes stable without observing updates across the entire tab hierarchy.
+    // Keep model lifetimes stable without observing updates across the page hierarchy.
     private let diagnostics = DiagnosticsController.shared
     @State private var watchdog = CPUWatchdog()
     private let resourceMonitor: ResourceMonitor
     @State private var diskCleanupMonitor = DiskCleanupMonitor()
     private let updater = UpdateChecker.shared
     private let startsServices: Bool
+    private let systemHealth = SystemHealthMonitor.shared
+    @State private var windowVisible = true
+    @State private var confirmCleanup = false
+    @State private var inspectedProcess: ActivityProcessDescriptor?
 
     init(
         resourceMonitor: ResourceMonitor = .shared,
@@ -36,46 +28,39 @@ struct ContentView: View {
     }
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            ActivityDashboard(monitor: resourceMonitor)
-                .tabItem { Label("Dashboard", systemImage: "square.grid.2x2") }
-                .tag(MainTab.dashboard)
-            Group {
-                ResourcesTab(monitor: resourceMonitor)
-                    .tabItem { Label("Resources", systemImage: "waveform.path.ecg") }
-                    .tag(MainTab.resources)
-                OpenFilesTab(resourceMonitor: resourceMonitor)
-                    .tabItem { Label("Open files", systemImage: "doc.text.magnifyingglass") }
-                    .tag(MainTab.openFiles)
-            }
-            StartupTab()
-                .tabItem { Label("Startup", systemImage: "power") }
-                .tag(MainTab.startup)
-            DiskCleanupTab(monitor: diskCleanupMonitor)
-                .tabItem { Label("Disk cleanup", systemImage: "internaldrive") }
-                .tag(MainTab.diskCleanup)
-            DevCleanupTab()
-                .tabItem { Label("Dev cleanup", systemImage: "trash") }
-                .tag(MainTab.cleanup)
-            CPUWatchdogTab(monitor: watchdog)
-                .tabItem { Label("Watchdog", systemImage: "exclamationmark.triangle") }
-                .tag(MainTab.watchdog)
-            ScreenTimeTab()
-                .tabItem { Label("Screen time", systemImage: "figure.walk.motion") }
-                .tag(MainTab.screenTime)
-            DiagnosticsTab(controller: diagnostics)
-                .tabItem { Label("Diagnostics", systemImage: "stethoscope") }
-                .tag(MainTab.diagnostics)
-            KeepAwakeTab()
-                .tabItem { Label("Keep awake", systemImage: "cup.and.saucer.fill") }
-                .tag(MainTab.keepAwake)
-            UpdatesTab(updater: updater)
-                .tabItem { Label("Updates", systemImage: "arrow.triangle.2.circlepath") }
-                .tag(MainTab.updates)
+        NavigationSplitView {
+            AppSidebar(selection: navigationSelection)
+                .navigationSplitViewColumnWidth(min: 170, ideal: 195, max: 245)
+        } detail: {
+            RetainedPageHost(
+                selection: selectedTab,
+                content: AnyView(pageContent
+                    .preferredColorScheme(.dark)
+                    .environment(\.isKillSwitchWindowVisible, windowVisible)
+                    .environment(\.allowsLiveOperations, startsServices)
+                    .environment(\.navigatePage, { navigationSelection.wrappedValue = $0 })
+                    .environment(\.inspectProcess, { inspectedProcess = $0 }))
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(.top, 4)
+        .navigationSplitViewStyle(.balanced)
+        .preferredColorScheme(.dark)
+        .tint(Theme.accent)
         .background(Theme.background)
         .safeAreaInset(edge: .top) { UpdateBanner(updater: updater) }
+        .alert("Open Dev cleanup?", isPresented: $confirmCleanup) {
+            Button("Cancel", role: .cancel) {}
+            Button("Open Dev cleanup", role: .destructive) { selectedTab = .cleanup }
+        } message: {
+            Text("Automatic termination is enabled. Opening this page can terminate qualifying development servers older than your saved age threshold. Age is not inactivity. Protected processes remain protected.")
+        }
+        .sheet(item: $inspectedProcess) { process in
+            ProcessDetailSheet(process: process, resourceMonitor: resourceMonitor)
+                .preferredColorScheme(.dark)
+                .environment(\.isKillSwitchWindowVisible, windowVisible)
+                .environment(\.allowsLiveOperations, startsServices)
+                .environment(\.navigatePage, { navigationSelection.wrappedValue = $0 })
+        }
         .onAppear {
             guard startsServices else { return }
             watchdog.start()
@@ -85,6 +70,61 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .showDiagnosticsTab)) { _ in
             selectedTab = .diagnostics
         }
+        .onReceive(NotificationCenter.default.publisher(for: .killSwitchWindowVisibility)) { event in
+            if let visible = event.object as? Bool { windowVisible = visible }
+        }
+#if KILLSWITCH_PERFORMANCE_PROBE
+        .onReceive(PerformanceProbeNavigation.shared.$page) { page in
+            if PerformanceProbeNavigation.shared.enabled { selectedTab = page }
+        }
+#endif
     }
 
+    private var navigationSelection: Binding<MainTab?> {
+        Binding(
+            get: { selectedTab },
+            set: { page in
+                guard let page, page != selectedTab else { return }
+                if page.requiresCleanupConfirmation(autoKillEnabled: DevCleanupPreferences().load().autoKillEnabled) {
+                    confirmCleanup = true
+                } else { selectedTab = page }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private var pageContent: some View {
+        switch selectedTab {
+        case .dashboard:
+            ActivityDashboard(monitor: resourceMonitor, systemHealth: systemHealth, navigate: { selectedTab = $0 })
+        case .resources, .memory, .disk, .network, .energy:
+            if let metric = selectedTab.metric {
+                ResourcesTab(monitor: resourceMonitor, initialMetric: metric)
+            }
+        case .system, .battery, .thermal:
+            SystemHealthTab(monitor: systemHealth, resources: resourceMonitor, page: selectedTab)
+        case .devServers:
+            DevServersTab(resourceMonitor: resourceMonitor)
+        case .connections:
+            ConnectionsTab(resourceMonitor: resourceMonitor)
+        case .openFiles:
+            OpenFilesTab(resourceMonitor: resourceMonitor)
+        case .startup:
+            StartupTab()
+        case .diskCleanup:
+            DiskCleanupTab(monitor: diskCleanupMonitor)
+        case .cleanup:
+            DevCleanupTab()
+        case .watchdog:
+            CPUWatchdogTab(monitor: watchdog)
+        case .screenTime:
+            ScreenTimeTab()
+        case .diagnostics:
+            DiagnosticsTab(controller: diagnostics)
+        case .keepAwake:
+            KeepAwakeTab()
+        case .updates:
+            UpdatesTab(updater: updater)
+        }
+    }
 }
