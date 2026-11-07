@@ -84,7 +84,9 @@ fan interfaces. Low Power Mode comes from `ProcessInfo`. Automatic health reads
 are at least thirty seconds apart after completion, including across page
 changes and hiding/reopening; explicit Refresh reads on demand. Scheduled
 polling stops when no relevant page is visible. An already-running read finishes
-into the shared cache without starting another poll, and all IOKit objects/file
+into the shared cache without starting another poll; a request still waiting on
+the queue checks visibility before reading and is canceled without consuming a
+polling interval. All IOKit objects/file
 descriptors are released after a read. Failed fields and verified battery absence have
 distinct presentations. These readings do not expand the persisted history or
 collect identifying serial/UUID values.
@@ -174,7 +176,11 @@ processes, files, and listeners open a shared per-process files/connections
 sheet without a second independent collector.
 Both use `lsof`'s NUL-delimited field output, with numeric addresses/ports and
 full command names. They refresh
-every ten seconds only while visible. Names with spaces remain intact; control
+every ten seconds only while visible. Queued refreshes check their activation
+before collection, so hiding does not
+start a delayed `lsof` read. Hiding releases the current rows immediately, and
+an expired in-flight activation cannot publish its results.
+Names with spaces remain intact; control
 characters use `lsof` display escapes. Plain search covers identifying text;
 protocol, state, type, and measurement filters use explicit comparisons.
 Numeric comparisons and sorting use underlying counters rather

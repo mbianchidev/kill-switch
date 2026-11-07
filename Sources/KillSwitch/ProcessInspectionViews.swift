@@ -8,7 +8,7 @@ import TableQueryCore
 import os
 
 final class ProcessInspectionMonitor: ObservableObject {
-    enum Mode: Sendable { case files, connections, listeners }
+    enum Mode: Sendable, Equatable { case files, connections, listeners }
     @Published private(set) var files: [OpenFileRecord] = []
     @Published private(set) var connections: [NetworkConnectionRecord] = []
     @Published private(set) var errorMessage: String?
@@ -24,7 +24,11 @@ final class ProcessInspectionMonitor: ObservableObject {
     private var timer: DispatchSourceTimer?
     private var mode: Mode = .files
     private let target: ActivityProcessIdentity?
-    private var activationID: UUID?
+    private let activation = OSAllocatedUnfairLock<UUID?>(initialState: nil)
+    private var activationID: UUID? {
+        get { activation.withLock { $0 } }
+        set { activation.withLock { $0 = newValue } }
+    }
     private struct CachedProject {
         let date: Date
         let project: DevelopmentProjectContext?
@@ -40,6 +44,10 @@ final class ProcessInspectionMonitor: ObservableObject {
     }
 
 #if KILLSWITCH_PERFORMANCE_PROBE
+    private var performanceSamples: [Mode] = []
+    var performanceSampleModes: [Mode] { queue.sync { performanceSamples } }
+    func performanceEnqueue(_ work: @escaping @Sendable () -> Void) { queue.async(execute: work) }
+
     func restorePerformanceFixture() {
         let fixture = Self.performanceFixture
         files = fixture.files.filter { target == nil || $0.pid == target?.pid }
@@ -61,6 +69,7 @@ final class ProcessInspectionMonitor: ObservableObject {
         activationID = id
         self.mode = mode
         queue.async { [self] in
+            guard self.activationID == id else { return }
             self.timer?.cancel()
             let timer = DispatchSource.makeTimerSource(queue: self.queue)
             timer.schedule(deadline: .now(), repeating: 10, leeway: .seconds(1))
@@ -74,19 +83,16 @@ final class ProcessInspectionMonitor: ObservableObject {
         dispatchPrecondition(condition: .onQueue(.main))
         activationID = nil
         isRefreshing = false
+        files = []
+        connections = []
+        identities = [:]
+        projects = [:]
+        projectErrors = [:]
+        lastUpdated = nil
         queue.async {
             self.timer?.cancel()
             self.timer = nil
             self.projectCache.removeAll()
-            DispatchQueue.main.async {
-                guard self.activationID == nil else { return }
-                self.files = []
-                self.connections = []
-                self.identities = [:]
-                self.projects = [:]
-                self.projectErrors = [:]
-                self.lastUpdated = nil
-            }
         }
     }
 
@@ -103,6 +109,10 @@ final class ProcessInspectionMonitor: ObservableObject {
     }
 
     private func sample(mode: Mode, activation: UUID) {
+        guard activationID == activation else { return }
+#if KILLSWITCH_PERFORMANCE_PROBE
+        performanceSamples.append(mode)
+#endif
         DispatchQueue.main.async {
             if self.activationID == activation { self.isRefreshing = true }
         }
@@ -119,12 +129,14 @@ final class ProcessInspectionMonitor: ObservableObject {
                 ))
                 before = [target.pid: target]
             } else { before = try ProcessLifetimeReader.snapshot() }
+            guard activationID == activation else { return }
             let arguments = try ProcessInspectionParser.arguments(
                 pid: target?.pid, connectionsOnly: mode == .connections, listenersOnly: mode == .listeners
             )
             let result = try CommandRunner.run(
                 "/usr/sbin/lsof", arguments: arguments, environment: ["LC_ALL": "en_US.UTF-8"]
             )
+            guard activationID == activation else { return }
             let detail = result.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
             guard result.succeeded || (result.status == 1 && (detail.isEmpty || !result.standardOutput.isEmpty)) else {
                 throw CommandRunnerError.commandFailed(executable: "lsof", status: result.status, message: detail)
@@ -139,12 +151,14 @@ final class ProcessInspectionMonitor: ObservableObject {
             let pids = Set(snapshot.files.map(\.pid) + snapshot.connections.map(\.pid))
             var verified: [Int32: ActivityProcessIdentity] = [:]
             for pid in pids {
+                guard activationID == activation else { return }
                 if let expected = before[pid],
                    ProcessLifetimeReader.presence(pid: pid, bootSession: expected.bootSession) == .present(expected) {
                     verified[pid] = expected
                 }
             }
 #endif
+            guard activationID == activation else { return }
             var projects: [ActivityProcessIdentity: DevelopmentProjectContext] = [:]
             var projectErrors: [ActivityProcessIdentity: String] = [:]
             if mode == .listeners {
@@ -152,6 +166,7 @@ final class ProcessInspectionMonitor: ObservableObject {
                 let activeIdentities = Set(verified.values)
                 projectCache = projectCache.filter { activeIdentities.contains($0.key) }
                 for identity in verified.values {
+                    guard activationID == activation else { return }
                     let result: CachedProject
                     if let cached = projectCache[identity], now.timeIntervalSince(cached.date) < 30 {
                         result = cached
@@ -196,6 +211,7 @@ final class ProcessInspectionMonitor: ObservableObject {
                 self.isRefreshing = false
             }
         } catch {
+            guard activationID == activation else { return }
             logger.error("Process inspection failed: \(error.localizedDescription)")
             DispatchQueue.main.async {
                 guard self.activationID == activation else { return }

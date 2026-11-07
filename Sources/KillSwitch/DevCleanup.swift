@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import DevCleanupCore
 import TableQueryCore
+import os
 
 /// Lists processes on notable dev ports and auto-kills long-running dev servers
 /// owned by the current user, while protecting system/IDE/MCP/Copilot processes.
@@ -90,7 +91,8 @@ final class DevCleanupMonitor: ObservableObject {
     private let username = NSUserName()
     private let preferences: DevCleanupPreferences
     private var applyingSettings = false
-    private lazy var service = DevCleanupService.live(username: username)
+    private let providedService: DevCleanupService?
+    private lazy var service = providedService ?? DevCleanupService.live(username: username)
 
     /// Serial queue so a port scan and a cleanup pass never run concurrently.
     private let workQueue = DispatchQueue(label: "DevCleanupMonitor.work", qos: .utility)
@@ -98,9 +100,11 @@ final class DevCleanupMonitor: ObservableObject {
     /// intervals and the manual buttons can't queue up overlapping passes.
     private var isRefreshing = false
     private var isCleaning = false
+    private let activeSession = OSAllocatedUnfairLock<UUID?>(initialState: nil)
 
-    init(preferences: DevCleanupPreferences = DevCleanupPreferences()) {
+    init(preferences: DevCleanupPreferences = DevCleanupPreferences(), service: DevCleanupService? = nil) {
         self.preferences = preferences
+        providedService = service
         let settings = preferences.load()
         autoKillEnabled = settings.autoKillEnabled
         ageThresholdHours = settings.ageThresholdHours
@@ -174,55 +178,75 @@ final class DevCleanupMonitor: ObservableObject {
     }
 
     func start(allowAutomaticTermination: Bool) {
+        stop()
+        activeSession.withLock { $0 = UUID() }
         prepareForEntry(allowAutomaticTermination: allowAutomaticTermination)
         runCleanup()
         reschedule()
     }
 
     func stop() {
+        activeSession.withLock { $0 = nil }
+        cancelTimers()
+        isRefreshing = false
+        isCleaning = false
+    }
+
+    private func cancelTimers() {
         portTimer?.invalidate(); portTimer = nil
         cleanupTimer?.invalidate(); cleanupTimer = nil
     }
 
+#if KILLSWITCH_PERFORMANCE_PROBE
+    func performanceEnqueue(_ work: @escaping @Sendable () -> Void) { workQueue.async(execute: work) }
+    func performanceDrainWorkQueue() { workQueue.sync {} }
+#endif
+
     /// (Re)create the port-scan and cleanup timers from the current intervals.
     private func reschedule() {
-        portTimer?.invalidate()
-        cleanupTimer?.invalidate()
+        cancelTimers()
+        guard let session = activeSession.withLock({ $0 }) else { return }
         let portInterval = TimeInterval(max(1, portScanIntervalSeconds))
         let cleanupInterval = TimeInterval(max(5, cleanupIntervalSeconds))
         portTimer = Timer.scheduledTimer(withTimeInterval: portInterval, repeats: true) { [weak self] _ in
-            self?.refreshPorts()
+            guard let self, self.activeSession.withLock({ $0 }) == session else { return }
+            self.refreshPorts()
         }
         portTimer?.tolerance = min(2, portInterval / 5)
         cleanupTimer = Timer.scheduledTimer(withTimeInterval: cleanupInterval, repeats: true) { [weak self] _ in
-            self?.runCleanup()
+            guard let self, self.activeSession.withLock({ $0 }) == session else { return }
+            self.runCleanup()
         }
         cleanupTimer?.tolerance = min(30, cleanupInterval / 10)
     }
 
     func killPort(pid: Int32) {
+        guard let session = activeSession.withLock({ $0 }) else { return }
         ProcessSampler.terminate(pid: pid)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.refreshPorts()
+            guard let self, self.activeSession.withLock({ $0 }) == session else { return }
+            self.refreshPorts()
         }
     }
 
     /// Refresh only the listening-ports list (no killing).
     func refreshPorts() {
-        guard !isRefreshing else { return }
+        guard let session = activeSession.withLock({ $0 }), !isRefreshing else { return }
         isRefreshing = true
         let configuration = currentConfiguration()
         workQueue.async { [weak self] in
-            guard let self = self else { return }
+            guard let self, self.activeSession.withLock({ $0 }) == session else { return }
             do {
                 let result = try self.service.scan(configuration: configuration)
                 DispatchQueue.main.async {
+                    guard self.activeSession.withLock({ $0 }) == session else { return }
                     self.portProcesses = result.portProcesses
                     self.isRefreshing = false
                 }
             } catch {
                 fputs("KillSwitch dev-cleanup scan failed: \(error.localizedDescription)\n", stderr)
                 DispatchQueue.main.async {
+                    guard self.activeSession.withLock({ $0 }) == session else { return }
                     self.isRefreshing = false
                 }
             }
@@ -231,23 +255,28 @@ final class DevCleanupMonitor: ObservableObject {
 
     /// Refresh ports and (when enabled) auto-kill long-running dev servers.
     func runCleanup() {
-        guard !isCleaning else { return }
+        guard let session = activeSession.withLock({ $0 }), !isCleaning else { return }
         isCleaning = true
         let configuration = cleanupConfiguration()
         workQueue.async { [weak self] in
-            guard let self = self else { return }
+            guard let self, self.activeSession.withLock({ $0 }) == session else { return }
             do {
-                let result = try self.service.cleanup(configuration: configuration)
+                let current = self.preferences.load().configuration(
+                    allowAutomaticTermination: configuration.autoKillEnabled
+                )
+                let result = try self.service.cleanup(configuration: current)
                 DispatchQueue.main.async {
+                    // Keep the outcome of an admitted cleanup even if its page disappeared.
                     self.portProcesses = result.portProcesses
                     self.candidateCount = result.candidateCount
                     self.cleaned = result.killed
                     self.lastRun = Date()
-                    self.isCleaning = false
+                    if self.activeSession.withLock({ $0 }) == session { self.isCleaning = false }
                 }
             } catch {
                 fputs("KillSwitch dev-cleanup failed: \(error.localizedDescription)\n", stderr)
                 DispatchQueue.main.async {
+                    guard self.activeSession.withLock({ $0 }) == session else { return }
                     self.isCleaning = false
                 }
             }
@@ -277,8 +306,13 @@ final class DevCleanupMonitor: ObservableObject {
 
 struct DevCleanupTab: View {
     let allowAutomaticTermination: Bool
+    let entryPending: Bool
+    let requestConfirmation: () -> Void
+    let showDevServers: () -> Void
+    @Environment(\.allowsLiveOperations) private var allowsOperations
+    @Environment(\.isKillSwitchPageVisible) private var pageVisible
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @StateObject private var monitor = DevCleanupMonitor()
+    @StateObject private var monitor: DevCleanupMonitor
     @State private var portText = ""
     @State private var runtimeText = ""
     @State private var indicatorText = ""
@@ -290,7 +324,54 @@ struct DevCleanupTab: View {
     @State private var cleanedSearch = ""
     @State private var cleanedSorting = TableComparator(field: CleanedProcessTableFields.age, order: .reverse)
 
+#if KILLSWITCH_PERFORMANCE_PROBE
+    typealias PerformanceStateObserver = (DevCleanupMonitor, Binding<String>, Binding<String>) -> Void
+    var performanceObserveState: PerformanceStateObserver?
+#endif
+
+    init(
+        allowAutomaticTermination: Bool, entryPending: Bool,
+        requestConfirmation: @escaping () -> Void, showDevServers: @escaping () -> Void,
+        preferences: DevCleanupPreferences = DevCleanupPreferences()
+    ) {
+        self.allowAutomaticTermination = allowAutomaticTermination
+        self.entryPending = entryPending
+        self.requestConfirmation = requestConfirmation
+        self.showDevServers = showDevServers
+        _monitor = StateObject(wrappedValue: DevCleanupMonitor(preferences: preferences))
+    }
+
     var body: some View {
+        Group {
+            if pageVisible {
+                if entryPending {
+                    cleanupEntry
+                } else {
+                    cleanupContent
+                }
+            }
+        }
+        .background(Theme.background)
+#if KILLSWITCH_PERFORMANCE_PROBE
+        .background(DevCleanupStateRecorder(
+            monitor: monitor, portSearch: $portSearch, cleanedSearch: $cleanedSearch, observe: performanceObserveState
+        ).frame(width: 0, height: 0))
+#endif
+        .task(id: copyFeedbackRevision) {
+            guard copiedProcessID != nil else { return }
+            do {
+                try await Task.sleep(nanoseconds: 1_600_000_000)
+            } catch {
+                return
+            }
+
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
+                copiedProcessID = nil
+            }
+        }
+    }
+
+    private var cleanupContent: some View {
         VStack(spacing: 0) {
             header
             Divider()
@@ -304,20 +385,32 @@ struct DevCleanupTab: View {
                 .padding(16)
             }
         }
-        .background(Theme.background)
-        .onAppear { monitor.start(allowAutomaticTermination: allowAutomaticTermination) }
-        .onDisappear { monitor.stop() }
-        .task(id: copyFeedbackRevision) {
-            guard copiedProcessID != nil else { return }
-            do {
-                try await Task.sleep(nanoseconds: 1_600_000_000)
-            } catch {
-                return
-            }
-            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
-                copiedProcessID = nil
-            }
+        .onAppear {
+            if allowsOperations { monitor.start(allowAutomaticTermination: allowAutomaticTermination) }
         }
+        .onDisappear { monitor.stop() }
+    }
+
+    private var cleanupEntry: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("Dev cleanup", systemImage: "trash")
+                .font(.system(size: 20, weight: .semibold, design: .rounded))
+            Label("Automatic termination is enabled", systemImage: "exclamationmark.triangle")
+                .foregroundColor(.orange)
+            Text("Opening cleanup can terminate qualifying development servers older than the saved age threshold. Age is not inactivity. No cleanup is started from this preview.")
+                .font(.system(size: 13))
+            HStack {
+                Button("Open Dev cleanup", action: requestConfirmation)
+                Button("Show read-only Dev servers", action: showDevServers)
+            }
+            Text("Use the sidebar to keep navigating, or explicitly open cleanup and confirm. Canceling confirmation leaves this safe preview open.")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(24)
+        .onAppear { monitor.stop() }
     }
 
     private var header: some View {
@@ -670,3 +763,19 @@ struct DevCleanupTab: View {
         }
     }
 }
+
+#if KILLSWITCH_PERFORMANCE_PROBE
+private struct DevCleanupStateRecorder: NSViewRepresentable {
+    let monitor: DevCleanupMonitor
+    let portSearch: Binding<String>
+    let cleanedSearch: Binding<String>
+    let observe: DevCleanupTab.PerformanceStateObserver?
+
+    func makeNSView(context: Context) -> NSView {
+        observe?(monitor, portSearch, cleanedSearch)
+        return NSView()
+    }
+
+    func updateNSView(_ view: NSView, context: Context) { observe?(monitor, portSearch, cleanedSearch) }
+}
+#endif

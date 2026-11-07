@@ -174,6 +174,12 @@ The app uses one macOS `Window` scene rather than permitting independent windows
 with conflicting visibility or resource selections. Dashboard scrubber-reset
 observers live outside the suspended chart subtree, so changes on another page
 cannot restore a stale inspected time.
+`DevCleanupTab` also keeps its state owner mounted through the safe preview and
+confirmation, retaining filters and prior cleanup results without starting its
+active content. Session leases reject canceled queued passes and old timer
+callbacks. Cleanup rereads saved settings at queue admission; outcomes from
+already-started authorized passes remain retained after hiding. Interface
+checks use an injected synthetic cleanup service, never the live terminator.
 The native
 history-process menu creates its choices on opening and releases them after
 closing instead of maintaining a SwiftUI view for every recorded process.
@@ -226,14 +232,18 @@ Visible clients share one monotonic automatic-refresh deadline, at least thirty
 seconds after each completed read. Page changes and hiding/reopening preserve
 that deadline rather than causing extra IOKit reads. Only visible clients keep
 a one-shot timer; an in-flight machine-wide read finishes into the shared cache
-even if its original page disappears. Explicit Refresh reads on demand and
+even if its original page disappears. A queued request checks its visible lease
+before reading; cancellation does not consume a polling interval.
+Explicit Refresh reads on demand and
 restarts the automatic cooldown. Synthetic interface checks cover exact timing
 boundaries, overlapping clients, hidden intervals, and in-flight handoffs.
 No health history is accumulated.
 Hardware information is loaded off the main thread and retained once available.
-Inspection uses one serial work queue per visible panel, verifies process
-lifetimes around collection, rejects stale activation results, and releases
-row snapshots/project caches on hiding. The per-process sheet selects only its
+Inspection uses one serial work queue per visible panel and synchronized
+activation leases to reject queued work before collection or between expensive
+stages. It verifies process lifetimes around collection, rejects stale results,
+and releases row snapshots immediately on hiding; project caches drain on the
+collector queue. The per-process sheet selects only its
 verified PID and shares one files/connections read. Developer listeners cache
 native working-directory/Git context by lifetime for at most thirty seconds,
 walk at most twelve ancestors, and read at most 4 KiB per metadata file without

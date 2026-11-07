@@ -195,6 +195,7 @@ enum PerformanceProbe {
         check(monitor.history[.energy]?.count == 51, "Energy probes must populate and prune the full five-minute chart.")
         check(monitor.history[.energy]?.last?.primary == 2_000, "Energy chart fixtures must contain measured power totals.")
         healthPollingChecks(check)
+        queuedInspectionChecks(check)
 
         let suite = "KillSwitch.synthetic-entry-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suite) else {
@@ -217,6 +218,8 @@ enum PerformanceProbe {
         check(cleanup.cleanupConfiguration().autoKillEnabled, "Explicitly authorized entry may use current saved settings.")
         preferences.setAutoKillEnabled(false)
         check(!cleanup.cleanupConfiguration().autoKillEnabled, "Later saved disablement must block the ensuing cleanup.")
+        cleanupStateChecks(preferences: preferences, check)
+        queuedCleanupChecks(preferences: preferences, check)
 
         let controller = RetainedPageController()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650),
@@ -365,7 +368,200 @@ enum PerformanceProbe {
         finishRead(blockedHealth)
         check(blockedReads.withLock { $0 } == 2 && blockedHardwareReads.withLock { $0 } == 1,
               "Re-entry must use the completed shared cache without rereading hardware or bypassing cooldown.")
+        let queuedReads = OSAllocatedUnfairLock(initialState: 0)
+        let queueReleased = DispatchSemaphore(value: 0)
+        let queuedHealth = SystemHealthMonitor(
+            now: { sampleNow },
+            readHardware: {
+                queuedReads.withLock { $0 += 1 }
+                return hardware
+            },
+            readSnapshot: {
+                queuedReads.withLock { $0 += 1 }
+                return snapshot
+            }
+        )
+        defer { queuedHealth.shutdown() }
+        queuedHealth.performanceEnqueue {
+            if queueReleased.wait(timeout: .now() + 5) != .success {
+                timedOut.withLock { $0 = true }
+            }
+        }
+        queuedHealth.setActive(true, client: client)
+        queuedHealth.setActive(false, client: client)
+        queueReleased.signal()
+        finishRead(queuedHealth)
+        check(queuedReads.withLock { $0 } == 0 && !queuedHealth.performanceHasScheduledRefresh,
+              "A queued health refresh must not begin reading after its last visible client disappears.")
+        queuedHealth.setActive(true, client: client)
+        finishRead(queuedHealth)
+        check(queuedReads.withLock { $0 } == 2 && queuedHealth.snapshot == snapshot,
+              "A canceled queued health read must not delay the next visible client's first sample.")
         check(!timedOut.withLock { $0 }, "Controlled synthetic health reads must not time out.")
+    }
+
+    private static func queuedInspectionChecks(_ check: (Bool, String) -> Void) {
+        let timedOut = OSAllocatedUnfairLock(initialState: false)
+        let released = DispatchSemaphore(value: 0)
+        let inspection = ProcessInspectionMonitor()
+        defer { inspection.stop() }
+        inspection.performanceEnqueue {
+            if released.wait(timeout: .now() + 5) != .success { timedOut.withLock { $0 = true } }
+        }
+        inspection.start(.files)
+        inspection.refresh()
+        inspection.stop()
+        check(inspection.files.isEmpty && inspection.connections.isEmpty && inspection.identities.isEmpty
+              && inspection.projects.isEmpty && inspection.lastUpdated == nil,
+              "Hiding inspection must release its visible snapshot immediately, without waiting for the collector queue.")
+        released.signal()
+        check(inspection.performanceSampleModes.isEmpty, "A queued inspection refresh must be canceled before collecting after hiding.")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(!inspection.isRefreshing && inspection.files.isEmpty && inspection.connections.isEmpty,
+              "Canceled inspection work must not restore a hidden snapshot or leave a busy state.")
+
+        let reactivated = ProcessInspectionMonitor()
+        let reactivationReleased = DispatchSemaphore(value: 0)
+        defer { reactivated.stop() }
+        reactivated.performanceEnqueue {
+            if reactivationReleased.wait(timeout: .now() + 5) != .success { timedOut.withLock { $0 = true } }
+        }
+        reactivated.start(.files)
+        reactivated.refresh()
+        reactivated.stop()
+        reactivated.start(.connections)
+        reactivated.refresh()
+        reactivationReleased.signal()
+        let modes = reactivated.performanceSampleModes
+        check(!modes.isEmpty && modes.allSatisfy { $0 == .connections },
+              "A new inspection activation must collect only its current mode, not queued work from its predecessor.")
+        check(!timedOut.withLock { $0 }, "Controlled synthetic inspection queues must not time out.")
+    }
+
+    private static func cleanupStateChecks(preferences: DevCleanupPreferences, _ check: (Bool, String) -> Void) {
+        let controller = RetainedPageController()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        defer { window.contentViewController = nil; window.close() }
+        var currentMonitor: DevCleanupMonitor?
+        var portSearch: Binding<String>?
+        var cleanedSearch: Binding<String>?
+        func showCleanup(entryPending: Bool) {
+            var page = DevCleanupTab(
+                allowAutomaticTermination: false, entryPending: entryPending,
+                requestConfirmation: {}, showDevServers: {}, preferences: preferences
+            )
+            page.performanceObserveState = {
+                currentMonitor = $0
+                portSearch = $1
+                cleanedSearch = $2
+            }
+            controller.show(.cleanup, content: AnyView(page.environment(\.allowsLiveOperations, false)))
+            controller.view.layoutSubtreeIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        showCleanup(entryPending: false)
+        guard let originalMonitor = currentMonitor, let originalPortSearch = portSearch,
+              let originalCleanedSearch = cleanedSearch else {
+            check(false, "The isolated cleanup page must expose its retained state.")
+            return
+        }
+        originalMonitor.candidateCount = 3
+        originalMonitor.cleaned = [CleanedProcess(
+            pid: 100_991, command: "/synthetic/node /synthetic/vite.js", runtime: "node", ageHours: 36
+        )]
+        originalPortSearch.wrappedValue = "synthetic port filter"
+        originalCleanedSearch.wrappedValue = "synthetic cleanup filter"
+        showCleanup(entryPending: true)
+        showCleanup(entryPending: false)
+        check(currentMonitor === originalMonitor && currentMonitor?.candidateCount == 3 && currentMonitor?.cleaned.count == 1,
+              "The safe cleanup preview must retain its monitor and prior session results.")
+        check(portSearch?.wrappedValue == "synthetic port filter" && cleanedSearch?.wrappedValue == "synthetic cleanup filter",
+              "Cleanup search state must survive its safe preview and confirmation transition.")
+        check(currentMonitor?.lastRun == nil, "The isolated cleanup-state check must never start a live cleanup pass.")
+    }
+
+    private static func queuedCleanupChecks(preferences: DevCleanupPreferences, _ check: (Bool, String) -> Void) {
+        let savedAutoKill = preferences.load().autoKillEnabled
+        defer { preferences.setAutoKillEnabled(savedAutoKill) }
+        preferences.setAutoKillEnabled(true)
+        let reads = OSAllocatedUnfairLock(initialState: 0)
+        let terminated = OSAllocatedUnfairLock(initialState: [Int32]())
+        let timedOut = OSAllocatedUnfairLock(initialState: false)
+        let service = DevCleanupService(
+            username: "synthetic-owner",
+            processProvider: {
+                reads.withLock { $0 += 1 }
+                return [DevCleanupProcess(
+                    pid: 100_999, user: "synthetic-owner", elapsedSeconds: 1_000_000,
+                    command: "/synthetic/node /synthetic/vite/bin/vite.js"
+                )]
+            },
+            listeningPortsProvider: { [100_999: [3_000]] },
+            terminator: { pid in terminated.withLock { $0.append(pid) }; return true }
+        )
+        let released = DispatchSemaphore(value: 0)
+        let monitor = DevCleanupMonitor(preferences: preferences, service: service)
+        defer { monitor.stop() }
+        monitor.performanceEnqueue {
+            if released.wait(timeout: .now() + 5) != .success { timedOut.withLock { $0 = true } }
+        }
+        monitor.start(allowAutomaticTermination: true)
+        monitor.refreshPorts()
+        monitor.stop()
+        released.signal()
+        monitor.performanceDrainWorkQueue()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(reads.withLock { $0 } == 0 && terminated.withLock { $0.isEmpty },
+              "Stopping cleanup must cancel queued scans and cleanup before any provider or terminator runs.")
+        check(monitor.lastRun == nil && monitor.portProcesses.isEmpty && monitor.cleaned.isEmpty,
+              "Canceled cleanup work must not publish a later result into the safe preview.")
+        reads.withLock { $0 = 0 }
+        terminated.withLock { $0 = [] }
+        preferences.setAutoKillEnabled(true)
+        let laterReleased = DispatchSemaphore(value: 0)
+        let laterMonitor = DevCleanupMonitor(preferences: preferences, service: service)
+        defer { laterMonitor.stop() }
+        laterMonitor.performanceEnqueue {
+            if laterReleased.wait(timeout: .now() + 5) != .success { timedOut.withLock { $0 = true } }
+        }
+        laterMonitor.start(allowAutomaticTermination: true)
+        preferences.setAutoKillEnabled(false)
+        laterReleased.signal()
+        laterMonitor.performanceDrainWorkQueue()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(reads.withLock { $0 } == 1 && terminated.withLock { $0.isEmpty },
+              "Saved disablement after enqueueing must still prevent automatic termination when the queued pass begins.")
+        laterMonitor.stop()
+        preferences.setAutoKillEnabled(true)
+        let inFlightStarted = DispatchSemaphore(value: 0)
+        let inFlightReleased = DispatchSemaphore(value: 0)
+        let inFlightService = DevCleanupService(
+            username: "synthetic-owner",
+            processProvider: {
+                inFlightStarted.signal()
+                if inFlightReleased.wait(timeout: .now() + 5) != .success { timedOut.withLock { $0 = true } }
+                return [DevCleanupProcess(
+                    pid: 100_998, user: "synthetic-owner", elapsedSeconds: 1_000_000,
+                    command: "/synthetic/node /synthetic/vite/bin/vite.js"
+                )]
+            },
+            listeningPortsProvider: { [100_998: [3_000]] },
+            terminator: { _ in true }
+        )
+        let inFlight = DevCleanupMonitor(preferences: preferences, service: inFlightService)
+        defer { inFlight.stop() }
+        inFlight.start(allowAutomaticTermination: true)
+        check(inFlightStarted.wait(timeout: .now() + 2) == .success, "The injected cleanup pass must enter its provider.")
+        inFlight.stop()
+        inFlightReleased.signal()
+        inFlight.performanceDrainWorkQueue()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(inFlight.lastRun != nil && inFlight.cleaned.map(\.pid) == [100_998],
+              "An already-started authorized cleanup must retain its outcome after its page disappears.")
+        check(!timedOut.withLock { $0 }, "The controlled synthetic cleanup queue must not time out.")
     }
 
     private static func fixture(date: Date, count: Int, step: Int) -> ResourceSnapshot {

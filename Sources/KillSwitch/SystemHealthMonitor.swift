@@ -11,6 +11,7 @@ final class SystemHealthMonitor: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var isRefreshing = false
     private var clients: Set<UUID> = []
+    private let hasVisibleClient = OSAllocatedUnfairLock(initialState: false)
     private var timer: Timer?
     private var scheduledRefreshID: UUID?
     private var nextAutomaticRefreshAt: ContinuousClock.Instant?
@@ -34,6 +35,8 @@ final class SystemHealthMonitor: ObservableObject {
 
     func setActive(_ active: Bool, client: UUID) {
         if active { clients.insert(client) } else { clients.remove(client) }
+        let visible = !clients.isEmpty
+        hasVisibleClient.withLock { $0 = visible }
         if clients.isEmpty {
             cancelTimer()
         } else if timer == nil {
@@ -48,9 +51,19 @@ final class SystemHealthMonitor: ObservableObject {
         let needsHardware = hardware == nil
         let readHardware = readHardware
         let readSnapshot = readSnapshot
+        let hasVisibleClient = hasVisibleClient
         refreshID = id
         isRefreshing = true
         queue.async { [weak self] in
+            guard hasVisibleClient.withLock({ $0 }) else {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.refreshID == id else { return }
+                    self.refreshID = nil
+                    self.isRefreshing = false
+                    self.refreshAutomatically()
+                }
+                return
+            }
             let hardware = needsHardware ? Result { try readHardware() } : nil
             let snapshot = readSnapshot()
             DispatchQueue.main.async { [weak self] in
@@ -112,10 +125,13 @@ final class SystemHealthMonitor: ObservableObject {
 
     func shutdown() {
         clients.removeAll()
+        hasVisibleClient.withLock { $0 = false }
         cancelTimer()
     }
 
 #if KILLSWITCH_PERFORMANCE_PROBE
+    func performanceEnqueue(_ work: @escaping @Sendable () -> Void) { queue.async(execute: work) }
+
     var performanceHasScheduledRefresh: Bool { timer?.isValid == true }
 
     func performanceFireAutomaticRefresh() {

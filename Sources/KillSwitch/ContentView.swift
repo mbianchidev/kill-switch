@@ -127,11 +127,12 @@ struct ContentView: View {
         case .diskCleanup:
             DiskCleanupTab(monitor: diskCleanupMonitor)
         case .cleanup:
-            if cleanupEntryPending {
-                cleanupEntry
-            } else {
-                DevCleanupTab(allowAutomaticTermination: cleanupAuthorized)
-            }
+            DevCleanupTab(
+                allowAutomaticTermination: cleanupAuthorized,
+                entryPending: cleanupEntryPending,
+                requestConfirmation: { confirmCleanup = true },
+                showDevServers: { navigationSelection.wrappedValue = .devServers }
+            )
         case .watchdog:
             CPUWatchdogTab(monitor: watchdog)
         case .screenTime:
@@ -143,27 +144,5 @@ struct ContentView: View {
         case .updates:
             UpdatesTab(updater: updater)
         }
-    }
-
-    private var cleanupEntry: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Label("Dev cleanup", systemImage: "trash")
-                .font(.system(size: 20, weight: .semibold, design: .rounded))
-            Label("Automatic termination is enabled", systemImage: "exclamationmark.triangle")
-                .foregroundColor(.orange)
-            Text("Opening cleanup can terminate qualifying development servers older than the saved age threshold. Age is not inactivity. Nothing runs while this preview is shown.")
-                .font(.system(size: 13))
-            HStack {
-                Button("Open Dev cleanup") { confirmCleanup = true }
-                Button("Show read-only Dev servers") { selectedTab = .devServers }
-            }
-            Text("Use the sidebar to keep navigating, or explicitly open cleanup and confirm. Canceling confirmation leaves this safe preview open.")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(24)
-        .background(Theme.background)
     }
 }

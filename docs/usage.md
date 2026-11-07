@@ -27,8 +27,9 @@ The watchdog, screen-time monitor, and CPU/memory/disk/network sampling continue
 with the window hidden and while using other tabs. Quitting flushes the current
 history bucket. Energy details run only while their resource view is selected;
 connection/open-file inspection runs only while its panel is visible.
-The Dev cleanup tab starts its timers on appearance and stops them on
-disappearance; opening it runs an immediate cleanup.
+The opened Dev cleanup view starts its timers on appearance and stops them on
+disappearance; entering it runs an immediate pass. Its safe entry preview does
+not start cleanup or its timers.
 
 ## Navigation
 
@@ -234,6 +235,11 @@ cleanup pass, cancel the entry confirmation. The CLI
 Canceling leaves the safe preview shown; it does not reset sidebar selection or
 reopen the modal when navigating with arrow keys. Other pages remain reachable
 without authorizing cleanup.
+The preview retains cleanup filters and prior session results. Navigating away
+or reopening the preview cancels not-yet-started scans and cleanup passes. An
+already-started authorized pass can finish; its outcome remains available on
+return. Queued passes reread saved settings before starting, so later saved
+disablement still prevents automatic termination.
 
 Each entry reloads saved settings without writing a retained monitor's stale
 values back to preferences. Automatic cleanup requires both current saved
