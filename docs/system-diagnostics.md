@@ -82,6 +82,11 @@ come from IOKit; an optional readable `AppleSmartBattery` cycle counter remains
 unavailable when not exposed. Native battery readings replace the former
 Energy-only battery subprocess.
 
+Energy and System Health share the same battery-status rules. A non-charging
+battery supplying the Mac is discharging, even while its full-charge flag
+remains set. A non-charging battery on AC or UPS power is not assumed to be
+discharging, and missing charging flags stay unavailable.
+
 Thermal pressure uses `ProcessInfo.thermalState`, not private SMC temperature or
 fan interfaces. Before the first health snapshot, the card shows that thermal
 information is being collected; an unavailable state is shown only after a

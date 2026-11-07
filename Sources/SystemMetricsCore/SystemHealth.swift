@@ -3,6 +3,24 @@ import Foundation
 import IOKit
 import IOKit.ps
 
+public enum SystemBatteryChargingStatus: String, Sendable {
+    case fullyCharged = "charged"
+    case charging = "charging"
+    case discharging = "discharging"
+    case notCharging = "not charging"
+    case unavailable = "charging status unavailable"
+
+    public var title: String {
+        switch self {
+        case .fullyCharged: return "Fully charged"
+        case .charging: return "Charging"
+        case .discharging: return "Discharging"
+        case .notCharging: return "Not charging"
+        case .unavailable: return "Charging status unavailable"
+        }
+    }
+}
+
 public struct SystemBatteryReading: Equatable, Sendable {
     public let chargePercent: Int?
     public let isCharging: Bool?
@@ -30,6 +48,14 @@ public struct SystemBatteryReading: Equatable, Sendable {
     public static func chargePercentage(current: Int?, maximum: Int?) -> Int? {
         guard let current, let maximum, maximum > 0, current >= 0, current <= maximum else { return nil }
         return Int((Double(current) / Double(maximum) * 100).rounded())
+    }
+
+    public func chargingStatus(powerSource: SystemPowerSource) -> SystemBatteryChargingStatus {
+        if powerSource == .battery, isCharging == false { return .discharging }
+        if isFullyCharged == true { return .fullyCharged }
+        if isCharging == true { return .charging }
+        if isCharging == false { return .notCharging }
+        return .unavailable
     }
 }
 

@@ -453,13 +453,9 @@ final class ResourceSampler {
         let (source, state) = try SystemHealthReader.battery()
         switch state {
         case .available(let reading):
-            let status: String
-            if reading.isFullyCharged == true { status = "charged" }
-            else if reading.isCharging == true { status = "charging" }
-            else if reading.isCharging == false { status = "not charging" }
-            else { status = "charging status unavailable" }
             return BatteryResourceSummary(
-                source: source.rawValue, chargePercent: reading.chargePercent, status: status,
+                source: source.rawValue, chargePercent: reading.chargePercent,
+                status: reading.chargingStatus(powerSource: source).rawValue,
                 timeRemaining: reading.minutesToFull.map { "\($0) min to full charge" }
                     ?? reading.minutesToEmpty.map { "\($0) min to empty" }
             )

@@ -107,7 +107,7 @@ struct SystemHealthTab: View {
                     Text(battery.chargePercent.map { "\($0)%" } ?? "N/A")
                         .font(.system(size: 44, weight: .semibold, design: .rounded))
                         .monospacedDigit()
-                    Text(batteryStatus(battery))
+                    Text(battery.chargingStatus(powerSource: monitor.snapshot?.powerSource ?? .unavailable).title)
                         .foregroundColor(.secondary)
                 }
                 if let charge = battery.chargePercent {
@@ -264,11 +264,4 @@ private func thermalColor(_ state: SystemThermalState) -> Color {
     case .critical: return Theme.cpuSystem
     case .unavailable: return .secondary
     }
-}
-
-private func batteryStatus(_ reading: SystemBatteryReading) -> String {
-    if reading.isFullyCharged == true { return "Fully charged" }
-    if reading.isCharging == true { return "Charging" }
-    if reading.isCharging == false { return "Not charging" }
-    return "Charging status unavailable"
 }

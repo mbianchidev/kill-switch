@@ -68,6 +68,20 @@ extension SystemMetricsChecks {
             minutesToEmpty: 200, minutesToFull: 30, cycleCount: 0, condition: " Good "
         )
         check(charging.minutesToEmpty == nil && charging.minutesToFull == 30, "charging exposes only the applicable time estimate")
+        check(charging.chargingStatus(powerSource: .mains) == .charging, "charging status remains explicitly charging")
+        let notCharging = SystemBatteryReading(
+            currentCapacity: 80, maximumCapacity: 100, isCharging: false, isFullyCharged: false,
+            minutesToEmpty: 60, minutesToFull: nil, cycleCount: nil, condition: nil
+        )
+        check(notCharging.chargingStatus(powerSource: .battery) == .discharging, "battery-powered non-charging status is discharging")
+        check(notCharging.chargingStatus(powerSource: .mains) == .notCharging, "AC charge hold is not mislabeled as discharging")
+        check(notCharging.chargingStatus(powerSource: .ups) == .notCharging, "UPS-powered non-charging status does not imply battery discharge")
+        let full = SystemBatteryReading(
+            currentCapacity: 100, maximumCapacity: 100, isCharging: false, isFullyCharged: true,
+            minutesToEmpty: nil, minutesToFull: nil, cycleCount: nil, condition: nil
+        )
+        check(full.chargingStatus(powerSource: .mains) == .fullyCharged, "a reported full battery retains its charged status")
+        check(full.chargingStatus(powerSource: .battery) == .discharging, "a full battery supplying power is still discharging")
         check(charging.cycleCount == 0 && charging.condition == "Good", "zero battery cycles are measured, not missing")
         let unknown = SystemBatteryReading(
             currentCapacity: nil, maximumCapacity: nil, isCharging: nil, isFullyCharged: nil,
@@ -79,6 +93,7 @@ extension SystemMetricsChecks {
                 && unknown.cycleCount == nil && unknown.condition == nil,
             "unknown battery status and sentinel counters stay explicitly unavailable"
         )
+        check(unknown.chargingStatus(powerSource: .battery) == .unavailable, "missing charging state is not invented from the power source")
         check(SystemThermalState(.nominal) == .nominal, "nominal native thermal state")
         check(SystemThermalState(.fair) == .fair, "fair native thermal state")
         check(SystemThermalState(.serious) == .serious, "serious native thermal state")
