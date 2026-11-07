@@ -75,6 +75,33 @@ extension SystemMetricsChecks {
             try ProcessInspectionParser.validateTarget(emptyTarget, pid: 42)
             check(false, "an empty live target inspection must report unavailable data")
         } catch { check(true, "an empty live target inspection must report unavailable data") }
+        for (descriptor, diagnostic) in [("NOFD", "FD info error: Permission denied"), ("cwd", "cwd|rtd info error: Operation not permitted")] {
+            let denied = ProcessInspectionParser.parseLsof(Data([
+                "p42", "cSynthetic restricted worker", "u501", "Lsynthetic-user", "\nf\(descriptor)",
+                "tunknown", "n\(diagnostic)", ""
+            ].joined(separator: "\0").utf8))
+            check(denied.files.isEmpty, "Darwin diagnostics must not count as open files")
+            check(denied.diagnostics[42] == [diagnostic], "Darwin diagnostic details remain available for error reporting")
+            do {
+                try ProcessInspectionParser.validateTarget(denied, pid: 42)
+                check(false, "permission-diagnostic-only target inventory must remain unavailable")
+            } catch { check(true, "permission-diagnostic-only target inventory must remain unavailable") }
+        }
+        let namedFile = ProcessInspectionParser.parseLsof(Data([
+            "p42", "cSynthetic readable worker", "u501", "Lsynthetic-user", "\nf4",
+            "tREG", "n/synthetic/FD info error: Permission denied", ""
+        ].joined(separator: "\0").utf8))
+        check(namedFile.files.count == 1 && namedFile.diagnostics.isEmpty, "Real filenames resembling diagnostics must remain readable file records")
+        let partial = ProcessInspectionParser.parseLsof(Data([
+            "p42", "cSynthetic partial worker", "u501", "Lsynthetic-user", "\nf4",
+            "tREG", "n/synthetic/readable.txt", "\nfcwd", "tunknown",
+            "ncwd|rtd info error: Permission denied", ""
+        ].joined(separator: "\0").utf8))
+        do {
+            try ProcessInspectionParser.validateTarget(partial, pid: 42)
+            check(partial.files.count == 1 && partial.diagnostics[42]?.count == 1,
+                  "Partial readable target inventories retain the real record and its diagnostic")
+        } catch { check(false, "partial readable target inventory was rejected") }
         check(snapshot.files.count == 3, "open-files parser lists files without treating IP sockets as files")
         check(snapshot.files.first?.path == "/tmp/example file\nwith newline", "NUL parsing preserves filename field boundaries")
         check(snapshot.files.first?.lock == "R", "open-files parser retains lock information")

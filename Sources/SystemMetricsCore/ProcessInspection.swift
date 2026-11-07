@@ -92,6 +92,7 @@ public struct NetworkConnectionRecord: Identifiable, Equatable, Sendable {
 public struct ProcessInspectionSnapshot: Sendable {
     public let files: [OpenFileRecord]
     public let connections: [NetworkConnectionRecord]
+    public let diagnostics: [Int32: [String]]
 }
 
 public struct ProcessInspectionError: LocalizedError {
@@ -117,13 +118,16 @@ public enum ProcessInspectionParser {
 
     public static func validateTarget(_ snapshot: ProcessInspectionSnapshot, pid: Int32) throws {
         guard snapshot.files.contains(where: { $0.pid == pid }) || snapshot.connections.contains(where: { $0.pid == pid }) else {
-            throw ProcessInspectionError(message: "macOS did not expose files or connections for this process. Inspection data is unavailable; its lifetime is still present.")
+            let detail = snapshot.diagnostics[pid]?.joined(separator: "\n")
+            throw ProcessInspectionError(message: "macOS did not expose files or connections for this process. Inspection data is unavailable; its lifetime is still present."
+                + (detail.map { "\n\($0)" } ?? ""))
         }
     }
 
     public static func parseLsof(_ data: Data) -> ProcessInspectionSnapshot {
         var files: [OpenFileRecord] = []
         var connections: [NetworkConnectionRecord] = []
+        var diagnostics: [Int32: [String]] = [:]
         var pid: Int32?
         var process = ""
         var userID: UInt32?
@@ -134,6 +138,11 @@ public enum ProcessInspectionParser {
         func finishFile() {
             guard let pid, let userID, let descriptor = fields["f"], let path = fields["n"] else { return }
             let kind = fields["t"] ?? "Unknown"
+            if descriptor == "NOFD" || (kind.lowercased() == "unknown"
+                && (path.hasPrefix("FD info error:") || path.hasPrefix("cwd|rtd info error:"))) {
+                diagnostics[pid, default: []].append(path)
+                return
+            }
             if ["IPv4", "IPv6", "unix"].contains(kind) {
                 let endpoints = path.components(separatedBy: "->")
                 let remote = endpoints.count > 1 ? endpoints.dropFirst().joined(separator: "->") : nil
@@ -183,7 +192,7 @@ public enum ProcessInspectionParser {
             }
         }
         finishFile()
-        return ProcessInspectionSnapshot(files: files, connections: connections)
+        return ProcessInspectionSnapshot(files: files, connections: connections, diagnostics: diagnostics)
     }
 }
 

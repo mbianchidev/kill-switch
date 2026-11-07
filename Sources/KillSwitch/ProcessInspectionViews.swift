@@ -137,11 +137,15 @@ final class ProcessInspectionMonitor: ObservableObject {
                 "/usr/sbin/lsof", arguments: arguments, environment: ["LC_ALL": "en_US.UTF-8"]
             )
             guard activationID == activation else { return }
-            let detail = result.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard result.succeeded || (result.status == 1 && (detail.isEmpty || !result.standardOutput.isEmpty)) else {
-                throw CommandRunnerError.commandFailed(executable: "lsof", status: result.status, message: detail)
+            let standardError = result.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard result.succeeded || (result.status == 1 && (standardError.isEmpty || !result.standardOutput.isEmpty)) else {
+                throw CommandRunnerError.commandFailed(executable: "lsof", status: result.status, message: standardError)
             }
             let snapshot = ProcessInspectionParser.parseLsof(Data(result.standardOutput.utf8))
+            let diagnosticMessages = snapshot.diagnostics.keys.sorted().flatMap { pid in
+                (snapshot.diagnostics[pid] ?? []).map { "PID \(pid): \($0)" }
+            }
+            let detail = ([standardError] + diagnosticMessages).filter { !$0.isEmpty }.joined(separator: "\n")
             if let target {
                 try ProcessLifetimeReader.validate(target, presence: ProcessLifetimeReader.presence(
                     pid: target.pid, bootSession: target.bootSession

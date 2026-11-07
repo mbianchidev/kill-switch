@@ -180,6 +180,11 @@ pre-sleep bucket.
 
 ## Connections and open files
 
+Darwin `lsof` can emit permission diagnostics in its NAME field instead of file
+records. These are retained as errors, not counted as open files. A target with
+only such diagnostics remains unavailable; readable records from a partial
+inventory can still be displayed with the diagnostic warning.
+
 Network connections have a dedicated **Connections** page, also linked from
 Network traffic. Open files has a dedicated page. **Inspect** buttons on
 processes, files, and listeners open a shared per-process files/connections
