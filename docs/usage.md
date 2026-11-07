@@ -162,6 +162,7 @@ fails.
 
 Listeners refresh every ten seconds only while visible. Project context is
 cached by process lifetime for at most thirty seconds and released when hidden.
+Changing the system clock does not prolong or shorten this cache.
 All-process scope does not grant extra privileges. Project paths and branch
 names are not added to persistent activity history.
 

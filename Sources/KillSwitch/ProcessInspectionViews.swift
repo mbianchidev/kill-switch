@@ -38,7 +38,7 @@ final class ProcessInspectionMonitor: ObservableObject {
         set { activation.withLock { $0 = newValue } }
     }
     private struct CachedProject {
-        let date: Date
+        let expiresAt: ContinuousClock.Instant
         let project: DevelopmentProjectContext?
         let error: String?
     }
@@ -53,8 +53,20 @@ final class ProcessInspectionMonitor: ObservableObject {
 
 #if KILLSWITCH_PERFORMANCE_PROBE
     private var performanceSamples: [Mode] = []
+    private var performanceProjectReads = 0
+    private var performanceProjectNow: ContinuousClock.Instant?
+    private var performanceProjectWallDate: Date?
     var performanceSampleModes: [Mode] { queue.sync { performanceSamples } }
+    var performanceProjectReadCount: Int { queue.sync { performanceProjectReads } }
     func performanceEnqueue(_ work: @escaping @Sendable () -> Void) { queue.async(execute: work) }
+
+    func performanceSetProjectTime(_ instant: ContinuousClock.Instant, date: Date) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        queue.sync {
+            performanceProjectNow = instant
+            performanceProjectWallDate = date
+        }
+    }
 
     func performanceReportError(_ message: String) {
         dispatchPrecondition(condition: .onQueue(.main))
@@ -196,17 +208,23 @@ final class ProcessInspectionMonitor: ObservableObject {
             var projects: [ActivityProcessIdentity: DevelopmentProjectContext] = [:]
             var projectErrors: [ActivityProcessIdentity: String] = [:]
             if mode == .listeners {
-                let now = Date()
+#if KILLSWITCH_PERFORMANCE_PROBE
+                let now = performanceProjectNow ?? .now
+#else
+                let now = ContinuousClock.now
+#endif
+                let expiresAt = now.advanced(by: .seconds(30))
                 let activeIdentities = Set(verified.values)
                 projectCache = projectCache.filter { activeIdentities.contains($0.key) }
                 for identity in verified.values {
                     guard continueCollection(activation) else { return }
                     let result: CachedProject
-                    if let cached = projectCache[identity], now.timeIntervalSince(cached.date) < 30 {
+                    if let cached = projectCache[identity], now < cached.expiresAt {
                         result = cached
                     } else {
 #if KILLSWITCH_PERFORMANCE_PROBE
-                        result = CachedProject(date: now, project: DevelopmentProjectContext(
+                        performanceProjectReads += 1
+                        result = CachedProject(expiresAt: expiresAt, project: DevelopmentProjectContext(
                             directory: URL(fileURLWithPath: "/synthetic/project-\((identity.pid - 100_000) / 50)", isDirectory: true),
                             branch: "synthetic-feature"
                         ), error: nil)
@@ -217,21 +235,21 @@ final class ProcessInspectionMonitor: ObservableObject {
                             let lease = self.activation
                             do {
                                 result = CachedProject(
-                                    date: now, project: try DevelopmentProjectResolver.resolve(directory, shouldContinue: {
+                                    expiresAt: expiresAt, project: try DevelopmentProjectResolver.resolve(directory, shouldContinue: {
                                         lease.withLock { $0 == activation } && AppWindowVisibility.isVisible
                                     }), error: nil
                                 )
                             } catch {
                                 if error is CancellationError { throw error }
                                 result = CachedProject(
-                                    date: now, project: (error as? DevelopmentProjectMetadataError)?.project
+                                    expiresAt: expiresAt, project: (error as? DevelopmentProjectMetadataError)?.project
                                         ?? DevelopmentProjectContext(directory: directory, branch: nil),
                                     error: "Project discovery is incomplete; showing the verified project or working directory. \(error.localizedDescription)"
                                 )
                             }
                         } catch {
                             if error is CancellationError { throw error }
-                            result = CachedProject(date: now, project: nil, error: error.localizedDescription)
+                            result = CachedProject(expiresAt: expiresAt, project: nil, error: error.localizedDescription)
                         }
 #endif
                         projectCache[identity] = result
@@ -240,6 +258,9 @@ final class ProcessInspectionMonitor: ObservableObject {
                     if let error = result.error { projectErrors[identity] = error }
                 }
             }
+#if KILLSWITCH_PERFORMANCE_PROBE
+            let updatedAt = performanceProjectWallDate ?? Date()
+#endif
             DispatchQueue.main.async {
                 guard self.activationID == activation else { return }
                 guard AppWindowVisibility.isVisible else { self.isRefreshing = false; return }
@@ -248,7 +269,11 @@ final class ProcessInspectionMonitor: ObservableObject {
                 self.identities = verified
                 self.projects = projects
                 self.projectErrors = projectErrors
+#if KILLSWITCH_PERFORMANCE_PROBE
+                self.lastUpdated = updatedAt
+#else
                 self.lastUpdated = Date()
+#endif
                 self.issue = detail.isEmpty ? nil : InspectionIssue(
                     message: "Some entries may be inaccessible: \(detail)", activationID: activation
                 )

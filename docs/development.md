@@ -187,6 +187,8 @@ window delegate, before SwiftUI updates its view leases. Health retains its
 automatic deadline across hide/show; inspection and project discovery recheck
 visibility between stages. Already-started system calls can finish, but a hidden
 window cannot admit subsequent inspection metadata lookups.
+Listener project metadata uses a thirty-second monotonic cache deadline;
+wall-clock adjustments affect displayed update dates, not cache expiration.
 The app uses one macOS `Window` scene rather than permitting independent windows
 with conflicting visibility or resource selections. Dashboard scrubber-reset
 observers live outside the suspended chart subtree, so changes on another page

@@ -71,6 +71,18 @@ extension SystemMetricsChecks {
                     }
                 }
             }
+            for prefix in ["\u{200C}", "\u{0301}"] {
+                let leadingMetadata = worktree.appendingPathComponent("\(prefix)synthetic-metadata")
+                try FileManager.default.createDirectory(at: leadingMetadata, withIntermediateDirectories: false)
+                try Data("ref: refs/heads/leading-fixture\n".utf8).write(to: leadingMetadata.appendingPathComponent("HEAD"))
+                try Data("gitdir: \(leadingMetadata.lastPathComponent)\n".utf8).write(to: worktree.appendingPathComponent(".git"))
+                do {
+                    let context = try DevelopmentProjectResolver.resolve(worktree)
+                    check(context.branch == "leading-fixture", "Git directory prefixes preserve a path beginning with a combining scalar")
+                } catch {
+                    check(false, "valid combining-scalar Git directory pointers must not be rejected: \(error.localizedDescription)")
+                }
+            }
             try Data(" gitdir: ../synthetic-metadata\n".utf8).write(to: worktree.appendingPathComponent(".git"))
             do {
                 _ = try DevelopmentProjectResolver.resolve(worktree)
@@ -127,7 +139,9 @@ extension SystemMetricsChecks {
             }
             for name in ["bad branch", "bad..branch", "bad@{branch", ".hidden", "nested/.hidden",
                          "nested/name.lock", "bad//branch", "bad/", "bad.", "bad~name", "bad^name",
-                         "bad:name", "bad?name", "bad*name", "bad[name", "bad\\name", "-branch"] {
+                         "bad:name", "bad?name", "bad*name", "bad[name", "bad\\name", "-branch",
+                         ".\u{0301}hidden", "nested/.\u{0301}hidden", "bad//\u{0301}branch", "/\u{0301}branch",
+                         "bad..\u{0301}branch", "bad@{\u{0301}branch", "-\u{0301}branch"] {
                 try Data("ref: refs/heads/\(name)\n".utf8).write(to: head)
                 do {
                     _ = try DevelopmentProjectResolver.resolve(worktree)
@@ -139,6 +153,26 @@ extension SystemMetricsChecks {
             try Data("ref: refs/heads/feature/synthetic\n".utf8).write(to: head)
             let nestedBranch = try DevelopmentProjectResolver.resolve(worktree)
             check(nestedBranch.branch == "feature/synthetic", "valid nested Git branch refs remain supported")
+            for name in ["synthetic-\u{200D}feature", "\u{200C}synthetic", "synthetic\u{FEFF}",
+                         "synthetic-\u{0085}feature", "\u{0301}synthetic"] {
+                try Data("ref: refs/heads/\(name)\n".utf8).write(to: head)
+                do {
+                    let context = try DevelopmentProjectResolver.resolve(worktree)
+                    check(context.branch == name, "Git-valid Unicode branch names retain their exact scalar sequence")
+                } catch {
+                    check(false, "Git-valid Unicode branch names must not be rejected: \(error.localizedDescription)")
+                }
+            }
+            for value in [UInt8(0), 9, 10, 13, 31, 127] {
+                let name = "synthetic-\(UnicodeScalar(value))feature"
+                try Data("ref: refs/heads/\(name)\n".utf8).write(to: head)
+                do {
+                    _ = try DevelopmentProjectResolver.resolve(worktree)
+                    check(false, "Git branch refs must reject ASCII control byte \(value)")
+                } catch {
+                    check(error is DevelopmentProjectMetadataError, "ASCII control bytes retain a Git metadata error")
+                }
+            }
             try Data((String(repeating: "\u{FF21}", count: 40) + "\n").utf8).write(to: head)
             do {
                 _ = try DevelopmentProjectResolver.resolve(worktree)

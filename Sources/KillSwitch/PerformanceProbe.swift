@@ -217,6 +217,7 @@ enum PerformanceProbe {
         healthObservationChecks(check)
         processDetailObservationChecks(check)
         queuedInspectionChecks(check)
+        projectCacheTimingChecks(check)
         filteredProjectWarningChecks(check)
         copyFeedbackChecks(check)
         dashboardSelectionChecks(check)
@@ -546,6 +547,52 @@ enum PerformanceProbe {
         check(windowInspection.performanceSampleModes == [.connections],
               "A shown inspection window must collect only its current resumed activation.")
         check(!timedOut.withLock { $0 }, "Controlled synthetic inspection queues must not time out.")
+    }
+
+    private static func projectCacheTimingChecks(_ check: (Bool, String) -> Void) {
+        let previousVisibility = AppWindowVisibility.isVisible
+        AppWindowVisibility.setVisible(true)
+        defer { AppWindowVisibility.setVisible(previousVisibility) }
+        let inspection = ProcessInspectionMonitor()
+        defer { inspection.stop() }
+        let origin = ContinuousClock.now
+        let wallDate = Date(timeIntervalSince1970: 1_000_000)
+        func finishRead() {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+            while inspection.isRefreshing && ContinuousClock.now < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            }
+            check(!inspection.isRefreshing, "Synthetic project-cache reads must finish.")
+        }
+        inspection.performanceSetProjectTime(origin, date: wallDate)
+        inspection.start(.listeners)
+        finishRead()
+        let reads = inspection.performanceProjectReadCount
+        check(reads > 0 && reads == inspection.identities.count && inspection.lastUpdated == wallDate,
+              "A fresh listener inventory must collect each synthetic project and retain its wall-clock display date.")
+        inspection.performanceSetProjectTime(origin.advanced(by: .milliseconds(29_999)),
+                                             date: wallDate.addingTimeInterval(29.999))
+        inspection.refresh()
+        finishRead()
+        check(inspection.performanceProjectReadCount == reads, "Project context remains cached just before thirty seconds.")
+
+        let earlierDate = wallDate.addingTimeInterval(-3_600)
+        inspection.performanceSetProjectTime(origin.advanced(by: .seconds(30)), date: earlierDate)
+        inspection.refresh()
+        finishRead()
+        check(inspection.performanceProjectReadCount == reads * 2 && inspection.lastUpdated == earlierDate,
+              "Project context expires at thirty monotonic seconds even when the displayed wall clock moves backward.")
+        let laterDate = wallDate.addingTimeInterval(86_400)
+        inspection.performanceSetProjectTime(origin.advanced(by: .milliseconds(59_999)), date: laterDate)
+        inspection.refresh()
+        finishRead()
+        check(inspection.performanceProjectReadCount == reads * 2 && inspection.lastUpdated == laterDate,
+              "A forward wall-clock jump must not force early project metadata reads.")
+        inspection.performanceSetProjectTime(origin.advanced(by: .seconds(60)), date: laterDate)
+        inspection.refresh()
+        finishRead()
+        check(inspection.performanceProjectReadCount == reads * 3,
+              "The next project-cache deadline must expire without requiring the wall clock to advance.")
     }
 
     private static func cleanupStateChecks(preferences: DevCleanupPreferences, _ check: (Bool, String) -> Void) {

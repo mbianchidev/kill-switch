@@ -37,11 +37,11 @@ public enum DevelopmentProjectResolver {
                     } else {
                         guard shouldContinue() else { throw CancellationError() }
                         let pointer = try readSmallFile(git)
-                        guard pointer.hasPrefix("gitdir: "), !pointer.dropFirst(8).isEmpty else {
+                        guard pointer.utf8.starts(with: "gitdir: ".utf8), pointer.utf8.count > 8 else {
                             throw ProcessInspectionError(message: "The project's Git directory pointer is invalid.")
                         }
-                        let path = String(pointer.dropFirst(8))
-                        metadata = path.hasPrefix("/") ? URL(fileURLWithPath: path)
+                        let path = String(decoding: pointer.utf8.dropFirst(8), as: UTF8.self)
+                        metadata = path.utf8.first == UInt8(ascii: "/") ? URL(fileURLWithPath: path)
                             : directory.appendingPathComponent(path).standardizedFileURL
                     }
                     guard shouldContinue() else { throw CancellationError() }
@@ -77,14 +77,22 @@ public enum DevelopmentProjectResolver {
     }
 
     private static func branch(_ value: String) throws -> String {
-        if value.hasPrefix("ref: refs/heads/") {
-            let name = String(value.dropFirst("ref: refs/heads/".count))
-            let parts = name.split(separator: "/", omittingEmptySubsequences: false)
-            guard !name.isEmpty, !name.hasPrefix("-"), !name.hasSuffix("."),
-                  !name.contains(".."), !name.contains("@{"),
-                  !parts.contains(where: { $0.isEmpty || $0.hasPrefix(".") || $0.hasSuffix(".lock") }),
-                  !name.unicodeScalars.contains(where: {
-                      CharacterSet.controlCharacters.contains($0) || " ~^:?*[\\".unicodeScalars.contains($0)
+        let prefix = "ref: refs/heads/"
+        if value.utf8.starts(with: prefix.utf8) {
+            let name = String(decoding: value.utf8.dropFirst(prefix.utf8.count), as: UTF8.self)
+            let bytes = name.utf8
+            let parts = bytes.split(separator: UInt8(ascii: "/"), omittingEmptySubsequences: false)
+            // Git's ASCII rules apply even beside combining Unicode scalars.
+            guard !bytes.isEmpty, bytes.first != UInt8(ascii: "-"), bytes.last != UInt8(ascii: "."),
+                  !zip(bytes, bytes.dropFirst()).contains(where: {
+                      ($0.0 == UInt8(ascii: ".") && $0.1 == UInt8(ascii: "."))
+                          || ($0.0 == UInt8(ascii: "@") && $0.1 == UInt8(ascii: "{"))
+                  }),
+                  !parts.contains(where: {
+                      $0.isEmpty || $0.first == UInt8(ascii: ".") || $0.suffix(5).elementsEqual(".lock".utf8)
+                  }),
+                  !bytes.contains(where: {
+                      $0 < 32 || $0 == 127 || " ~^:?*[\\".utf8.contains($0)
                   }) else {
                 throw ProcessInspectionError(message: "The project's Git branch is unreadable.")
             }
@@ -138,7 +146,7 @@ public enum ProcessWorkingDirectoryReader {
         try ProcessLifetimeReader.validate(identity, presence: ProcessLifetimeReader.presence(
             pid: identity.pid, bootSession: identity.bootSession
         ))
-        guard let path, path.hasPrefix("/") else {
+        guard let path, path.utf8.first == UInt8(ascii: "/") else {
             throw ProcessInspectionError(message: "macOS returned an unreadable working-directory path.")
         }
         return URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
