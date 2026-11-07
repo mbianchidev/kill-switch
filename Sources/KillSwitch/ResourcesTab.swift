@@ -10,6 +10,8 @@ struct ResourcesTab: View {
     @State private var searchText = ""
     @State private var samplingID = UUID()
     @Environment(\.navigatePage) private var navigate
+    @Environment(\.isKillSwitchPageVisible) private var pageVisible
+    @State private var historySearch = ""
 
     init(monitor: ResourceMonitor, initialMetric: ResourceMetric = .cpu) {
         self.monitor = monitor
@@ -20,6 +22,12 @@ struct ResourcesTab: View {
     }
 
     var body: some View {
+        Group {
+            if pageVisible { pageContent }
+        }
+    }
+
+    private var pageContent: some View {
         let rows = visibleProcesses
         return GeometryReader { geometry in
             VStack(spacing: 0) {
@@ -28,7 +36,7 @@ struct ResourcesTab: View {
                 processTable(rows)
                 Divider()
                 if metric != .energy {
-                    ActivityHistoryControls(monitor: monitor)
+                    ActivityHistoryControls(monitor: monitor, processSearch: $historySearch)
                         .padding(.horizontal, 16)
                         .padding(.top, 10)
                 }

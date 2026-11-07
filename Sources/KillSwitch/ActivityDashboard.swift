@@ -10,10 +10,18 @@ struct ActivityDashboard: View {
     @State private var search = ""
     @State private var selectedDate: Date?
     @State private var sorting = TableComparator(field: ActivityTableFields.cpu, order: .reverse)
+    @State private var historySearch = ""
+    @Environment(\.isKillSwitchPageVisible) private var pageVisible
 
     private let metrics: [ResourceMetric] = [.cpu, .memory, .network, .disk]
 
     var body: some View {
+        Group {
+            if pageVisible { pageContent }
+        }
+    }
+
+    private var pageContent: some View {
         let rows = liveProcesses
         let values = displayedValues
         return GeometryReader { geometry in
@@ -34,7 +42,7 @@ struct ActivityDashboard: View {
                     }
 
                     SystemStatusStrip(monitor: systemHealth, navigate: navigate)
-                    ActivityHistoryControls(monitor: monitor)
+                    ActivityHistoryControls(monitor: monitor, processSearch: $historySearch)
                     ActivityMonitorErrors(monitor: monitor)
 
                     LazyVGrid(
@@ -209,7 +217,7 @@ struct ProcessScopePicker: View {
 struct ActivityHistoryControls: View {
     @ObservedObject var monitor: ResourceMonitor
     @State private var confirmClear = false
-    @State private var processSearch = ""
+    @Binding var processSearch: String
 
     var body: some View {
         FlowLayout(spacing: 8) {

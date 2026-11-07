@@ -40,6 +40,7 @@ struct DevServersTab: View {
     @State private var sorting = TableComparator(field: ConnectionTableFields.local)
     @State private var revealError: String?
     @Environment(\.allowsLiveOperations) private var allowsOperations
+    @Environment(\.isKillSwitchPageVisible) private var pageVisible
 
     init(resourceMonitor: ResourceMonitor) {
         self.resourceMonitor = resourceMonitor
@@ -47,6 +48,12 @@ struct DevServersTab: View {
     }
 
     var body: some View {
+        Group {
+            if pageVisible { pageContent }
+        }
+    }
+
+    private var pageContent: some View {
         let groups = serverGroups
         return VStack(alignment: .leading, spacing: 12) {
             HStack {

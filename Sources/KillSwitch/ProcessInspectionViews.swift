@@ -243,6 +243,7 @@ struct OpenFilesTab: View {
     @State private var kind = "All types"
     @State private var sorting = TableComparator(field: OpenFileTableFields.path)
     @State private var selected: OpenFileRecord.ID?
+    @Environment(\.isKillSwitchPageVisible) private var pageVisible
 
     init(resourceMonitor: ResourceMonitor) {
         self.resourceMonitor = resourceMonitor
@@ -250,6 +251,12 @@ struct OpenFilesTab: View {
     }
 
     var body: some View {
+        Group {
+            if pageVisible { pageContent }
+        }
+    }
+
+    private var pageContent: some View {
         let rows = visible
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
@@ -325,8 +332,15 @@ struct NetworkConnectionsPanel: View {
     @State private var filter: NetworkConnectionFilter = .all
     @State private var sorting = TableComparator(field: ConnectionTableFields.process)
     @State private var selected: NetworkConnectionRecord.ID?
+    @Environment(\.isKillSwitchPageVisible) private var pageVisible
 
     var body: some View {
+        Group {
+            if pageVisible { pageContent }
+        }
+    }
+
+    private var pageContent: some View {
         let rows = visible
         return VStack(alignment: .leading, spacing: 10) {
             TableSearchControls(

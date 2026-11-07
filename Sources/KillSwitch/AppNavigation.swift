@@ -101,6 +101,10 @@ private struct LiveOperationsKey: EnvironmentKey {
     static let defaultValue = true
 }
 
+private struct PageVisibilityKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
 private struct ProcessInspectorKey: EnvironmentKey {
     static let defaultValue: (@MainActor (ActivityProcessDescriptor) -> Void)? = nil
 }
@@ -118,6 +122,11 @@ extension EnvironmentValues {
     var allowsLiveOperations: Bool {
         get { self[LiveOperationsKey.self] }
         set { self[LiveOperationsKey.self] = newValue }
+    }
+
+    var isKillSwitchPageVisible: Bool {
+        get { self[PageVisibilityKey.self] }
+        set { self[PageVisibilityKey.self] = newValue }
     }
 
     var inspectProcess: (@MainActor (ActivityProcessDescriptor) -> Void)? {
@@ -214,6 +223,7 @@ struct RetainedPageHost: NSViewControllerRepresentable {
 
 final class RetainedPageController: NSTabViewController {
     private var pages: [MainTab: NSHostingController<AnyView>] = [:]
+    private var contents: [MainTab: AnyView] = [:]
 
 #if KILLSWITCH_PERFORMANCE_PROBE
     var performancePageCount: Int { pages.count }
@@ -223,12 +233,14 @@ final class RetainedPageController: NSTabViewController {
         tabStyle = .unspecified
         tabView.tabViewType = .noTabsNoBorder
         tabView.drawsBackground = false
+        contents[page] = content
+        let visibleContent = AnyView(content.environment(\.isKillSwitchPageVisible, true))
         let hosting: NSHostingController<AnyView>
         if let existing = pages[page] {
             hosting = existing
-            hosting.rootView = content
+            hosting.rootView = visibleContent
         } else {
-            hosting = NSHostingController(rootView: content)
+            hosting = NSHostingController(rootView: visibleContent)
             pages[page] = hosting
             addTabViewItem(NSTabViewItem(viewController: hosting))
         }
@@ -236,6 +248,13 @@ final class RetainedPageController: NSTabViewController {
             preconditionFailure("The retained page must have a native tab item.")
         }
         if selectedTabViewItemIndex != index { selectedTabViewItemIndex = index }
+        for (otherPage, controller) in pages where otherPage != page {
+            if let otherContent = contents[otherPage] {
+                controller.rootView = AnyView(otherContent.environment(\.isKillSwitchPageVisible, false))
+            }
+            controller.view.setFrameSize(.zero)
+            controller.view.layoutSubtreeIfNeeded()
+        }
     }
 }
 

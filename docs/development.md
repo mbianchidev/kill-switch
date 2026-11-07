@@ -161,6 +161,12 @@ model lifetimes stable without observing their updates; only the relevant leaf
 views subscribe, so a resource tick does not rebuild navigation. A native
 `NSTabViewController` without a tab strip lazily creates visited
 `NSHostingController` pages and retains their SwiftUI filter/sort state.
+Inactive monitoring and inspection pages keep their small state owners but
+remove the expensive chart/table subtree and collapse the unshown native view.
+Reopening reconstructs that subtree with the same filters, sorting, and
+history-process search rather than retaining every visited page's backing
+surfaces. Synthetic interface checks verify appearance/disappearance and state
+restoration through this suspension.
 Metric requests carry page-specific leases, so an outgoing page cannot clear a
 newer selection. Actual window visibility gates heavier collection while
 continuous CPU, memory, disk, and traffic sampling remains unchanged.
@@ -266,6 +272,13 @@ The optional PNG is the probe's own unshown window, never a desktop capture.
 `--native-health-check` separately verifies public native health interfaces
 without identifiers, UI interaction, or privileged diagnostics; it is not a
 synthetic measurement scenario.
+
+The probe drains an autorelease pool around drawing and each event-loop pass,
+matching AppKit's normal event behavior. When comparing reports, use the same
+probe implementation on both revisions; older unpooled reports include
+autoreleased rendering overhead and must not be treated as a long-run app
+baseline. Navigation is useful for detecting retained rendering trees, but a
+short synthetic run is not proof of long-run live-collector memory stability.
 
 Retain reports outside Git and compare identical durations, counts, hardware,
 OS, toolchain, and build settings over multiple runs. These probes complement

@@ -7,8 +7,15 @@ struct SystemHealthTab: View {
     let page: MainTab
     @Environment(\.allowsLiveOperations) private var allowsOperations
     @Environment(\.isKillSwitchWindowVisible) private var visible
+    @Environment(\.isKillSwitchPageVisible) private var pageVisible
 
     var body: some View {
+        Group {
+            if pageVisible { pageContent }
+        }
+    }
+
+    private var pageContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {

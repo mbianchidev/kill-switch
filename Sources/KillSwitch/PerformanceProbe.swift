@@ -123,16 +123,22 @@ enum PerformanceProbe {
                 monitor.publishPerformanceSample(fixture(date: Date(), count: count, step: step))
                 step += 1
                 if let view {
-                    view.layoutSubtreeIfNeeded()
-                    guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+                    let rendered = autoreleasepool {
+                        view.layoutSubtreeIfNeeded()
+                        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return false }
+                        view.cacheDisplay(in: view.bounds, to: bitmap)
+                        return true
+                    }
+                    guard rendered else {
                         fputs("Performance probe could not create its offscreen rendering surface.\n", stderr)
                         return 1
                     }
-                    view.cacheDisplay(in: view.bounds, to: bitmap)
                 }
                 nextSample = nextSample.addingTimeInterval(6)
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            autoreleasepool {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            }
         }
         if arguments.count >= 4, let view {
             guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
@@ -264,11 +270,16 @@ private struct ProbeStateView: View {
     let record: (UUID) -> Void
     let activation: (Bool) -> Void
     @State private var token = UUID()
+    @Environment(\.isKillSwitchPageVisible) private var pageVisible
     var body: some View {
-        ProbeStateRecorder(token: token, record: record)
-            .frame(width: 20, height: 20)
-            .onAppear { activation(true) }
-            .onDisappear { activation(false) }
+        Group {
+            if pageVisible {
+                ProbeStateRecorder(token: token, record: record)
+                    .frame(width: 20, height: 20)
+                    .onAppear { activation(true) }
+                    .onDisappear { activation(false) }
+            }
+        }
     }
 }
 
