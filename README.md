@@ -109,7 +109,7 @@ the read-only [status command](docs/cli.md#read-saved-status).
 | Dashboard and resources | Global/per-process CPU, memory, traffic, and disk history for 24 hours, plus live energy and process actions |
 | Process inspection | Dedicated Connections and Open files pages, plus per-process files/connections with search, sorting, and reported advisory locks |
 | Developer listeners | Read-only TCP listeners grouped by project or working directory, Git branch context, copy/reveal/browser actions, and no automatic cleanup |
-| System health | CPU/hardware details, uptime, load averages, public battery readings, Low Power Mode, and macOS thermal pressure |
+| System health | CPU/hardware details, awake time since restart, load averages, public battery readings, Low Power Mode, and macOS thermal pressure |
 | Startup | Reversible login app, service, and cron controls, with protected macOS entries kept read-only |
 | Disk cleanup | Large files, temporary data, caches, and folders with confirmation and Trash |
 | Developer tools | Configurable dev cleanup, protected-process rules, CPU alerts, and JSON port syncing |

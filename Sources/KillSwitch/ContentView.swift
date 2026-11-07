@@ -31,7 +31,11 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             AppSidebar(selection: navigationSelection)
+#if KILLSWITCH_PERFORMANCE_PROBE
+                .navigationSplitViewColumnWidth(min: 170, ideal: PerformanceProbeNavigation.shared.sidebarWidth, max: 245)
+#else
                 .navigationSplitViewColumnWidth(min: 170, ideal: 195, max: 245)
+#endif
         } detail: {
             RetainedPageHost(
                 selection: selectedTab,

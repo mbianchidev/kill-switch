@@ -11,6 +11,7 @@ final class PerformanceProbeNavigation: ObservableObject {
     static let shared = PerformanceProbeNavigation()
     @Published var page: MainTab = .dashboard
     var enabled = false
+    var sidebarWidth: CGFloat = 195
 }
 
 // This entry point is compiled only into the separately built, non-interactive probe.
@@ -61,6 +62,7 @@ enum PerformanceProbe {
         monitor.showAllUsers = true
         SystemHealthMonitor.shared.publishPerformanceFixture()
         PerformanceProbeNavigation.shared.enabled = scenario == "navigation"
+        PerformanceProbeNavigation.shared.sidebarWidth = width == 900 ? 245 : 195
         let now = Date()
         for index in 0..<51 {
             monitor.publishPerformanceSample(fixture(

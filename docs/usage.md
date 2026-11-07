@@ -161,9 +161,11 @@ names are not added to persistent activity history.
 ## System, Battery, and Thermal
 
 **System** shows the CPU model/architecture, physical/logical core counts,
-physical memory, macOS/kernel version, uptime, load averages, and shared CPU
+physical memory, macOS/kernel version, awake time since restart, load averages, and shared CPU
 usage. Global CPU remains 0-100% across the Mac; a process's 100% represents
 one logical core. Load averages are runnable/waiting work, not percentages.
+Awake time since restart is `ProcessInfo.systemUptime` and excludes sleep; it
+is not presented as total elapsed time since boot.
 
 **Battery** shows charge, charging state, power source, reported condition,
 cycle count, applicable time estimates, and Low Power Mode when macOS exposes

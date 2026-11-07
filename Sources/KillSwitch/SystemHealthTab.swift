@@ -82,13 +82,13 @@ struct SystemHealthTab: View {
                 ? String(format: "%.1f%% / %.1f%%", resources.cpu.userPercent, resources.cpu.systemPercent) : "N/A")
             healthRow("Processes / threads", resources.cpu.isAvailable
                 ? "\(resources.cpu.processCount) / \(resources.cpu.threadCount)" : "N/A")
-            healthRow("Uptime", monitor.snapshot.map { formatDuration($0.uptime) } ?? "N/A")
+            healthRow("Awake time since restart", monitor.snapshot.map { formatDuration($0.uptime) } ?? "N/A")
             healthRow("Load averages (1 / 5 / 15 min)", monitor.snapshot?.loadAverages.map {
                 $0.map { String(format: "%.2f", $0) }.joined(separator: " / ")
             } ?? "N/A")
             healthRow("Power source", monitor.snapshot?.powerSource.rawValue ?? "N/A")
             healthRow("Low Power Mode", monitor.snapshot.map { $0.lowPowerMode ? "On" : "Off" } ?? "N/A")
-            Text("Global CPU uses 0-100% across the whole Mac. Process CPU uses 100% per core. Load averages count runnable or waiting work; they are not CPU percentages.")
+            Text("Global CPU uses 0-100% across the whole Mac. Process CPU uses 100% per core. Load averages count runnable or waiting work; they are not CPU percentages. Awake time since restart excludes time spent asleep.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
             ActivityMonitorErrors(monitor: resources)
@@ -196,7 +196,7 @@ struct SystemStatusStrip: View {
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right").font(.system(size: 9)).foregroundColor(.secondary)
             }
-            .frame(minWidth: 190, maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .frame(minHeight: 38)
             .padding(10)
             .background(RoundedRectangle(cornerRadius: 9).fill(Theme.panel))

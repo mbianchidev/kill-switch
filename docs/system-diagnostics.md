@@ -72,7 +72,9 @@ unavailable GPU columns are not shown on the CPU page.
 
 System, Battery, Thermal, and the dashboard share one visible-only health
 reader. CPU/model/core, OS/kernel, uptime, and load information use public
-`sysctl`, `ProcessInfo`, and `getloadavg` interfaces. Power-source descriptions
+`sysctl`, `ProcessInfo`, and `getloadavg` interfaces. The runtime card explicitly
+labels `ProcessInfo.systemUptime` as awake time since restart, excluding sleep
+rather than claiming total elapsed boot time. Power-source descriptions
 come from IOKit; an optional readable `AppleSmartBattery` cycle counter remains
 unavailable when not exposed. Native battery readings replace the former
 Energy-only battery subprocess.
