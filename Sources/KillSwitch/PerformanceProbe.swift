@@ -230,6 +230,14 @@ enum PerformanceProbe {
         cleanupStateChecks(preferences: preferences, check)
         queuedCleanupChecks(preferences: preferences, check)
         resetAuthorizationChecks(preferences: preferences, check)
+        let firstVisit = UUID()
+        let nextVisit = UUID()
+        let copiedVisit = CleanupVisitValue(visit: firstVisit, value: Int32(100_995))
+        let pendingVisit = CleanupVisitValue(visit: firstVisit, value: "synthetic reset confirmation")
+        check(copiedVisit.value(for: firstVisit) == 100_995 && pendingVisit.value(for: firstVisit) != nil,
+              "Current-visit transient state must remain available.")
+        check(copiedVisit.value(for: nextVisit) == nil && pendingVisit.value(for: nextVisit) == nil,
+              "Later cleanup visits must not inherit stale copy feedback or authorization requests.")
 
         let controller = RetainedPageController()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650),
@@ -458,9 +466,10 @@ enum PerformanceProbe {
         var currentMonitor: DevCleanupMonitor?
         var portSearch: Binding<String>?
         var cleanedSearch: Binding<String>?
+        let visitID = UUID()
         func showCleanup(entryPending: Bool) {
             var page = DevCleanupTab(
-                allowAutomaticTermination: .constant(false), entryPending: entryPending,
+                allowAutomaticTermination: .constant(false), visitID: .constant(visitID), entryPending: entryPending,
                 requestConfirmation: {}, showDevServers: {}, preferences: preferences
             )
             page.performanceObserveState = {

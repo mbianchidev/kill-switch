@@ -310,9 +310,17 @@ final class DevCleanupMonitor: ObservableObject {
 
 // MARK: - View
 
+struct CleanupVisitValue<Value> {
+    let visit: UUID
+    let value: Value
+
+    func value(for currentVisit: UUID) -> Value? { visit == currentVisit ? value : nil }
+}
+
 struct DevCleanupTab: View {
     private enum AuthorizationAction: Equatable { case enable, resetDefaults }
     @Binding var allowAutomaticTermination: Bool
+    @Binding private var visitID: UUID
     let entryPending: Bool
     let requestConfirmation: () -> Void
     let showDevServers: () -> Void
@@ -324,13 +332,29 @@ struct DevCleanupTab: View {
     @State private var runtimeText = ""
     @State private var indicatorText = ""
     @State private var exclusionText = ""
-    @State private var copiedProcessID: Int32?
+    @State private var copiedFeedback: CleanupVisitValue<Int32>?
     @State private var copyFeedbackRevision = 0
     @State private var portSearch = ""
     @State private var portSorting = TableComparator(field: DevPortTableFields.port)
     @State private var cleanedSearch = ""
     @State private var cleanedSorting = TableComparator(field: CleanedProcessTableFields.age, order: .reverse)
-    @State private var authorizationAction: AuthorizationAction?
+    @State private var authorizationRequest: CleanupVisitValue<AuthorizationAction>?
+
+    private var copiedProcessID: Int32? {
+        get { copiedFeedback?.value(for: visitID) }
+        nonmutating set { copiedFeedback = newValue.map { CleanupVisitValue(visit: visitID, value: $0) } }
+    }
+
+    private var authorizationAction: AuthorizationAction? {
+        get { authorizationRequest?.value(for: visitID) }
+        nonmutating set { authorizationRequest = newValue.map { CleanupVisitValue(visit: visitID, value: $0) } }
+    }
+
+    private var currentAuthorizationRequest: CleanupVisitValue<AuthorizationAction>? {
+        guard pageVisible, !entryPending, let authorizationRequest,
+              authorizationRequest.value(for: visitID) != nil else { return nil }
+        return authorizationRequest
+    }
 
 #if KILLSWITCH_PERFORMANCE_PROBE
     typealias PerformanceStateObserver = (DevCleanupMonitor, Binding<String>, Binding<String>) -> Void
@@ -338,11 +362,12 @@ struct DevCleanupTab: View {
 #endif
 
     init(
-        allowAutomaticTermination: Binding<Bool>, entryPending: Bool,
+        allowAutomaticTermination: Binding<Bool>, visitID: Binding<UUID>, entryPending: Bool,
         requestConfirmation: @escaping () -> Void, showDevServers: @escaping () -> Void,
         preferences: DevCleanupPreferences = DevCleanupPreferences()
     ) {
         _allowAutomaticTermination = allowAutomaticTermination
+        _visitID = visitID
         self.entryPending = entryPending
         self.requestConfirmation = requestConfirmation
         self.showDevServers = showDevServers
@@ -378,18 +403,27 @@ struct DevCleanupTab: View {
         .onChange(of: allowAutomaticTermination) { allowed in
             monitor.prepareForEntry(allowAutomaticTermination: allowed)
         }
+        .onChange(of: visitID) { _ in
+            copiedProcessID = nil
+            copyFeedbackRevision += 1
+            authorizationAction = nil
+        }
         .alert("Authorize automatic termination?", isPresented: Binding(
-            get: { authorizationAction != nil },
+            get: { allowsOperations && currentAuthorizationRequest != nil },
             set: { if !$0 { authorizationAction = nil } }
-        ), presenting: authorizationAction) { action in
+        ), presenting: currentAuthorizationRequest) { request in
             Button("Cancel", role: .cancel) { authorizationAction = nil }
-            Button(action == .resetDefaults ? "Reset and enable auto-kill" : "Enable auto-kill", role: .destructive) {
+            Button(request.value == .resetDefaults ? "Reset and enable auto-kill" : "Enable auto-kill", role: .destructive) {
+                guard request.visit == visitID else {
+                    fputs("KillSwitch canceled an expired cleanup authorization request; no settings were changed.\n", stderr)
+                    return
+                }
                 allowAutomaticTermination = true
                 monitor.prepareForEntry(allowAutomaticTermination: true)
-                if action == .resetDefaults { monitor.resetToDefaults() } else { monitor.autoKillEnabled = true }
+                if request.value == .resetDefaults { monitor.resetToDefaults() } else { monitor.autoKillEnabled = true }
             }
-        } message: { action in
-            Text(action == .resetDefaults
+        } message: { request in
+            Text(request.value == .resetDefaults
                 ? "Resetting restores automatic termination and immediately runs cleanup using the default age threshold. Qualifying development servers can be terminated. Age is not inactivity. Protected processes remain protected."
                 : "Automatic cleanup can terminate qualifying development servers older than the saved age threshold. Age is not inactivity. Protected processes remain protected.")
         }

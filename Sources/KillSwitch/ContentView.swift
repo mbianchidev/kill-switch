@@ -17,6 +17,7 @@ struct ContentView: View {
     @State private var confirmCleanup = false
     @State private var cleanupAuthorized = false
     @State private var cleanupEntryPending = false
+    @State private var cleanupVisitID = UUID()
     @State private var inspectedProcess: ActivityProcessDescriptor?
 
     init(
@@ -77,10 +78,13 @@ struct ContentView: View {
             AppStartupConfirmation.contentDidAppear()
         }
         .onReceive(NotificationCenter.default.publisher(for: .showDiagnosticsTab)) { _ in
-            selectedTab = .diagnostics
+            navigationSelection.wrappedValue = .diagnostics
         }
         .onReceive(NotificationCenter.default.publisher(for: .killSwitchWindowVisibility)) { event in
-            if let visible = event.object as? Bool { windowVisible = visible }
+            if let visible = event.object as? Bool {
+                windowVisible = visible
+                if !visible { cleanupVisitID = UUID(); confirmCleanup = false }
+            }
         }
 #if KILLSWITCH_PERFORMANCE_PROBE
         .onReceive(PerformanceProbeNavigation.shared.$page) { page in
@@ -94,8 +98,12 @@ struct ContentView: View {
             get: { selectedTab },
             set: { page in
                 guard let page, page != selectedTab else { return }
-                if page == .cleanup {
+                if selectedTab == .cleanup || page == .cleanup {
+                    cleanupVisitID = UUID()
+                    confirmCleanup = false
                     cleanupAuthorized = false
+                }
+                if page == .cleanup {
                     cleanupEntryPending = page.requiresCleanupConfirmation(
                         autoKillEnabled: DevCleanupPreferences().load().autoKillEnabled
                     )
@@ -109,7 +117,7 @@ struct ContentView: View {
     private var pageContent: some View {
         switch selectedTab {
         case .dashboard:
-            ActivityDashboard(monitor: resourceMonitor, systemHealth: systemHealth, navigate: { selectedTab = $0 })
+            ActivityDashboard(monitor: resourceMonitor, systemHealth: systemHealth, navigate: { navigationSelection.wrappedValue = $0 })
         case .resources, .memory, .disk, .network, .energy:
             if let metric = selectedTab.metric {
                 ResourcesTab(monitor: resourceMonitor, initialMetric: metric)
@@ -129,6 +137,7 @@ struct ContentView: View {
         case .cleanup:
             DevCleanupTab(
                 allowAutomaticTermination: $cleanupAuthorized,
+                visitID: $cleanupVisitID,
                 entryPending: cleanupEntryPending,
                 requestConfirmation: { confirmCleanup = true },
                 showDevServers: { navigationSelection.wrappedValue = .devServers }

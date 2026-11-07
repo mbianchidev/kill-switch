@@ -192,6 +192,10 @@ Visit authorization is separate from the editable auto-kill setting and is
 revoked on stop. Resetting preferences cannot grant it. The view requires
 explicit confirmation for resetting defaults or re-enabling auto-kill; queue
 admission rechecks authorization as well as current saved settings.
+Transient copy feedback and authorization requests carry a cleanup-visit token.
+Navigation and hiding rotate that token directly, so coalesced conditional-view
+updates cannot revive old feedback or dialogs. Confirmation callbacks also
+check the current token before changing settings.
 The native
 history-process menu creates its choices on opening and releases them after
 closing instead of maintaining a SwiftUI view for every recorded process.
