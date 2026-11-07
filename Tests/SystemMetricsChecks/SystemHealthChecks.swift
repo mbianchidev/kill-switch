@@ -1,9 +1,48 @@
 import Foundation
 import IOKit.ps
+import Darwin
 import SystemMetricsCore
 
 extension SystemMetricsChecks {
     static func checkSystemHealth() {
+        do {
+            let arm = try MachTimebase(numerator: 125, denominator: 3)
+            let intel = try MachTimebase(numerator: 1, denominator: 1)
+            check(approximately(arm.seconds(ticks: 24_000_000), 1), "Apple Silicon Mach ticks convert to CPU seconds")
+            check(approximately(intel.seconds(ticks: 1_000_000_000), 1), "Intel Mach ticks retain nanosecond scaling")
+            check(
+                SystemMetricsCalculator.processCPUPercent(
+                    currentTicks: 48_000_000, previousTicks: 24_000_000, elapsedSeconds: 1, timebase: arm
+                ).map { approximately($0, 100) } == true,
+                "Mach CPU rates use the platform timebase before one-core normalization"
+            )
+            check(
+                SystemMetricsCalculator.processCPUPercent(
+                    currentTicks: 1, previousTicks: 2, elapsedSeconds: 1, timebase: arm
+                ) == nil,
+                "regressed Mach CPU counters stay unavailable"
+            )
+        } catch { check(false, "synthetic Mach timebase: \(error.localizedDescription)") }
+        do {
+            _ = try MachTimebase(numerator: 1, denominator: 0)
+            check(false, "an invalid Mach timebase must not invent CPU rates")
+        } catch { check(true, "an invalid Mach timebase must not invent CPU rates") }
+        do {
+            let translated = try SystemHealthReader.architectureForTranslation(status: 0, value: 1, size: 4, error: 0)
+            let nativeIntel = try SystemHealthReader.architectureForTranslation(status: -1, value: 0, size: 4, error: ENOENT)
+            check(
+                translated == "Apple Silicon (Rosetta)",
+                "translated Intel executable still identifies Apple Silicon hardware"
+            )
+            check(
+                nativeIntel == "Intel",
+                "an absent translation key identifies native Intel"
+            )
+        } catch { check(false, "synthetic architecture decoding: \(error.localizedDescription)") }
+        do {
+            _ = try SystemHealthReader.architectureForTranslation(status: -1, value: 0, size: 4, error: EPERM)
+            check(false, "a restricted translation read must not invent Intel hardware")
+        } catch { check(true, "a restricted translation read must not invent Intel hardware") }
         check(
             SystemBatteryReading.chargePercentage(current: 3_200, maximum: 4_000) == 80,
             "battery charge uses current capacity relative to the reported maximum"

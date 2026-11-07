@@ -183,6 +183,14 @@ enum PerformanceProbe {
         check(monitor.performanceEffectiveMetric == .energy, "Showing the window must restore the selected metric.")
         monitor.setMetric(nil, owner: second)
         check(monitor.performanceEffectiveMetric == nil, "The active page must release its sampling lease.")
+        let energyDate = Date()
+        for index in 0..<61 {
+            monitor.publishPerformanceSample(fixture(
+                date: energyDate.addingTimeInterval(Double(index - 60) * 6), count: 1_000, step: index
+            ))
+        }
+        check(monitor.history[.energy]?.count == 51, "Energy probes must populate and prune the full five-minute chart.")
+        check(monitor.history[.energy]?.last?.primary == 2_000, "Energy chart fixtures must contain measured power totals.")
 
         let suite = "KillSwitch.synthetic-entry-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suite) else {

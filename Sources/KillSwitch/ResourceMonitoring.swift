@@ -269,6 +269,10 @@ final class ResourceMonitor: ObservableObject {
         liveActivity = activity
         timeline = liveHistory.snapshots.map { $0.point(for: focusedProcess) }
         historyProcesses = activity.processes.map(\.process)
+        if snapshot.sampledEnergy, let power = ProcessEnergyCache.totalPower(snapshot.processes.map(\.power)) {
+            history[.energy, default: []].append(ResourceHistoryPoint(date: snapshot.date, primary: power, secondary: nil))
+            history[.energy]?.removeAll { snapshot.date.timeIntervalSince($0.date) > 300 }
+        }
         lastUpdated = snapshot.date
         errorMessage = snapshot.warnings.isEmpty ? nil : snapshot.warnings.joined(separator: "\n")
     }

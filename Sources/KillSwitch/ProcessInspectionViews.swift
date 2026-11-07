@@ -134,6 +134,7 @@ final class ProcessInspectionMonitor: ObservableObject {
                 try ProcessLifetimeReader.validate(target, presence: ProcessLifetimeReader.presence(
                     pid: target.pid, bootSession: target.bootSession
                 ))
+                try ProcessInspectionParser.validateTarget(snapshot, pid: target.pid)
             }
             let pids = Set(snapshot.files.map(\.pid) + snapshot.connections.map(\.pid))
             var verified: [Int32: ActivityProcessIdentity] = [:]

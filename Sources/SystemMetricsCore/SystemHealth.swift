@@ -129,20 +129,34 @@ public struct SystemHealthSnapshot: Equatable, Sendable {
 
 public enum SystemHealthReader {
     public static func hardware() throws -> SystemHardwareInfo {
-#if arch(arm64)
-        let architecture = "Apple Silicon"
-#else
-        let architecture = "Intel"
-#endif
         return SystemHardwareInfo(
             model: try string("hw.model"), cpuName: try string("machdep.cpu.brand_string"),
-            architecture: architecture, physicalCPUCount: try integer("hw.physicalcpu"),
+            architecture: try architecture(), physicalCPUCount: try integer("hw.physicalcpu"),
             logicalCPUCount: ProcessInfo.processInfo.processorCount,
             activeCPUCount: ProcessInfo.processInfo.activeProcessorCount,
             physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory,
             operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,
             kernelVersion: try string("kern.osrelease")
         )
+    }
+
+    private static func architecture() throws -> String {
+#if arch(arm64)
+        return "Apple Silicon"
+#else
+        var translated: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        let status = sysctlbyname("sysctl.proc_translated", &translated, &size, nil, 0)
+        return try architectureForTranslation(status: status, value: translated, size: size, error: errno)
+#endif
+    }
+
+    public static func architectureForTranslation(status: Int32, value: Int32, size: Int, error: Int32) throws -> String {
+        if status != 0, error == ENOENT { return "Intel" }
+        guard status == 0, size == MemoryLayout<Int32>.size, value == 0 || value == 1 else {
+            throw SystemHealthError(message: "macOS could not verify whether this executable is translated by Rosetta.")
+        }
+        return value == 1 ? "Apple Silicon (Rosetta)" : "Intel"
     }
 
     public static func sample() -> SystemHealthSnapshot {

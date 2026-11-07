@@ -252,6 +252,11 @@ render their resource views directly. AppKit renders offscreen without opening,
 activating, or controlling a desktop window. No real collectors, user history,
 cleanup, updates, startup changes, or privileged diagnostics run.
 
+Energy fixtures populate and prune the same session chart read by the real
+Energy page. The isolated interface checks assert both the retained point count
+and reported power total so a blank/startup chart cannot stand in for that
+rendering workload.
+
 The external harness reads kernel CPU time, resident memory, and physical
 footprint every 100 ms. CPU uses one-core normalization: 100% is one logical
 CPU core, not the whole machine. It excludes the first two seconds for average
@@ -259,6 +264,13 @@ and p95 CPU, and reports median memory from the final third of the run.
 Peak RSS includes `wait4`'s maximum; peak physical footprint is an observed
 peak, not the lifetime kernel peak. `wait4` CPU includes waited child processes;
 the synthetic scenarios launch none.
+
+CPU fields from `proc_pid_rusage` are Mach ticks, converted using the native
+timebase before seconds/percentages are calculated. Reports record that
+numerator and denominator. On Apple Silicon a non-1:1 ratio makes treating
+ticks as nanoseconds substantially understate CPU. Historical reports without
+this conversion must be recalibrated from their retained samples or replaced;
+`wait4` CPU values already use seconds and must not be scaled.
 
 The probe also accepts `system`, `battery`, `thermal`, `connections`, `files`,
 `servers`, `inspector`, and `navigation`. Append a comma-separated scenario list

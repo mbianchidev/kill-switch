@@ -57,7 +57,8 @@ private struct ProcessMetadata {
 }
 
 final class ResourceSampler {
-    private var previousProcessCPU: [ResourceProcessIdentity: (date: Date, nanoseconds: UInt64)] = [:]
+    private var previousProcessCPU: [ResourceProcessIdentity: (date: Date, ticks: UInt64)] = [:]
+    private let cpuTimebase = Result { try MachTimebase.current() }
     private var previousProcessDate: Date?
     private var previousSystemCPU: SystemCPUTicks?
     private var previousDisk: (date: Date, counters: DiskCounters)?
@@ -81,6 +82,7 @@ final class ResourceSampler {
     }
 
     func sample(metric: ResourceMetric?, trackedPIDs: Set<Int32> = []) throws -> ResourceSnapshot {
+        let timebase = try cpuTimebase.get()
         let now = Date()
         let policy = ResourceSamplingPolicy.forMetric(metric ?? .cpu)
         if let previousProcessDate {
@@ -93,7 +95,7 @@ final class ResourceSampler {
         let parsedProcesses = try samplePSProcesses()
         let afterPS = sampleLifetimeIdentities()
         let nativeProcesses = sampleNativeProcesses(
-            applications: applications, beforePS: beforePS, afterPS: afterPS
+            applications: applications, beforePS: beforePS, afterPS: afterPS, timebase: timebase
         )
         var sampledEnergy = false
         if policy.usesTop && (lastEnergyDate.map { now.timeIntervalSince($0) >= Double(policy.intervalSeconds) } ?? true) {
@@ -274,9 +276,10 @@ final class ResourceSampler {
     private func sampleNativeProcesses(
         applications: [Int32: (name: String, icon: NSImage?)],
         beforePS: [Int32: ResourceProcessIdentity],
-        afterPS: [Int32: ResourceProcessIdentity]
+        afterPS: [Int32: ResourceProcessIdentity],
+        timebase: MachTimebase
     ) -> [Int32: NativeProcess] {
-        var currentCPU: [ResourceProcessIdentity: (date: Date, nanoseconds: UInt64)] = [:]
+        var currentCPU: [ResourceProcessIdentity: (date: Date, ticks: UInt64)] = [:]
         var activeIdentities: Set<ResourceProcessIdentity> = []
         var result: [Int32: NativeProcess] = [:]
         identities.removeAll(keepingCapacity: true)
@@ -302,9 +305,8 @@ final class ResourceSampler {
             let cpu: Double?
             if let previousCPU = previousProcessCPU[identity] {
                 cpu = SystemMetricsCalculator.processCPUPercent(
-                    currentNanoseconds: totalCPU,
-                    previousNanoseconds: previousCPU.nanoseconds,
-                    elapsedSeconds: sampledAt.timeIntervalSince(previousCPU.date)
+                    currentTicks: totalCPU, previousTicks: previousCPU.ticks,
+                    elapsedSeconds: sampledAt.timeIntervalSince(previousCPU.date), timebase: timebase
                 )
             } else {
                 cpu = nil
@@ -318,7 +320,7 @@ final class ResourceSampler {
                 name: processMetadata.name,
                 user: username(for: bsd.pbi_uid),
                 cpu: cpu,
-                cpuTimeSeconds: Double(totalCPU) / 1_000_000_000,
+                cpuTimeSeconds: timebase.seconds(ticks: totalCPU),
                 threads: task.map { Int($0.pti_threadnum) },
                 idleWakeUps: usage.ri_interrupt_wkups,
                 kind: processMetadata.kind,

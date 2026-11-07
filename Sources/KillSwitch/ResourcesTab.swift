@@ -163,7 +163,7 @@ struct ResourcesTab: View {
                 .frame(minWidth: 300, idealWidth: 390, maxWidth: compact ? .infinity : 440, minHeight: 132, maxHeight: 132)
             }
 
-            if !compact { Divider() }
+            if !compact { Divider().frame(height: 150) }
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("ENTIRE MAC · NOW")

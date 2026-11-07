@@ -66,6 +66,15 @@ extension SystemMetricsChecks {
             "\nf8", "tunix", "n/tmp/example.sock", ""
         ].joined(separator: "\0")
         let snapshot = ProcessInspectionParser.parseLsof(Data(fixture.utf8))
+        do {
+            try ProcessInspectionParser.validateTarget(snapshot, pid: 42)
+            check(true, "a target inspection accepts verified file or connection records")
+        } catch { check(false, "a readable target inspection was rejected") }
+        let emptyTarget = ProcessInspectionParser.parseLsof(Data())
+        do {
+            try ProcessInspectionParser.validateTarget(emptyTarget, pid: 42)
+            check(false, "an empty live target inspection must report unavailable data")
+        } catch { check(true, "an empty live target inspection must report unavailable data") }
         check(snapshot.files.count == 3, "open-files parser lists files without treating IP sockets as files")
         check(snapshot.files.first?.path == "/tmp/example file\nwith newline", "NUL parsing preserves filename field boundaries")
         check(snapshot.files.first?.lock == "R", "open-files parser retains lock information")

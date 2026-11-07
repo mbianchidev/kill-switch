@@ -36,8 +36,28 @@ struct FootprintReport: Codable {
     let warmupSeconds: Double
     let samplingSeconds: Double
     let cpuNormalization: String
+    let machTimebaseNumerator: UInt32
+    let machTimebaseDenominator: UInt32
     let coverage: String
     let runs: [FootprintRun]
+}
+
+struct CPUCounterClock {
+    let numerator: UInt32
+    let denominator: UInt32
+
+    static func current() throws -> CPUCounterClock {
+        var info = mach_timebase_info_data_t()
+        let status = mach_timebase_info(&info)
+        guard status == KERN_SUCCESS, info.numer > 0, info.denom > 0 else {
+            throw MeasurementError.message("Cannot determine the native CPU-counter timebase (status \(status))")
+        }
+        return CPUCounterClock(numerator: info.numer, denominator: info.denom)
+    }
+
+    func seconds(_ ticks: UInt64) -> Double {
+        Double(ticks) * Double(numerator) / Double(denominator) / 1_000_000_000
+    }
 }
 
 enum MeasurementError: LocalizedError {
@@ -51,7 +71,7 @@ func failure(_ message: String) -> MeasurementError {
     .message("\(message): \(String(cString: strerror(errno)))")
 }
 
-func processReading(pid: Int32, start: Date) throws -> FootprintReading {
+func processReading(pid: Int32, start: Date, clock: CPUCounterClock) throws -> FootprintReading {
     var info = rusage_info_v4()
     let status = withUnsafeMutablePointer(to: &info) {
         $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V4, $0) }
@@ -59,7 +79,7 @@ func processReading(pid: Int32, start: Date) throws -> FootprintReading {
     guard status == 0 else { throw failure("Cannot read benchmark process \(pid)") }
     return FootprintReading(
         elapsed: Date().timeIntervalSince(start),
-        cpuSeconds: Double(info.ri_user_time + info.ri_system_time) / 1_000_000_000,
+        cpuSeconds: clock.seconds(info.ri_user_time + info.ri_system_time),
         residentBytes: info.ri_resident_size, footprintBytes: info.ri_phys_footprint
     )
 }
@@ -69,7 +89,7 @@ func median(_ values: [UInt64]) -> UInt64 {
 }
 
 func measure(
-    executable: String, scenario: String, repetition: Int, duration: Double, count: Int, directory: URL
+    executable: String, scenario: String, repetition: Int, duration: Double, count: Int, directory: URL, clock: CPUCounterClock
 ) throws -> FootprintRun {
     let log = directory.appendingPathComponent("\(scenario)-\(repetition).log")
     let descriptor = Darwin.open(log.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
@@ -111,7 +131,7 @@ func measure(
         guard Date().timeIntervalSince(start) <= duration + 30 else {
             throw MeasurementError.message("Benchmark exceeded its deadline")
         }
-        do { readings.append(try processReading(pid: pid, start: start)) }
+        do { readings.append(try processReading(pid: pid, start: start, clock: clock)) }
         catch {
             if errno != ESRCH { throw error }
         }
@@ -174,6 +194,7 @@ do {
         throw MeasurementError.message("Choose unique, supported probe scenarios.")
     }
     let executable = URL(fileURLWithPath: arguments[0]).standardizedFileURL.path
+    let clock = try CPUCounterClock.current()
     guard FileManager.default.isExecutableFile(atPath: executable) else {
         throw MeasurementError.message("Build the isolated release probe before measuring")
     }
@@ -188,7 +209,7 @@ do {
             for repetition in 1...repetitions {
                 let run = try measure(
                     executable: executable, scenario: scenario, repetition: repetition,
-                    duration: duration, count: count, directory: directory
+                    duration: duration, count: count, directory: directory, clock: clock
                 )
                 runs.append(run)
                 print(String(
@@ -212,10 +233,11 @@ do {
     let architecture = "x86_64"
 #endif
     let report = FootprintReport(
-        schemaVersion: 1, revision: arguments[5], operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,
+        schemaVersion: 2, revision: arguments[5], operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,
         hardwareModel: try hardwareModel(), architecture: architecture, logicalCPUs: ProcessInfo.processInfo.processorCount,
         configuration: "Swift release (-O), KILLSWITCH_PERFORMANCE_PROBE", processCount: count,
         warmupSeconds: 2, samplingSeconds: 0.1, cpuNormalization: "100% equals one logical CPU core; not divided by CPU count",
+        machTimebaseNumerator: clock.numerator, machTimebaseDenominator: clock.denominator,
         coverage: "Synthetic 51-sample history and process rows. Dashboard includes the app shell; resource pages render directly. Offscreen AppKit drawing, no desktop interaction, live collectors, real history, or cleanup. Peak physical footprint is observed at 100 ms, not the lifetime kernel peak. wait4 CPU includes waited children; these synthetic scenarios launch none.",
         runs: runs
     )

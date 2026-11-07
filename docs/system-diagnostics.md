@@ -46,6 +46,12 @@ Throughput and energy scales start at zero and include the largest value in
 the visible history. Legends identify the series; CPU/memory/disk/network
 support five-minute, one-hour, six-hour, and 24-hour windows. Energy retains its
 session-only five-minute graph.
+
+Native per-process CPU counters from `proc_pid_rusage` are Mach absolute-time
+ticks. KillSwitch converts them with `mach_timebase_info` before calculating CPU
+seconds or percentages; treating them as nanoseconds understates Apple Silicon
+usage. Older per-process CPU history recorded with the former conversion is not
+retroactively recalibrated. Global CPU accounting is separate and unchanged.
 Each I/O counter uses its own collection timestamp for rate calculations;
 blocking energy queries do not turn steady traffic into alternating rates.
 
@@ -77,6 +83,11 @@ when no relevant page is visible, and all IOKit objects/file descriptors are
 released after a read. Failed fields and verified battery absence have
 distinct presentations. These readings do not expand the persisted history or
 collect identifying serial/UUID values.
+
+Hardware architecture is detected at runtime for the Intel executable slice:
+Rosetta still identifies an Apple Silicon Mac. An absent translation key
+identifies native Intel; other unreadable translation states are reported
+unavailable rather than silently identifying the wrong hardware.
 
 ## History and storage
 
@@ -164,6 +175,10 @@ protocol, state, type, and measurement filters use explicit comparisons.
 Numeric comparisons and sorting use underlying counters rather
 than formatted strings. macOS can omit protected processes, files, and sockets;
 short-lived connections between samples may be missed.
+
+For a verified live target, a read exposing neither files nor connections is
+reported as unavailable inspection data, not a successful empty inventory.
+Successful global connection/listener queries can legitimately have no matches.
 
 Filesystem metadata lookups use `lsof`'s two-second blocking-operation timeout.
 Inspection no longer deliberately skips those lookups with `-b`, which generated

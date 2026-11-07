@@ -115,6 +115,12 @@ public enum ProcessInspectionParser {
         return lsofArguments + (connectionsOnly ? ["-i", "-U"] : [])
     }
 
+    public static func validateTarget(_ snapshot: ProcessInspectionSnapshot, pid: Int32) throws {
+        guard snapshot.files.contains(where: { $0.pid == pid }) || snapshot.connections.contains(where: { $0.pid == pid }) else {
+            throw ProcessInspectionError(message: "macOS did not expose files or connections for this process. Inspection data is unavailable; its lifetime is still present.")
+        }
+    }
+
     public static func parseLsof(_ data: Data) -> ProcessInspectionSnapshot {
         var files: [OpenFileRecord] = []
         var connections: [NetworkConnectionRecord] = []
