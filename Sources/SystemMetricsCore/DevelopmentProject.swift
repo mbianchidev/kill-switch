@@ -38,6 +38,10 @@ public enum DevelopmentProjectResolver {
                         : directory.appendingPathComponent(path).standardizedFileURL
                 }
                 guard shouldContinue() else { throw CancellationError() }
+                if FileManager.default.fileExists(atPath: metadata.appendingPathComponent("reftable").path) {
+                    throw ProcessInspectionError(message: "Git reftable branch metadata is not supported; the project directory remains available.")
+                }
+                guard shouldContinue() else { throw CancellationError() }
                 return DevelopmentProjectContext(
                     directory: directory, branch: try branch(readSmallFile(metadata.appendingPathComponent("HEAD")))
                 )

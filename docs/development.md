@@ -177,6 +177,9 @@ continuous history sampling is not paused by hiding or minimizing.
 Energy rechecks that admission between its blocking power read, sleep-assertion
 read, and battery read. Revocation clears optional measurements and resets its
 refresh deadline without interrupting the continuous base sample.
+Memory pressure checks its live admission immediately before the optional
+subprocess, after base VM/swap collection. Unreadable pressure is reported as a
+warning rather than silently becoming a zero measurement.
 Application visibility also gates queued health and inspection work at the
 window delegate, before SwiftUI updates its view leases. Health retains its
 automatic deadline across hide/show; inspection and project discovery recheck

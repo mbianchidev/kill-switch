@@ -224,6 +224,9 @@ Genuine timeout, permission, and collection warnings still appear in the panel.
 Project discovery accepts detached Git IDs only as 40- or 64-byte ASCII
 hexadecimal values. Malformed metadata remains an explicit discovery warning,
 not an invented branch label.
+Git reftable repositories retain their verified project directory but show an
+explicit unsupported-branch warning instead of interpreting the compatibility
+HEAD as the current branch.
 
 Open files includes ordinary files, directories, and Unix sockets, with file
 descriptor, access, size, and reported lock information. Locks are best-effort

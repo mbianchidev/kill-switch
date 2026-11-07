@@ -204,7 +204,9 @@ final class ResourceSampler {
         }
 
         let cpu = sampleCPU(processes: parsedProcesses)
-        let memory = sampleMemory(includePressure: policy.collectsMemoryPressure && allowsOptionalMetric(.memory))
+        let memory = sampleMemory(
+            allowsPressure: { policy.collectsMemoryPressure && allowsOptionalMetric(.memory) }, warnings: &warnings
+        )
         if !cpu.isAvailable && previousSystemCPU == nil {
             warnings.append("CPU rates need two readable samples.")
         }
@@ -500,7 +502,7 @@ final class ResourceSampler {
         }
     }
 
-    private func sampleMemory(includePressure: Bool) -> MemoryResourceSummary {
+    private func sampleMemory(allowsPressure: () -> Bool, warnings: inout [String]) -> MemoryResourceSummary {
         let host = mach_host_self()
         defer { mach_port_deallocate(mach_task_self_, host) }
 
@@ -532,11 +534,18 @@ final class ResourceSampler {
         let swapResult = sysctlbyname("vm.swapusage", &swap, &swapSize, nil, 0)
 
         let pressure: Double?
-        if includePressure,
-           let command = try? CommandRunner.run("/usr/bin/memory_pressure", arguments: ["-Q"]),
-           command.succeeded,
-           let freePercentage = SystemMetricsParser.parseMemoryPressureFreePercentage(command.standardOutput) {
-            pressure = max(0, min(100, 100 - freePercentage))
+        if allowsPressure() {
+            do {
+                let command = try CommandRunner.run("/usr/bin/memory_pressure", arguments: ["-Q"])
+                guard command.succeeded else { throw commandError(command, name: "memory pressure sampler") }
+                guard let freePercentage = SystemMetricsParser.parseMemoryPressureFreePercentage(command.standardOutput) else {
+                    throw parseError("The memory pressure sampler returned an unreadable response.")
+                }
+                pressure = max(0, min(100, 100 - freePercentage))
+            } catch {
+                warnings.append("Memory pressure: \(error.localizedDescription)")
+                pressure = nil
+            }
         } else {
             pressure = nil
         }

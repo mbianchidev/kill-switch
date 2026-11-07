@@ -69,6 +69,17 @@ extension SystemMetricsChecks {
             try Data((String(repeating: "b", count: 64) + "\n").utf8).write(to: head)
             let sha256 = try DevelopmentProjectResolver.resolve(worktree)
             check(sha256.branch == "Detached bbbbbbbb", "SHA-256 detached Git IDs must remain supported")
+            let reftable = metadata.appendingPathComponent("reftable")
+            try FileManager.default.createDirectory(at: reftable, withIntermediateDirectories: false)
+            try Data("ref: refs/heads/.invalid\n".utf8).write(to: head)
+            do {
+                _ = try DevelopmentProjectResolver.resolve(worktree)
+                check(false, "unsupported reftable metadata must not invent a branch from its compatibility HEAD")
+            } catch {
+                check(error.localizedDescription.lowercased().contains("reftable"),
+                      "unsupported reftable metadata must report its specific discovery limitation")
+            }
+            try FileManager.default.removeItem(at: reftable)
             try Data((String(repeating: "\u{FF21}", count: 40) + "\n").utf8).write(to: head)
             do {
                 _ = try DevelopmentProjectResolver.resolve(worktree)
