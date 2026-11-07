@@ -1,6 +1,13 @@
 import AppKit
 import SwiftUI
 import SystemMetricsCore
+import os
+
+enum AppWindowVisibility {
+    private static let state = OSAllocatedUnfairLock(initialState: true)
+    static var isVisible: Bool { state.withLock { $0 } }
+    static func setVisible(_ visible: Bool) { state.withLock { $0 = visible } }
+}
 
 enum MainTab: String, CaseIterable, Identifiable {
     case dashboard, resources, memory, disk, network, energy

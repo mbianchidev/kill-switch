@@ -221,6 +221,9 @@ Filesystem metadata lookups use `lsof`'s two-second blocking-operation timeout.
 Inspection no longer deliberately skips those lookups with `-b`, which generated
 warnings for every mounted filesystem even when inspection succeeded.
 Genuine timeout, permission, and collection warnings still appear in the panel.
+Project discovery accepts detached Git IDs only as 40- or 64-byte ASCII
+hexadecimal values. Malformed metadata remains an explicit discovery warning,
+not an invented branch label.
 
 Open files includes ordinary files, directories, and Unix sockets, with file
 descriptor, access, size, and reported lock information. Locks are best-effort

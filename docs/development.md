@@ -174,6 +174,11 @@ Metric leases and window visibility are updated synchronously in one locked
 selection, rather than waiting behind already-queued samples. The native reader
 rechecks that selection before starting Energy or memory-pressure phases;
 continuous history sampling is not paused by hiding or minimizing.
+Application visibility also gates queued health and inspection work at the
+window delegate, before SwiftUI updates its view leases. Health retains its
+automatic deadline across hide/show; inspection and project discovery recheck
+visibility between stages. Already-started system calls can finish, but a hidden
+window cannot admit subsequent inspection metadata lookups.
 The app uses one macOS `Window` scene rather than permitting independent windows
 with conflicting visibility or resource selections. Dashboard scrubber-reset
 observers live outside the suspended chart subtree, so changes on another page

@@ -12,12 +12,15 @@ public struct DevelopmentProjectContext: Equatable, Sendable {
 }
 
 public enum DevelopmentProjectResolver {
-    public static func resolve(_ workingDirectory: URL) throws -> DevelopmentProjectContext {
+    public static func resolve(
+        _ workingDirectory: URL, shouldContinue: @Sendable () -> Bool = { true }
+    ) throws -> DevelopmentProjectContext {
         guard workingDirectory.isFileURL else { throw ProcessInspectionError(message: "The working directory must be a local path.") }
         let original = workingDirectory.standardizedFileURL
         var directory = original
         var manifestDirectory: URL?
         for _ in 0..<12 {
+            guard shouldContinue() else { throw CancellationError() }
             let git = directory.appendingPathComponent(".git")
             var isDirectory: ObjCBool = false
             if FileManager.default.fileExists(atPath: git.path, isDirectory: &isDirectory) {
@@ -25,6 +28,7 @@ public enum DevelopmentProjectResolver {
                 if isDirectory.boolValue {
                     metadata = git
                 } else {
+                    guard shouldContinue() else { throw CancellationError() }
                     let pointer = try readSmallFile(git).trimmingCharacters(in: .whitespacesAndNewlines)
                     guard pointer.hasPrefix("gitdir: "), !pointer.dropFirst(8).isEmpty else {
                         throw ProcessInspectionError(message: "The project's Git directory pointer is invalid.")
@@ -33,14 +37,19 @@ public enum DevelopmentProjectResolver {
                     metadata = path.hasPrefix("/") ? URL(fileURLWithPath: path)
                         : directory.appendingPathComponent(path).standardizedFileURL
                 }
+                guard shouldContinue() else { throw CancellationError() }
                 return DevelopmentProjectContext(
                     directory: directory, branch: try branch(readSmallFile(metadata.appendingPathComponent("HEAD")))
                 )
             }
-            if manifestDirectory == nil,
-               ["package.json", "Cargo.toml", "go.mod", "pom.xml", "build.gradle", "compose.yaml", "docker-compose.yml"]
-                .contains(where: { FileManager.default.fileExists(atPath: directory.appendingPathComponent($0).path) }) {
-                manifestDirectory = directory
+            if manifestDirectory == nil {
+                for manifest in ["package.json", "Cargo.toml", "go.mod", "pom.xml", "build.gradle", "compose.yaml", "docker-compose.yml"] {
+                    guard shouldContinue() else { throw CancellationError() }
+                    if FileManager.default.fileExists(atPath: directory.appendingPathComponent(manifest).path) {
+                        manifestDirectory = directory
+                        break
+                    }
+                }
             }
             let parent = directory.deletingLastPathComponent()
             if parent == directory { break }
@@ -58,7 +67,8 @@ public enum DevelopmentProjectResolver {
             }
             return name
         }
-        guard (40...64).contains(value.count), value.allSatisfy(\.isHexDigit) else {
+        guard [40, 64].contains(value.utf8.count),
+              value.utf8.allSatisfy({ (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0) }) else {
             throw ProcessInspectionError(message: "The project's Git HEAD is unreadable.")
         }
         return "Detached \(value.prefix(8))"

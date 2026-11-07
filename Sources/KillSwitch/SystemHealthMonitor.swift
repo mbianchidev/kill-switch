@@ -12,6 +12,7 @@ final class SystemHealthMonitor: ObservableObject {
     @Published private(set) var isRefreshing = false
     private var clients: Set<UUID> = []
     private let hasVisibleClient = OSAllocatedUnfairLock(initialState: false)
+    private let windowVisible = OSAllocatedUnfairLock(initialState: true)
     private var timer: Timer?
     private var scheduledRefreshID: UUID?
     private var nextAutomaticRefreshAt: ContinuousClock.Instant?
@@ -44,18 +45,24 @@ final class SystemHealthMonitor: ObservableObject {
         }
     }
 
+    func setWindowVisible(_ visible: Bool) {
+        windowVisible.withLock { $0 = visible }
+        if visible { refreshAutomatically() } else { cancelTimer() }
+    }
+
     func refresh() {
-        guard !clients.isEmpty, refreshID == nil else { return }
+        guard !clients.isEmpty, windowVisible.withLock({ $0 }), refreshID == nil else { return }
         cancelTimer()
         let id = UUID()
         let needsHardware = hardware == nil
         let readHardware = readHardware
         let readSnapshot = readSnapshot
         let hasVisibleClient = hasVisibleClient
+        let windowVisible = windowVisible
         refreshID = id
         isRefreshing = true
         queue.async { [weak self] in
-            guard hasVisibleClient.withLock({ $0 }) else {
+            guard hasVisibleClient.withLock({ $0 }) && windowVisible.withLock({ $0 }) else {
                 DispatchQueue.main.async { [weak self] in
                     guard let self, self.refreshID == id else { return }
                     self.refreshID = nil
@@ -91,7 +98,7 @@ final class SystemHealthMonitor: ObservableObject {
     }
 
     private func refreshAutomatically() {
-        guard !clients.isEmpty, refreshID == nil else { return }
+        guard !clients.isEmpty, windowVisible.withLock({ $0 }), refreshID == nil else { return }
         if let nextAutomaticRefreshAt, now() < nextAutomaticRefreshAt {
             scheduleAutomaticRefresh()
         } else {
@@ -100,7 +107,7 @@ final class SystemHealthMonitor: ObservableObject {
     }
 
     private func scheduleAutomaticRefresh() {
-        guard !clients.isEmpty, refreshID == nil, let nextAutomaticRefreshAt else { return }
+        guard !clients.isEmpty, windowVisible.withLock({ $0 }), refreshID == nil, let nextAutomaticRefreshAt else { return }
         cancelTimer()
         let remaining = now().duration(to: nextAutomaticRefreshAt).components
         let delay = max(0, Double(remaining.seconds) + Double(remaining.attoseconds) / 1e18)

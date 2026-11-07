@@ -1,6 +1,7 @@
 import Foundation
 import Darwin
 import SystemMetricsCore
+import os
 
 extension SystemMetricsChecks {
     static func checkDeveloperListeners() {
@@ -31,6 +32,22 @@ extension SystemMetricsChecks {
             try Data("ref: refs/heads/synthetic-feature\n".utf8).write(to: git.appendingPathComponent("HEAD"))
             let resolved = try DevelopmentProjectResolver.resolve(cwd)
             check(resolved.directory.path == project.path && resolved.branch == "synthetic-feature", "listeners resolve the nearest Git project without running git")
+            do {
+                _ = try DevelopmentProjectResolver.resolve(cwd, shouldContinue: { false })
+                check(false, "canceled project discovery must not start filesystem inspection")
+            } catch {
+                check(error is CancellationError, "canceled project discovery reports cancellation, not an unavailable Git reading")
+            }
+            let admissionChecks = OSAllocatedUnfairLock(initialState: 0)
+            do {
+                _ = try DevelopmentProjectResolver.resolve(cwd, shouldContinue: {
+                    admissionChecks.withLock { $0 += 1; return $0 < 3 }
+                })
+                check(false, "project discovery must recheck admission between metadata lookups")
+            } catch {
+                check(error is CancellationError && admissionChecks.withLock({ $0 }) == 3,
+                      "mid-discovery cancellation stops at the first rejected metadata admission")
+            }
 
             let worktree = root.appendingPathComponent("synthetic-worktree")
             let metadata = root.appendingPathComponent("synthetic-metadata")
@@ -42,6 +59,21 @@ extension SystemMetricsChecks {
             check(detached.directory.path == worktree.path && detached.branch == "Detached 01234567", "worktree gitdir files and detached heads are supported")
 
             let head = metadata.appendingPathComponent("HEAD")
+            for length in 39...65 where length != 40 && length != 64 {
+                try Data((String(repeating: "a", count: length) + "\n").utf8).write(to: head)
+                do {
+                    _ = try DevelopmentProjectResolver.resolve(worktree)
+                    check(false, "detached Git IDs must reject invalid length \(length)")
+                } catch { check(true, "detached Git IDs must reject invalid length \(length)") }
+            }
+            try Data((String(repeating: "b", count: 64) + "\n").utf8).write(to: head)
+            let sha256 = try DevelopmentProjectResolver.resolve(worktree)
+            check(sha256.branch == "Detached bbbbbbbb", "SHA-256 detached Git IDs must remain supported")
+            try Data((String(repeating: "\u{FF21}", count: 40) + "\n").utf8).write(to: head)
+            do {
+                _ = try DevelopmentProjectResolver.resolve(worktree)
+                check(false, "detached Git IDs must reject non-ASCII hexadecimal lookalikes")
+            } catch { check(true, "detached Git IDs must reject non-ASCII hexadecimal lookalikes") }
             try FileManager.default.removeItem(at: head)
             try FileManager.default.createSymbolicLink(at: head, withDestinationURL: git.appendingPathComponent("HEAD"))
             do {

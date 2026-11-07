@@ -432,6 +432,31 @@ enum PerformanceProbe {
         finishRead(queuedHealth)
         check(queuedReads.withLock { $0 } == 2 && queuedHealth.snapshot == snapshot,
               "A canceled queued health read must not delay the next visible client's first sample.")
+        let windowReads = OSAllocatedUnfairLock(initialState: 0)
+        let windowReleased = DispatchSemaphore(value: 0)
+        let windowHealth = SystemHealthMonitor(
+            readHardware: { windowReads.withLock { $0 += 1 }; return hardware },
+            readSnapshot: { windowReads.withLock { $0 += 1 }; return snapshot }
+        )
+        defer { windowHealth.shutdown() }
+        windowHealth.performanceEnqueue {
+            if windowReleased.wait(timeout: .now() + 5) != .success { timedOut.withLock { $0 = true } }
+        }
+        windowHealth.setActive(true, client: client)
+        windowHealth.setWindowVisible(false)
+        windowReleased.signal()
+        finishRead(windowHealth)
+        check(windowReads.withLock { $0 } == 0 && !windowHealth.performanceHasScheduledRefresh,
+              "Application visibility must block queued health reads before SwiftUI removes their visible clients.")
+        windowHealth.setWindowVisible(true)
+        finishRead(windowHealth)
+        check(windowReads.withLock { $0 } == 2 && windowHealth.snapshot == snapshot,
+              "Showing the window must resume a canceled health read without depending on a view callback.")
+        windowHealth.setWindowVisible(false)
+        windowHealth.setWindowVisible(true)
+        finishRead(windowHealth)
+        check(windowReads.withLock { $0 } == 2,
+              "Direct coalesced window visibility must retain the shared health polling deadline.")
         check(!timedOut.withLock { $0 }, "Controlled synthetic health reads must not time out.")
     }
 
@@ -495,6 +520,25 @@ enum PerformanceProbe {
         check(reactivated.lastUpdated != nil && reactivated.errorMessage == nil
               && !reactivated.errorIsFromPreviousActivation && !reactivated.isRefreshing,
               "A successful current inspection must clear both its unresolved issue and previous-activation state.")
+        let previousVisibility = AppWindowVisibility.isVisible
+        defer { AppWindowVisibility.setVisible(previousVisibility) }
+        let windowInspection = ProcessInspectionMonitor()
+        defer { windowInspection.stop() }
+        let windowReleased = DispatchSemaphore(value: 0)
+        windowInspection.performanceEnqueue {
+            if windowReleased.wait(timeout: .now() + 5) != .success { timedOut.withLock { $0 = true } }
+        }
+        windowInspection.start(.files)
+        AppWindowVisibility.setVisible(false)
+        windowReleased.signal()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(windowInspection.performanceSampleModes.isEmpty,
+              "Application visibility must block queued inspection before SwiftUI stops its activation.")
+        AppWindowVisibility.setVisible(true)
+        windowInspection.start(.connections)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(windowInspection.performanceSampleModes == [.connections],
+              "A shown inspection window must collect only its current resumed activation.")
         check(!timedOut.withLock { $0 }, "Controlled synthetic inspection queues must not time out.")
     }
 

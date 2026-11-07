@@ -214,6 +214,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let visible = mainWindow.map { $0.isVisible && !$0.isMiniaturized && $0.occlusionState.contains(.visible) } ?? false
         guard lastWindowVisibility != visible else { return }
         lastWindowVisibility = visible
+        AppWindowVisibility.setVisible(visible)
+        SystemHealthMonitor.shared.setWindowVisible(visible)
         ResourceMonitor.shared.setWindowVisible(visible)
         NotificationCenter.default.post(name: .killSwitchWindowVisibility, object: visible)
     }

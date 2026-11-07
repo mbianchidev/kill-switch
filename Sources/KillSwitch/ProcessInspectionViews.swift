@@ -126,8 +126,20 @@ final class ProcessInspectionMonitor: ObservableObject {
         identities[pid].map { ActivityProcessDescriptor(identity: $0, name: name, user: user) }
     }
 
+    private func finishRefresh(_ expected: UUID) {
+        DispatchQueue.main.async {
+            if self.activationID == expected { self.isRefreshing = false }
+        }
+    }
+
+    private func continueCollection(_ expected: UUID) -> Bool {
+        guard activationID == expected else { return false }
+        guard AppWindowVisibility.isVisible else { finishRefresh(expected); return false }
+        return true
+    }
+
     private func sample(mode: Mode, activation: UUID) {
-        guard activationID == activation else { return }
+        guard continueCollection(activation) else { return }
 #if KILLSWITCH_PERFORMANCE_PROBE
         performanceSamples.append(mode)
 #endif
@@ -147,14 +159,14 @@ final class ProcessInspectionMonitor: ObservableObject {
                 ))
                 before = [target.pid: target]
             } else { before = try ProcessLifetimeReader.snapshot() }
-            guard activationID == activation else { return }
+            guard continueCollection(activation) else { return }
             let arguments = try ProcessInspectionParser.arguments(
                 pid: target?.pid, connectionsOnly: mode == .connections, listenersOnly: mode == .listeners
             )
             let result = try CommandRunner.run(
                 "/usr/sbin/lsof", arguments: arguments, environment: ["LC_ALL": "en_US.UTF-8"]
             )
-            guard activationID == activation else { return }
+            guard continueCollection(activation) else { return }
             let standardError = result.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
             guard result.succeeded || (result.status == 1 && (standardError.isEmpty || !result.standardOutput.isEmpty)) else {
                 throw CommandRunnerError.commandFailed(executable: "lsof", status: result.status, message: standardError)
@@ -173,14 +185,14 @@ final class ProcessInspectionMonitor: ObservableObject {
             let pids = Set(snapshot.files.map(\.pid) + snapshot.connections.map(\.pid))
             var verified: [Int32: ActivityProcessIdentity] = [:]
             for pid in pids {
-                guard activationID == activation else { return }
+                guard continueCollection(activation) else { return }
                 if let expected = before[pid],
                    ProcessLifetimeReader.presence(pid: pid, bootSession: expected.bootSession) == .present(expected) {
                     verified[pid] = expected
                 }
             }
 #endif
-            guard activationID == activation else { return }
+            guard continueCollection(activation) else { return }
             var projects: [ActivityProcessIdentity: DevelopmentProjectContext] = [:]
             var projectErrors: [ActivityProcessIdentity: String] = [:]
             if mode == .listeners {
@@ -188,7 +200,7 @@ final class ProcessInspectionMonitor: ObservableObject {
                 let activeIdentities = Set(verified.values)
                 projectCache = projectCache.filter { activeIdentities.contains($0.key) }
                 for identity in verified.values {
-                    guard activationID == activation else { return }
+                    guard continueCollection(activation) else { return }
                     let result: CachedProject
                     if let cached = projectCache[identity], now.timeIntervalSince(cached.date) < 30 {
                         result = cached
@@ -201,17 +213,23 @@ final class ProcessInspectionMonitor: ObservableObject {
 #else
                         do {
                             let directory = try ProcessWorkingDirectoryReader.read(identity)
+                            guard continueCollection(activation) else { return }
+                            let lease = self.activation
                             do {
                                 result = CachedProject(
-                                    date: now, project: try DevelopmentProjectResolver.resolve(directory), error: nil
+                                    date: now, project: try DevelopmentProjectResolver.resolve(directory, shouldContinue: {
+                                        lease.withLock { $0 == activation } && AppWindowVisibility.isVisible
+                                    }), error: nil
                                 )
                             } catch {
+                                if error is CancellationError { throw error }
                                 result = CachedProject(
                                     date: now, project: DevelopmentProjectContext(directory: directory, branch: nil),
                                     error: "Project discovery is incomplete; showing the verified working directory. \(error.localizedDescription)"
                                 )
                             }
                         } catch {
+                            if error is CancellationError { throw error }
                             result = CachedProject(date: now, project: nil, error: error.localizedDescription)
                         }
 #endif
@@ -223,6 +241,7 @@ final class ProcessInspectionMonitor: ObservableObject {
             }
             DispatchQueue.main.async {
                 guard self.activationID == activation else { return }
+                guard AppWindowVisibility.isVisible else { self.isRefreshing = false; return }
                 self.files = mode == .files ? snapshot.files.filter { self.target == nil || $0.pid == self.target?.pid } : []
                 self.connections = snapshot.connections.filter { self.target == nil || $0.pid == self.target?.pid }
                 self.identities = verified
@@ -235,10 +254,12 @@ final class ProcessInspectionMonitor: ObservableObject {
                 self.isRefreshing = false
             }
         } catch {
-            guard activationID == activation else { return }
+            if error is CancellationError { finishRefresh(activation); return }
+            guard continueCollection(activation) else { return }
             logger.error("Process inspection failed: \(error.localizedDescription)")
             DispatchQueue.main.async {
                 guard self.activationID == activation else { return }
+                guard AppWindowVisibility.isVisible else { self.isRefreshing = false; return }
                 self.issue = InspectionIssue(message: error.localizedDescription, activationID: activation)
                 self.isRefreshing = false
                 if self.target != nil {
