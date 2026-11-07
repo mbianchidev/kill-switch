@@ -69,6 +69,7 @@ struct ContentView: View {
                 selection: selectedTab,
                 content: AnyView(pageContent
                     .preferredColorScheme(.dark)
+                    .tint(Theme.accent)
                     .environment(\.isKillSwitchWindowVisible, windowVisible)
                     .environment(\.allowsLiveOperations, startsServices)
                     .environment(\.navigatePage, { navigationSelection.wrappedValue = $0 })
