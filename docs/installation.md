@@ -119,9 +119,11 @@ process table, and a KillSwitch menu-bar icon confirm it is running. Choose
 **All processes** to include system and other-user processes.
 
 **Before opening Dev cleanup:** automatic termination is **enabled by default**
-for qualifying dev servers older than **12 hours**. Sidebar entry asks for
-confirmation; confirming entry runs cleanup immediately. Use the separate
-**Dev servers** page for read-only discovery. Age means total process lifetime,
+for qualifying dev servers older than **12 hours**. Selecting it in the sidebar
+first shows a safe preview. Click **Open Dev cleanup**, then confirm the dialog
+to enter and run cleanup immediately; canceling leaves the preview open without
+starting cleanup. Use the separate **Dev servers** page for read-only discovery.
+Age means total process lifetime,
 not inactivity. Read the
 [configuration and safety guidance](usage.md#dev-cleanup) before using it.
 
