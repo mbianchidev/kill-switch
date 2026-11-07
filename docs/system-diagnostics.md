@@ -90,6 +90,8 @@ Energy and System Health share the same battery-status rules. A non-charging
 battery supplying the Mac is discharging, even while its full-charge flag
 remains set. A non-charging battery on AC or UPS power is not assumed to be
 discharging, and missing charging flags stay unavailable.
+Time-to-empty is retained only while the battery is actually supplying power;
+AC/UPS charge holds do not display stale discharge estimates.
 
 Thermal pressure uses `ProcessInfo.thermalState`, not private SMC temperature or
 fan interfaces. Before the first health snapshot, the card shows that thermal

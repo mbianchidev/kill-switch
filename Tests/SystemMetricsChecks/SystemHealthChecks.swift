@@ -123,6 +123,16 @@ extension SystemMetricsChecks {
                 )
             } else { check(false, "a verified internal battery is available") }
         } catch { check(false, "synthetic battery decoding: \(error.localizedDescription)") }
+        for type in ["AC Power", "UPS Power"] {
+            do {
+                let result = try SystemHealthReader.decodePowerSources(type: type, descriptions: [battery], cycleCount: nil)
+                if case .available(let reading) = result.1 {
+                    check(reading.minutesToEmpty == nil && reading.minutesToFull == nil
+                          && reading.chargingStatus(powerSource: result.0) == .notCharging,
+                          "AC/UPS charge holds must not expose stale battery-discharge estimates")
+                } else { check(false, "synthetic charge-hold battery must remain available") }
+            } catch { check(false, "synthetic charge-hold decoding: \(error.localizedDescription)") }
+        }
         for descriptions in [[[:]], [[kIOPSTypeKey: kIOPSInternalBatteryType]]] {
             do {
                 _ = try SystemHealthReader.decodePowerSources(type: "AC Power", descriptions: descriptions, cycleCount: nil)

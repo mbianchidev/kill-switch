@@ -254,7 +254,8 @@ public enum SystemHealthReader {
                 maximumCapacity: description[kIOPSMaxCapacityKey] as? Int,
                 isCharging: description[kIOPSIsChargingKey] as? Bool,
                 isFullyCharged: description[kIOPSIsChargedKey] as? Bool,
-                minutesToEmpty: description[kIOPSTimeToEmptyKey] as? Int,
+                minutesToEmpty: source == .battery && description[kIOPSIsChargingKey] as? Bool == false
+                    ? description[kIOPSTimeToEmptyKey] as? Int : nil,
                 minutesToFull: description[kIOPSTimeToFullChargeKey] as? Int,
                 cycleCount: cycleCount, condition: description[kIOPSBatteryHealthConditionKey] as? String
                     ?? description[kIOPSBatteryHealthKey] as? String
