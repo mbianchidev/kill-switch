@@ -23,6 +23,39 @@ extension SystemMetricsChecks {
     }
 
     static func checkProcessInspection() {
+        check(
+            (try? ProcessInspectionParser.arguments(pid: 42, connectionsOnly: true))
+                == ProcessInspectionParser.lsofArguments + ["-a", "-p", "42"],
+            "per-process inspection intersects the PID without incorrectly intersecting IP and Unix selectors"
+        )
+        check(
+            (try? ProcessInspectionParser.arguments(connectionsOnly: true))
+                == ProcessInspectionParser.lsofArguments + ["-i", "-U"],
+            "global connection inspection keeps the IP/Unix union"
+        )
+        do {
+            _ = try ProcessInspectionParser.arguments(pid: -1)
+            check(false, "an invalid PID must not broaden inspection to every process")
+        } catch { check(true, "an invalid PID must not broaden inspection to every process") }
+        let expected = ActivityProcessIdentity(bootSession: "synthetic-boot", pid: 42, startTime: 1)
+        do {
+            try ProcessLifetimeReader.validate(expected, presence: .present(expected))
+            check(true, "a matching process lifetime permits inspection")
+        } catch { check(false, "matching process lifetime was rejected") }
+        for presence: ProcessLifetimePresence in [
+            .present(ActivityProcessIdentity(bootSession: "synthetic-boot", pid: 42, startTime: 2)),
+            .absent, .defunct, .unavailable
+        ] {
+            do {
+                try ProcessLifetimeReader.validate(expected, presence: presence)
+                check(false, "an unverified or replaced lifetime must reject inspection")
+            } catch {
+                check(true, "an unverified or replaced lifetime must reject inspection")
+                if presence == .unavailable {
+                    check(!error.localizedDescription.contains("exited"), "an unreadable identity is not falsely reported as an exit")
+                }
+            }
+        }
         let fixture = [
             "p42", "cExample worker", "u501", "Lsample-user", "\nf4", "ar", "lR", "tREG",
             "D0x123", "s4096", "i100", "n/tmp/example file\nwith newline",
@@ -33,6 +66,15 @@ extension SystemMetricsChecks {
             "\nf8", "tunix", "n/tmp/example.sock", ""
         ].joined(separator: "\0")
         let snapshot = ProcessInspectionParser.parseLsof(Data(fixture.utf8))
+        do {
+            try ProcessInspectionParser.validateTarget(snapshot, pid: 42)
+            check(true, "a target inspection accepts verified file or connection records")
+        } catch { check(false, "a readable target inspection was rejected") }
+        let emptyTarget = ProcessInspectionParser.parseLsof(Data())
+        do {
+            try ProcessInspectionParser.validateTarget(emptyTarget, pid: 42)
+            check(false, "an empty live target inspection must report unavailable data")
+        } catch { check(true, "an empty live target inspection must report unavailable data") }
         check(snapshot.files.count == 3, "open-files parser lists files without treating IP sockets as files")
         check(snapshot.files.first?.path == "/tmp/example file\nwith newline", "NUL parsing preserves filename field boundaries")
         check(snapshot.files.first?.lock == "R", "open-files parser retains lock information")

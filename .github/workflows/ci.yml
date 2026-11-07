@@ -33,8 +33,16 @@ jobs:
       - name: Install path safety checks
         run: swift run InstallCoreChecks
 
-      - name: Test system metric parsers
-        run: swift run SystemMetricsChecks
+      - name: Test system metrics, health, inspection, and memory bounds
+        run: swift run -c release SystemMetricsChecks --memory-stress
+
+      - name: Check isolated native navigation and state
+        run: |
+          swift build -c release --scratch-path .build/interface \
+            -Xswiftc -DKILLSWITCH_PERFORMANCE_PROBE --product KillSwitch
+          PROBE="$(swift build -c release --scratch-path .build/interface \
+            -Xswiftc -DKILLSWITCH_PERFORMANCE_PROBE --show-bin-path)/KillSwitch"
+          "$PROBE" --performance-probe --interface-checks
 
       - name: Test startup controls and safety
         run: swift run StartupCoreChecks

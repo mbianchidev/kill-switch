@@ -104,6 +104,12 @@ struct CheckRunner {
 
         var settings = preferences.load()
         check(!settings.autoKillEnabled, "loads persisted auto-kill mode")
+        check(!settings.configuration(allowAutomaticTermination: true).autoKillEnabled, "saved auto-kill disable overrides entry authorization")
+        preferences.setAutoKillEnabled(true)
+        let enabled = preferences.load()
+        check(!enabled.configuration(allowAutomaticTermination: false).autoKillEnabled, "read-only entry cannot inherit a later saved auto-kill enable")
+        check(enabled.configuration(allowAutomaticTermination: true).autoKillEnabled, "automatic cleanup requires both saved enablement and entry authorization")
+        preferences.setAutoKillEnabled(false)
         check(settings.userPorts == [3000, 41000], "preserves normalized user ports")
         check(
             settings.integrationPorts == ["porto": [41000, 41001]],

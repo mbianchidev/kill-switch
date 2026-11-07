@@ -24,6 +24,8 @@ enum Theme {
     )
 
     static let panel = Color.black.opacity(0.22)
+    static let sidebar = Color(red: 0.12, green: 0.09, blue: 0.18)
+    static let accent = Color(red: 0.74, green: 0.62, blue: 0.97)
     static let raisedPanel = Color.white.opacity(0.055)
     static let border = Color.white.opacity(0.1)
     static let cpuUser = Color(red: 0.30, green: 0.79, blue: 0.94)
@@ -51,7 +53,10 @@ struct KillButton: View {
                 .foregroundColor(.red.opacity(0.7))
         }
         .buttonStyle(.plain)
+        .frame(width: 24, height: 24)
         .help("Kill process \(pid)")
+        .accessibilityLabel("Kill process \(pid)")
+        .accessibilityHint("Terminate this process, subject to KillSwitch's safety protections.")
     }
 }
 

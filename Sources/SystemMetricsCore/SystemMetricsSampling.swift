@@ -107,6 +107,13 @@ public enum SystemMetricsCalculator {
         return usedSeconds * 100 / elapsedSeconds
     }
 
+    public static func processCPUPercent(
+        currentTicks: UInt64, previousTicks: UInt64, elapsedSeconds: TimeInterval, timebase: MachTimebase
+    ) -> Double? {
+        guard elapsedSeconds >= 0.1, currentTicks >= previousTicks else { return nil }
+        return timebase.seconds(ticks: currentTicks - previousTicks) * 100 / elapsedSeconds
+    }
+
     private static func tickDelta(current: UInt64, previous: UInt64) -> UInt64 {
         guard current < previous else { return current - previous }
 

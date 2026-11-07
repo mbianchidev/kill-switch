@@ -70,7 +70,7 @@ terminate real processes.
 | [`KeepAwakeCore`](../Sources/KeepAwakeCore) | IOKit power assertions, timed sessions, and resource cleanup |
 | [`InstallCore`](../Sources/InstallCore) | Binary/symlink path safety, native command execution, whole-app validation, staging, startup confirmation, and rollback |
 | [`ScreenTimeCore`](../Sources/ScreenTimeCore) | Active-time tracking, idle breaks, daily rollover, and reminder boundaries |
-| [`SystemMetricsCore`](../Sources/SystemMetricsCore) | Resource parsing, continuous sampling policy, PID-safe history/rates, private SQLite storage, and process inspection queries |
+| [`SystemMetricsCore`](../Sources/SystemMetricsCore) | Resource/system-health parsing, continuous sampling policy, PID-safe history/rates and inspection, bounded project discovery, and private SQLite storage |
 | [`StartupCore`](../Sources/StartupCore) | Startup inventory, protected-service policy, command planning, reversible cron/login changes, and backups |
 
 [`KillSwitch`](../Sources/KillSwitch) contains the GUI and basename-dispatched
@@ -156,9 +156,43 @@ processes remain in the bounded live history and minute averages, and enforces a
 256 MiB peak-resident-memory budget for the checks process, not the full GUI.
 
 `ResourceMonitor.shared` owns the app-lifetime sampler; dashboard and resource
-views observe the same snapshots and history selection. The tab container keeps
+views observe the same snapshots and history selection. The page container keeps
 model lifetimes stable without observing their updates; only the relevant leaf
-views subscribe, so a resource tick does not rebuild every tab. The native
+views subscribe, so a resource tick does not rebuild navigation. A native
+`NSTabViewController` without a tab strip lazily creates visited
+`NSHostingController` pages and retains their SwiftUI filter/sort state.
+Inactive monitoring and inspection pages keep their small state owners but
+remove the expensive chart/table subtree and collapse the unshown native view.
+Reopening reconstructs that subtree with the same filters, sorting, and
+history-process search rather than retaining every visited page's backing
+surfaces. Synthetic interface checks verify appearance/disappearance and state
+restoration through this suspension.
+Metric requests carry page-specific leases, so an outgoing page cannot clear a
+newer selection. Actual window visibility gates heavier collection while
+continuous CPU, memory, disk, and traffic sampling remains unchanged.
+Metric leases and window visibility are updated synchronously in one locked
+selection, rather than waiting behind already-queued samples. The native reader
+rechecks that selection before starting Energy or memory-pressure phases;
+continuous history sampling is not paused by hiding or minimizing.
+The app uses one macOS `Window` scene rather than permitting independent windows
+with conflicting visibility or resource selections. Dashboard scrubber-reset
+observers live outside the suspended chart subtree, so changes on another page
+cannot restore a stale inspected time.
+Scrubbed dates also carry the monitor's history-selection token. Each process
+or range change rotates that token, so even coalesced changes that return to
+the original values invalidate an old scrubber when the page returns. This
+does not add observers or work to ordinary sampling ticks.
+`DevCleanupTab` also keeps its state owner mounted through the safe preview and
+confirmation, retaining filters and prior cleanup results without starting its
+active content. Session leases reject canceled queued passes and old timer
+callbacks. Cleanup rereads saved settings at queue admission; outcomes from
+already-started authorized passes remain retained after hiding. Interface
+checks use an injected synthetic cleanup service, never the live terminator.
+Visit authorization is separate from the editable auto-kill setting and is
+revoked on stop. Resetting preferences cannot grant it. The view requires
+explicit confirmation for resetting defaults or re-enabling auto-kill; queue
+admission rechecks authorization as well as current saved settings.
+The native
 history-process menu creates its choices on opening and releases them after
 closing instead of maintaining a SwiftUI view for every recorded process.
 Its shortcut delegate bypasses populating choices during closed-menu key checks.
@@ -204,6 +238,104 @@ optional and do not become zeroes. See
 There is no separate formatter or linter configuration. Match the existing
 Swift style and keep failure messages actionable. Add regression checks in the
 existing executable target for the subsystem you change.
+
+`SystemHealthMonitor` is shared by Dashboard and the three health pages.
+Visible clients share one monotonic automatic-refresh deadline, at least thirty
+seconds after each completed read. Page changes and hiding/reopening preserve
+that deadline rather than causing extra IOKit reads. Only visible clients keep
+a one-shot timer; an in-flight machine-wide read finishes into the shared cache
+even if its original page disappears. A queued request checks its visible lease
+before reading; cancellation does not consume a polling interval.
+Explicit Refresh reads on demand and
+restarts the automatic cooldown. Synthetic interface checks cover exact timing
+boundaries, overlapping clients, hidden intervals, and in-flight handoffs.
+No health history is accumulated.
+Hardware information is loaded off the main thread and retained once available.
+Inspection uses one serial work queue per visible panel and synchronized
+activation leases to reject queued work before collection or between expensive
+stages. It verifies process lifetimes around collection, rejects stale results,
+and releases row snapshots immediately on hiding; project caches drain on the
+collector queue. The per-process sheet selects only its
+verified PID and shares one files/connections read. Developer listeners cache
+native working-directory/Git context by lifetime for at most thirty seconds,
+walk at most twelve ancestors, and read at most 4 KiB per metadata file without
+following a metadata-file symlink or running git.
+
+### Measure isolated UI footprint
+
+Build a separate release probe; the compile-time entry point is absent from
+normal app and package builds:
+
+```bash
+swift build -c release --scratch-path .build/performance \
+  -Xswiftc -DKILLSWITCH_PERFORMANCE_PROBE --product KillSwitch
+PROBE="$(swift build -c release --scratch-path .build/performance \
+  -Xswiftc -DKILLSWITCH_PERFORMANCE_PROBE --show-bin-path)/KillSwitch"
+swift scripts/measure-footprint.swift "$PROBE" .build/footprint.json \
+  30 3 1000 "$(git rev-parse HEAD)"
+```
+
+This runs five scenarios with synthetic process rows and 51 six-second history
+samples. The dashboard includes the navigation shell; CPU, Memory, and Energy
+render their resource views directly. AppKit renders offscreen without opening,
+activating, or controlling a desktop window. No real collectors, user history,
+cleanup, updates, startup changes, or privileged diagnostics run.
+The harness checks the compile-time probe identity in the executable before
+launching it; a normal or older unmarked app is refused without execution.
+Probe commands require `--performance-probe`, which production apps reject
+before any GUI/services start. Package verification checks that rejection
+support is present before running probe arguments against a copied app.
+
+Energy fixtures populate and prune the same session chart read by the real
+Energy page. The isolated interface checks assert both the retained point count
+and reported power total so a blank/startup chart cannot stand in for that
+rendering workload.
+
+The external harness reads kernel CPU time, resident memory, and physical
+footprint every 100 ms. CPU uses one-core normalization: 100% is one logical
+CPU core, not the whole machine. It excludes the first two seconds for average
+and p95 CPU, and reports median memory from the final third of the run.
+Peak RSS includes `wait4`'s maximum; peak physical footprint is an observed
+peak, not the lifetime kernel peak. `wait4` CPU includes waited child processes;
+the synthetic scenarios launch none.
+
+CPU fields from `proc_pid_rusage` are Mach ticks, converted using the native
+timebase before seconds/percentages are calculated. Reports record that
+numerator and denominator. On Apple Silicon a non-1:1 ratio makes treating
+ticks as nanoseconds substantially understate CPU. Historical reports without
+this conversion must be recalibrated from their retained samples or replaced;
+`wait4` CPU values already use seconds and must not be scaled.
+
+The probe also accepts `system`, `battery`, `thermal`, `connections`, `files`,
+`servers`, `inspector`, and `navigation`. Append a comma-separated scenario list
+after the revision in the measurement command to select them. Inspection
+scenarios use 1,000 synthetic file/listener records; `PROCESSES` controls resource
+rows. Navigation cycles through ten safe pages without entering Dev cleanup.
+Run the deterministic native-state checks directly:
+
+```bash
+"$PROBE" --performance-probe --interface-checks
+"$PROBE" --performance-probe dashboard 3 1000 .build/dashboard.png 900x650
+```
+
+The optional PNG is the probe's own unshown window, never a desktop capture.
+`--performance-probe --native-health-check` separately verifies public native health interfaces
+without identifiers, UI interaction, or privileged diagnostics; it is not a
+synthetic measurement scenario.
+
+The probe drains an autorelease pool around drawing and each event-loop pass,
+matching AppKit's normal event behavior. When comparing reports, use the same
+probe implementation on both revisions; older unpooled reports include
+autoreleased rendering overhead and must not be treated as a long-run app
+baseline. Navigation is useful for detecting retained rendering trees, but a
+short synthetic run is not proof of long-run live-collector memory stability.
+
+Retain reports outside Git and compare identical durations, counts, hardware,
+OS, toolchain, and build settings over multiple runs. These probes complement
+`SystemMetricsChecks --memory-stress`; they do not measure interactive
+VoiceOver behavior, live-collector overhead, a full 24-hour database, or
+extended-run growth. They are not the controlled-environment recurring
+performance baseline requested in [#37](https://github.com/mbianchidev/kill-switch/issues/37).
 
 ## Build and verify the app and DMG
 

@@ -1,0 +1,82 @@
+import Foundation
+import Darwin
+import SystemMetricsCore
+
+extension SystemMetricsChecks {
+    static func checkDeveloperListeners() {
+        let fixture = [
+            "p42", "cSynthetic server", "u501", "Lsynthetic-user",
+            "\nf4", "tIPv4", "PTCP", "n*:8080", "TST=LISTEN",
+            "\nf5", "tIPv6", "PTCP", "n[::]:8080", "TST=LISTEN",
+            "\nf6", "tIPv4", "PTCP", "n127.0.0.1:8000->127.0.0.1:80", "TST=ESTABLISHED",
+            "\nf7", "tIPv4", "PTCP", "nmalformed.invalid:9000", "TST=LISTEN", ""
+        ].joined(separator: "\0")
+        let connections = ProcessInspectionParser.parseLsof(Data(fixture.utf8)).connections
+        check(connections[0].browserURL?.absoluteString == "http://127.0.0.1:8080", "wildcard IPv4 listeners open on loopback")
+        check(connections[1].browserURL?.absoluteString == "http://[::1]:8080", "wildcard IPv6 listeners use a bracketed loopback URL")
+        check(connections[2].browserURL == nil, "active connections are not offered as local web servers")
+        check(connections[3].browserURL == nil, "untrusted endpoint text cannot create an external browser URL")
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("killswitch-project-check-\(UUID().uuidString)")
+        do {
+            let project = root.appendingPathComponent("synthetic-project")
+            let cwd = project.appendingPathComponent("src/nested")
+            let git = project.appendingPathComponent(".git")
+            try FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: git, withIntermediateDirectories: true)
+            defer {
+                do { try FileManager.default.removeItem(at: root) }
+                catch { check(false, "remove synthetic project fixtures: \(error.localizedDescription)") }
+            }
+            try Data("ref: refs/heads/synthetic-feature\n".utf8).write(to: git.appendingPathComponent("HEAD"))
+            let resolved = try DevelopmentProjectResolver.resolve(cwd)
+            check(resolved.directory.path == project.path && resolved.branch == "synthetic-feature", "listeners resolve the nearest Git project without running git")
+
+            let worktree = root.appendingPathComponent("synthetic-worktree")
+            let metadata = root.appendingPathComponent("synthetic-metadata")
+            try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: metadata, withIntermediateDirectories: true)
+            try Data("gitdir: ../synthetic-metadata\n".utf8).write(to: worktree.appendingPathComponent(".git"))
+            try Data("0123456789abcdef0123456789abcdef01234567\n".utf8).write(to: metadata.appendingPathComponent("HEAD"))
+            let detached = try DevelopmentProjectResolver.resolve(worktree)
+            check(detached.directory.path == worktree.path && detached.branch == "Detached 01234567", "worktree gitdir files and detached heads are supported")
+
+            let head = metadata.appendingPathComponent("HEAD")
+            try FileManager.default.removeItem(at: head)
+            try FileManager.default.createSymbolicLink(at: head, withDestinationURL: git.appendingPathComponent("HEAD"))
+            do {
+                _ = try DevelopmentProjectResolver.resolve(worktree)
+                check(false, "project resolution must not follow a symlink HEAD")
+            } catch { check(true, "project resolution must not follow a symlink HEAD") }
+            try FileManager.default.removeItem(at: head)
+            try Data(repeating: 65, count: 4_097).write(to: head)
+            do {
+                _ = try DevelopmentProjectResolver.resolve(worktree)
+                check(false, "project metadata reads must be bounded")
+            } catch { check(true, "project metadata reads must be bounded") }
+            try FileManager.default.removeItem(at: head)
+            guard mkfifo(head.path, 0o600) == 0 else {
+                check(false, "create synthetic FIFO Git metadata")
+                return
+            }
+            do {
+                _ = try DevelopmentProjectResolver.resolve(worktree)
+                check(false, "a FIFO HEAD must not block project discovery")
+            } catch { check(true, "a FIFO HEAD must not block project discovery") }
+
+            let child = Process()
+            child.executableURL = URL(fileURLWithPath: "/bin/sleep")
+            child.arguments = ["30"]
+            child.currentDirectoryURL = cwd
+            try child.run()
+            defer {
+                if child.isRunning { child.terminate() }
+                child.waitUntilExit()
+            }
+            if let identity = ProcessLifetimeReader.read(pid: child.processIdentifier, bootSession: "synthetic-check-boot") {
+                let directory = try ProcessWorkingDirectoryReader.read(identity)
+                check(directory.path == cwd.resolvingSymlinksInPath().path, "native working-directory reads use only the benchmark-owned synthetic process")
+            } else { check(false, "identify the synthetic working-directory process") }
+        } catch { check(false, "synthetic development project resolution: \(error.localizedDescription)") }
+    }
+}

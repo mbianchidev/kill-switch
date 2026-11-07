@@ -8,68 +8,247 @@ import TableQueryCore
 import os
 
 final class ProcessInspectionMonitor: ObservableObject {
-    enum Mode { case files, connections }
+    enum Mode: Sendable, Equatable { case files, connections, listeners }
     @Published private(set) var files: [OpenFileRecord] = []
     @Published private(set) var connections: [NetworkConnectionRecord] = []
     @Published private(set) var errorMessage: String?
     @Published private(set) var lastUpdated: Date?
     @Published private(set) var isRefreshing = false
+    @Published private(set) var identities: [Int32: ActivityProcessIdentity] = [:]
+    @Published private(set) var projects: [ActivityProcessIdentity: DevelopmentProjectContext] = [:]
+    @Published private(set) var projectErrors: [ActivityProcessIdentity: String] = [:]
     private let queue = DispatchQueue(
         label: "killswitch.process-inspection", qos: .utility, autoreleaseFrequency: .workItem
     )
     private let logger = Logger(subsystem: "com.killswitch.app", category: "process-inspection")
     private var timer: DispatchSourceTimer?
     private var mode: Mode = .files
+    private let target: ActivityProcessIdentity?
+    private let activation = OSAllocatedUnfairLock<UUID?>(initialState: nil)
+    private var activationID: UUID? {
+        get { activation.withLock { $0 } }
+        set { activation.withLock { $0 = newValue } }
+    }
+    private struct CachedProject {
+        let date: Date
+        let project: DevelopmentProjectContext?
+        let error: String?
+    }
+    private var projectCache: [ActivityProcessIdentity: CachedProject] = [:]
+
+    init(target: ActivityProcessIdentity? = nil) {
+        self.target = target
+#if KILLSWITCH_PERFORMANCE_PROBE
+        restorePerformanceFixture()
+#endif
+    }
+
+#if KILLSWITCH_PERFORMANCE_PROBE
+    private var performanceSamples: [Mode] = []
+    var performanceSampleModes: [Mode] { queue.sync { performanceSamples } }
+    func performanceEnqueue(_ work: @escaping @Sendable () -> Void) { queue.async(execute: work) }
+
+    func restorePerformanceFixture() {
+        let fixture = Self.performanceFixture
+        files = fixture.files.filter { target == nil || $0.pid == target?.pid }
+        connections = fixture.connections.filter { target == nil || $0.pid == target?.pid }
+        identities = Self.performanceIdentities
+        projects = Dictionary(uniqueKeysWithValues: identities.values.map { identity in
+            (identity, DevelopmentProjectContext(
+                directory: URL(fileURLWithPath: "/synthetic/project-\((identity.pid - 100_000) / 50)", isDirectory: true),
+                branch: "synthetic-feature"
+            ))
+        })
+        lastUpdated = Date()
+    }
+#endif
 
     func start(_ mode: Mode) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let id = UUID()
+        activationID = id
+        self.mode = mode
         queue.async { [self] in
-            self.mode = mode
+            guard self.activationID == id else { return }
             self.timer?.cancel()
             let timer = DispatchSource.makeTimerSource(queue: self.queue)
             timer.schedule(deadline: .now(), repeating: 10, leeway: .seconds(1))
-            timer.setEventHandler { [weak self] in self?.sample() }
+            timer.setEventHandler { [weak self] in self?.sample(mode: mode, activation: id) }
             self.timer = timer
             timer.resume()
         }
     }
 
     func stop() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        activationID = nil
+        isRefreshing = false
+        files = []
+        connections = []
+        identities = [:]
+        projects = [:]
+        projectErrors = [:]
+        lastUpdated = nil
         queue.async {
             self.timer?.cancel()
             self.timer = nil
+            self.projectCache.removeAll()
         }
     }
 
-    func refresh() { queue.async { self.sample() } }
+    func refresh() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let id = activationID, !isRefreshing else { return }
+        isRefreshing = true
+        let mode = mode
+        queue.async { self.sample(mode: mode, activation: id) }
+    }
 
-    private func sample() {
-        DispatchQueue.main.async { self.isRefreshing = true }
+    func descriptor(pid: Int32, name: String, user: String) -> ActivityProcessDescriptor? {
+        identities[pid].map { ActivityProcessDescriptor(identity: $0, name: name, user: user) }
+    }
+
+    private func sample(mode: Mode, activation: UUID) {
+        guard activationID == activation else { return }
+#if KILLSWITCH_PERFORMANCE_PROBE
+        performanceSamples.append(mode)
+#endif
+        DispatchQueue.main.async {
+            if self.activationID == activation { self.isRefreshing = true }
+        }
         do {
-            var arguments = ProcessInspectionParser.lsofArguments
-            if mode == .connections { arguments += ["-i", "-U"] }
+#if KILLSWITCH_PERFORMANCE_PROBE
+            let snapshot = Self.performanceFixture
+            let verified = Self.performanceIdentities
+            let detail = ""
+#else
+            let before: [Int32: ActivityProcessIdentity]
+            if let target {
+                try ProcessLifetimeReader.validate(target, presence: ProcessLifetimeReader.presence(
+                    pid: target.pid, bootSession: target.bootSession
+                ))
+                before = [target.pid: target]
+            } else { before = try ProcessLifetimeReader.snapshot() }
+            guard activationID == activation else { return }
+            let arguments = try ProcessInspectionParser.arguments(
+                pid: target?.pid, connectionsOnly: mode == .connections, listenersOnly: mode == .listeners
+            )
             let result = try CommandRunner.run(
                 "/usr/sbin/lsof", arguments: arguments, environment: ["LC_ALL": "en_US.UTF-8"]
             )
+            guard activationID == activation else { return }
             let detail = result.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
             guard result.succeeded || (result.status == 1 && (detail.isEmpty || !result.standardOutput.isEmpty)) else {
                 throw CommandRunnerError.commandFailed(executable: "lsof", status: result.status, message: detail)
             }
             let snapshot = ProcessInspectionParser.parseLsof(Data(result.standardOutput.utf8))
+            if let target {
+                try ProcessLifetimeReader.validate(target, presence: ProcessLifetimeReader.presence(
+                    pid: target.pid, bootSession: target.bootSession
+                ))
+                try ProcessInspectionParser.validateTarget(snapshot, pid: target.pid)
+            }
+            let pids = Set(snapshot.files.map(\.pid) + snapshot.connections.map(\.pid))
+            var verified: [Int32: ActivityProcessIdentity] = [:]
+            for pid in pids {
+                guard activationID == activation else { return }
+                if let expected = before[pid],
+                   ProcessLifetimeReader.presence(pid: pid, bootSession: expected.bootSession) == .present(expected) {
+                    verified[pid] = expected
+                }
+            }
+#endif
+            guard activationID == activation else { return }
+            var projects: [ActivityProcessIdentity: DevelopmentProjectContext] = [:]
+            var projectErrors: [ActivityProcessIdentity: String] = [:]
+            if mode == .listeners {
+                let now = Date()
+                let activeIdentities = Set(verified.values)
+                projectCache = projectCache.filter { activeIdentities.contains($0.key) }
+                for identity in verified.values {
+                    guard activationID == activation else { return }
+                    let result: CachedProject
+                    if let cached = projectCache[identity], now.timeIntervalSince(cached.date) < 30 {
+                        result = cached
+                    } else {
+#if KILLSWITCH_PERFORMANCE_PROBE
+                        result = CachedProject(date: now, project: DevelopmentProjectContext(
+                            directory: URL(fileURLWithPath: "/synthetic/project-\((identity.pid - 100_000) / 50)", isDirectory: true),
+                            branch: "synthetic-feature"
+                        ), error: nil)
+#else
+                        do {
+                            let directory = try ProcessWorkingDirectoryReader.read(identity)
+                            do {
+                                result = CachedProject(
+                                    date: now, project: try DevelopmentProjectResolver.resolve(directory), error: nil
+                                )
+                            } catch {
+                                result = CachedProject(
+                                    date: now, project: DevelopmentProjectContext(directory: directory, branch: nil),
+                                    error: "Project discovery is incomplete; showing the verified working directory. \(error.localizedDescription)"
+                                )
+                            }
+                        } catch {
+                            result = CachedProject(date: now, project: nil, error: error.localizedDescription)
+                        }
+#endif
+                        projectCache[identity] = result
+                    }
+                    if let project = result.project { projects[identity] = project }
+                    if let error = result.error { projectErrors[identity] = error }
+                }
+            }
             DispatchQueue.main.async {
-                self.files = snapshot.files
-                self.connections = snapshot.connections
+                guard self.activationID == activation else { return }
+                self.files = mode == .files ? snapshot.files.filter { self.target == nil || $0.pid == self.target?.pid } : []
+                self.connections = snapshot.connections.filter { self.target == nil || $0.pid == self.target?.pid }
+                self.identities = verified
+                self.projects = projects
+                self.projectErrors = projectErrors
                 self.lastUpdated = Date()
                 self.errorMessage = detail.isEmpty ? nil : "Some entries may be inaccessible: \(detail)"
                 self.isRefreshing = false
             }
         } catch {
+            guard activationID == activation else { return }
             logger.error("Process inspection failed: \(error.localizedDescription)")
             DispatchQueue.main.async {
+                guard self.activationID == activation else { return }
                 self.errorMessage = error.localizedDescription
                 self.isRefreshing = false
+                if self.target != nil {
+                    self.files = []
+                    self.connections = []
+                    self.identities = [:]
+                }
             }
         }
     }
+
+#if KILLSWITCH_PERFORMANCE_PROBE
+    private static let performanceFixture: ProcessInspectionSnapshot = {
+        let fields = (0..<1_000).flatMap { index in
+            [
+                "p\(100_000 + index)", "cSynthetic server \(index)", "u501", "Lsynthetic-user",
+                "\nf4", "tREG", "ar", "s4096", "n/synthetic/project-\(index / 50)/fixture.txt",
+                "\nf5", "tIPv4", "PTCP", "n127.0.0.1:\(3_000 + index)", "TST=LISTEN"
+            ]
+        } + [""]
+        return ProcessInspectionParser.parseLsof(Data(fields.joined(separator: "\0").utf8))
+    }()
+
+    private static let performanceIdentities: [Int32: ActivityProcessIdentity] = {
+        var identities: [Int32: ActivityProcessIdentity] = [:]
+        for index in 0..<1_000 {
+            let pid = Int32(100_000 + index)
+            identities[pid] = ActivityProcessIdentity(
+                bootSession: "synthetic-benchmark-boot", pid: pid, startTime: UInt64(index + 1)
+            )
+        }
+        return identities
+    }()
+#endif
 }
 
 struct OpenFilesTab: View {
@@ -81,6 +260,7 @@ struct OpenFilesTab: View {
     @State private var kind = "All types"
     @State private var sorting = TableComparator(field: OpenFileTableFields.path)
     @State private var selected: OpenFileRecord.ID?
+    @Environment(\.isKillSwitchPageVisible) private var pageVisible
 
     init(resourceMonitor: ResourceMonitor) {
         self.resourceMonitor = resourceMonitor
@@ -88,6 +268,12 @@ struct OpenFilesTab: View {
     }
 
     var body: some View {
+        Group {
+            if pageVisible { pageContent }
+        }
+    }
+
+    private var pageContent: some View {
         let rows = visible
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
@@ -116,25 +302,11 @@ struct OpenFilesTab: View {
                 }.frame(width: 160)
                 TableSortControls(fields: OpenFileTableFields.columns, sorting: $sorting)
                 Spacer()
-                inspectionRefresh(monitor)
+                InspectionRefreshButton(monitor: monitor)
             }
 
             InspectionStatus(monitor: monitor, count: rows.count, noun: "open files")
-            Table(rows, selection: $selected, sortOrder: tableSortOrder($sorting)) {
-                TableColumn("Path", sortUsing: TableComparator(field: OpenFileTableFields.path)) { Text($0.path).help($0.path) }
-                    .width(min: 230, ideal: 360)
-                TableColumn("Process", sortUsing: TableComparator(field: OpenFileTableFields.process)) { Text($0.process) }
-                    .width(min: 110, ideal: 150)
-                TableColumn("PID", sortUsing: TableComparator(field: OpenFileTableFields.pid)) { Text(String($0.pid)) }.width(55)
-                TableColumn("User", sortUsing: TableComparator(field: OpenFileTableFields.user)) { Text($0.user) }.width(95)
-                TableColumn("FD", sortUsing: TableComparator(field: OpenFileTableFields.descriptor)) { Text($0.descriptor) }.width(45)
-                TableColumn("Access", sortUsing: TableComparator(field: OpenFileTableFields.access)) { Text($0.accessDescription) }.width(85)
-                TableColumn("Lock", sortUsing: TableComparator(field: OpenFileTableFields.lock)) { Text($0.lockDescription) }.width(110)
-                TableColumn("Type", sortUsing: TableComparator(field: OpenFileTableFields.kind)) { Text($0.kind) }.width(55)
-                TableColumn("Size", sortUsing: TableComparator(field: OpenFileTableFields.size)) { Text($0.size.map(formatBytes) ?? "N/A") }.width(90)
-            }
-            .font(.system(size: 11, design: .monospaced))
-            .scrollContentBackground(.hidden)
+            OpenFilesTable(rows: rows, identities: monitor.identities, selection: $selected, sorting: $sorting)
             .overlay {
                 if rows.isEmpty && !monitor.isRefreshing {
                     Text(monitor.lastUpdated == nil ? "Refresh to inspect open files" : "No matching open files")
@@ -142,9 +314,14 @@ struct OpenFilesTab: View {
                 }
             }
             if let file = monitor.files.first(where: { $0.id == selected }) {
-                Text("\(file.process) (PID \(file.pid)), \(file.descriptor): \(file.path)")
-                    .font(.system(size: 11, design: .monospaced))
-                    .textSelection(.enabled)
+                HStack {
+                    Text("\(file.process) (PID \(file.pid)), \(file.descriptor): \(file.path)")
+                        .font(.system(size: 11, design: .monospaced))
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                    Spacer()
+                    CopyInspectionTextButton(title: "Copy displayed path", value: file.path)
+                }
             }
             Text("Open does not mean locked. macOS can omit advisory lock state; no reported lock does not prove a file is unlocked. Protected entries may be omitted; control characters in paths use lsof display escapes. This view never closes files or terminates processes.")
                 .font(.system(size: 11))
@@ -153,8 +330,7 @@ struct OpenFilesTab: View {
         .padding(12)
         .background(Theme.background)
         .onReceive(resourceMonitor.$showAllUsers.removeDuplicates()) { showAllUsers = $0 }
-        .onAppear { monitor.start(.files) }
-        .onDisappear { monitor.stop() }
+        .inspectionSampling(monitor, mode: .files)
     }
 
     private var visible: [OpenFileRecord] {
@@ -173,8 +349,15 @@ struct NetworkConnectionsPanel: View {
     @State private var filter: NetworkConnectionFilter = .all
     @State private var sorting = TableComparator(field: ConnectionTableFields.process)
     @State private var selected: NetworkConnectionRecord.ID?
+    @Environment(\.isKillSwitchPageVisible) private var pageVisible
 
     var body: some View {
+        Group {
+            if pageVisible { pageContent }
+        }
+    }
+
+    private var pageContent: some View {
         let rows = visible
         return VStack(alignment: .leading, spacing: 10) {
             TableSearchControls(
@@ -189,21 +372,10 @@ struct NetworkConnectionsPanel: View {
                 .frame(width: 260)
                 TableSortControls(fields: ConnectionTableFields.all, sorting: $sorting)
                 Spacer()
-                inspectionRefresh(monitor)
+                InspectionRefreshButton(monitor: monitor)
             }
             InspectionStatus(monitor: monitor, count: rows.count, noun: "connections")
-            Table(rows, selection: $selected, sortOrder: tableSortOrder($sorting)) {
-                TableColumn("Process", sortUsing: TableComparator(field: ConnectionTableFields.process)) { Text($0.process) }.width(min: 110, ideal: 140)
-                TableColumn("PID", sortUsing: TableComparator(field: ConnectionTableFields.pid)) { Text(String($0.pid)) }.width(55)
-                TableColumn("User", sortUsing: TableComparator(field: ConnectionTableFields.user)) { Text($0.user) }.width(90)
-                TableColumn("Protocol", sortUsing: TableComparator(field: ConnectionTableFields.protocolDisplay)) { Text($0.protocolDescription) }.width(90)
-                TableColumn("Local endpoint", sortUsing: TableComparator(field: ConnectionTableFields.local)) { Text($0.local).help($0.local) }.width(min: 150, ideal: 200)
-                TableColumn("Remote endpoint", sortUsing: TableComparator(field: ConnectionTableFields.remote)) { Text($0.remote ?? "None").help($0.remote ?? "No remote endpoint") }
-                    .width(min: 150, ideal: 200)
-                TableColumn("State", sortUsing: TableComparator(field: ConnectionTableFields.state)) { Text($0.state) }.width(125)
-            }
-            .font(.system(size: 11, design: .monospaced))
-            .scrollContentBackground(.hidden)
+            ConnectionsTable(rows: rows, identities: monitor.identities, selection: $selected, sorting: $sorting)
             .overlay {
                 if rows.isEmpty && !monitor.isRefreshing {
                     Text(monitor.lastUpdated == nil ? "Collecting connections" : "No matching connections")
@@ -220,8 +392,7 @@ struct NetworkConnectionsPanel: View {
                 .foregroundColor(.secondary)
         }
         .padding(12)
-        .onAppear { monitor.start(.connections) }
-        .onDisappear { monitor.stop() }
+        .inspectionSampling(monitor, mode: .connections)
     }
 
     private var visible: [NetworkConnectionRecord] {
@@ -230,7 +401,7 @@ struct NetworkConnectionsPanel: View {
     }
 }
 
-private struct InspectionStatus: View {
+struct InspectionStatus: View {
     @ObservedObject var monitor: ProcessInspectionMonitor
     let count: Int
     let noun: String
@@ -261,11 +432,4 @@ private struct InspectionStatus: View {
             .foregroundColor(.orange)
         }
     }
-}
-
-private func inspectionRefresh(_ monitor: ProcessInspectionMonitor) -> some View {
-    Button { monitor.refresh() } label: { Image(systemName: "arrow.clockwise") }
-        .disabled(monitor.isRefreshing)
-        .help("Refresh now")
-        .accessibilityLabel("Refresh process inspection")
 }

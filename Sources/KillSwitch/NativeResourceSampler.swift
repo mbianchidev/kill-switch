@@ -57,7 +57,8 @@ private struct ProcessMetadata {
 }
 
 final class ResourceSampler {
-    private var previousProcessCPU: [ResourceProcessIdentity: (date: Date, nanoseconds: UInt64)] = [:]
+    private var previousProcessCPU: [ResourceProcessIdentity: (date: Date, ticks: UInt64)] = [:]
+    private let cpuTimebase = Result { try MachTimebase.current() }
     private var previousProcessDate: Date?
     private var previousSystemCPU: SystemCPUTicks?
     private var previousDisk: (date: Date, counters: DiskCounters)?
@@ -66,10 +67,11 @@ final class ResourceSampler {
     private var usernames: [uid_t: String] = [:]
     private var reportedDiskCapacityError = false
     private var identities: [Int32: ResourceProcessIdentity] = [:]
-    private let bootSession = ResourceSampler.bootSessionIdentifier()
+    private let bootSession = ProcessLifetimeReader.bootSessionIdentifier
     private var lastEnergyDate: Date?
     private var energy = ProcessEnergyCache()
     private var cachedBattery: BatteryResourceSummary?
+    private var batteryWarning: String?
 
     func resetBaselines() {
         previousProcessCPU.removeAll()
@@ -79,7 +81,11 @@ final class ResourceSampler {
         previousNetwork = nil
     }
 
-    func sample(metric: ResourceMetric?, trackedPIDs: Set<Int32> = []) throws -> ResourceSnapshot {
+    func sample(
+        metric: ResourceMetric?, trackedPIDs: Set<Int32> = [],
+        allowsOptionalMetric: @Sendable (ResourceMetric) -> Bool = { _ in true }
+    ) throws -> ResourceSnapshot {
+        let timebase = try cpuTimebase.get()
         let now = Date()
         let policy = ResourceSamplingPolicy.forMetric(metric ?? .cpu)
         if let previousProcessDate {
@@ -92,10 +98,11 @@ final class ResourceSampler {
         let parsedProcesses = try samplePSProcesses()
         let afterPS = sampleLifetimeIdentities()
         let nativeProcesses = sampleNativeProcesses(
-            applications: applications, beforePS: beforePS, afterPS: afterPS
+            applications: applications, beforePS: beforePS, afterPS: afterPS, timebase: timebase
         )
         var sampledEnergy = false
-        if policy.usesTop && (lastEnergyDate.map { now.timeIntervalSince($0) >= Double(policy.intervalSeconds) } ?? true) {
+        let collectsEnergy = policy.usesTop && allowsOptionalMetric(.energy)
+        if collectsEnergy && (lastEnergyDate.map { now.timeIntervalSince($0) >= Double(policy.intervalSeconds) } ?? true) {
             lastEnergyDate = now
             do {
                 energy.updatePower(try samplePower(), identities: identities)
@@ -108,12 +115,19 @@ final class ResourceSampler {
             } catch {
                 energy.failSleepAssertions(error.localizedDescription)
             }
-            cachedBattery = sampleBattery()
-        } else if !policy.usesTop {
+            do {
+                cachedBattery = try sampleBattery()
+                batteryWarning = nil
+            } catch {
+                cachedBattery = .unavailable
+                batteryWarning = "Power source: \(error.localizedDescription) Open Energy and refresh to retry."
+            }
+        } else if !collectsEnergy {
             energy.clearMeasurements()
             lastEnergyDate = nil
         }
         warnings += energy.warnings
+        warnings += [batteryWarning].compactMap { $0 }
         var networkProcesses: [Int32: ParsedNetworkProcess] = [:]
         var networkSampledAt: Date?
         do {
@@ -151,8 +165,6 @@ final class ResourceSampler {
                     threads: native?.threads,
                     idleWakeUps: native?.idleWakeUps,
                     kind: native?.kind,
-                    gpu: nil,
-                    gpuTimeSeconds: nil,
                     memoryBytes: native?.memoryBytes ?? process.memoryBytes,
                     openFileCount: native?.openFileCount,
                     power: energy.power(for: identity),
@@ -186,8 +198,6 @@ final class ResourceSampler {
                     threads: native.threads,
                     idleWakeUps: native.idleWakeUps,
                     kind: native.kind,
-                    gpu: nil,
-                    gpuTimeSeconds: nil,
                     memoryBytes: native.memoryBytes,
                     openFileCount: native.openFileCount,
                     power: energy.power(for: native.identity),
@@ -208,7 +218,7 @@ final class ResourceSampler {
         }
 
         let cpu = sampleCPU(processes: parsedProcesses)
-        let memory = sampleMemory(includePressure: policy.collectsMemoryPressure)
+        let memory = sampleMemory(includePressure: policy.collectsMemoryPressure && allowsOptionalMetric(.memory))
         if !cpu.isAvailable && previousSystemCPU == nil {
             warnings.append("CPU rates need two readable samples.")
         }
@@ -270,9 +280,10 @@ final class ResourceSampler {
     private func sampleNativeProcesses(
         applications: [Int32: (name: String, icon: NSImage?)],
         beforePS: [Int32: ResourceProcessIdentity],
-        afterPS: [Int32: ResourceProcessIdentity]
+        afterPS: [Int32: ResourceProcessIdentity],
+        timebase: MachTimebase
     ) -> [Int32: NativeProcess] {
-        var currentCPU: [ResourceProcessIdentity: (date: Date, nanoseconds: UInt64)] = [:]
+        var currentCPU: [ResourceProcessIdentity: (date: Date, ticks: UInt64)] = [:]
         var activeIdentities: Set<ResourceProcessIdentity> = []
         var result: [Int32: NativeProcess] = [:]
         identities.removeAll(keepingCapacity: true)
@@ -298,9 +309,8 @@ final class ResourceSampler {
             let cpu: Double?
             if let previousCPU = previousProcessCPU[identity] {
                 cpu = SystemMetricsCalculator.processCPUPercent(
-                    currentNanoseconds: totalCPU,
-                    previousNanoseconds: previousCPU.nanoseconds,
-                    elapsedSeconds: sampledAt.timeIntervalSince(previousCPU.date)
+                    currentTicks: totalCPU, previousTicks: previousCPU.ticks,
+                    elapsedSeconds: sampledAt.timeIntervalSince(previousCPU.date), timebase: timebase
                 )
             } else {
                 cpu = nil
@@ -314,7 +324,7 @@ final class ResourceSampler {
                 name: processMetadata.name,
                 user: username(for: bsd.pbi_uid),
                 cpu: cpu,
-                cpuTimeSeconds: Double(totalCPU) / 1_000_000_000,
+                cpuTimeSeconds: timebase.seconds(ticks: totalCPU),
                 threads: task.map { Int($0.pti_threadnum) },
                 idleWakeUps: usage.ri_interrupt_wkups,
                 kind: processMetadata.kind,
@@ -439,20 +449,22 @@ final class ResourceSampler {
         return pids
     }
 
-    private func sampleBattery() -> BatteryResourceSummary {
-        guard
-            let result = try? CommandRunner.run("/usr/bin/pmset", arguments: ["-g", "batt"]),
-            result.succeeded
-        else {
-            return .unavailable
+    private func sampleBattery() throws -> BatteryResourceSummary {
+        let (source, state) = try SystemHealthReader.battery()
+        switch state {
+        case .available(let reading):
+            return BatteryResourceSummary(
+                source: source.rawValue, chargePercent: reading.chargePercent,
+                status: reading.chargingStatus(powerSource: source).rawValue,
+                timeRemaining: reading.minutesToFull.map { "\($0) min to full charge" }
+                    ?? reading.minutesToEmpty.map { "\($0) min to empty" }
+            )
+        case .absent:
+            return BatteryResourceSummary(
+                source: source.rawValue, chargePercent: nil, status: "no internal battery", timeRemaining: nil
+            )
+        case .unavailable(let message): throw parseError(message)
         }
-        let battery = SystemMetricsParser.parseBattery(result.standardOutput)
-        return BatteryResourceSummary(
-            source: battery.source,
-            chargePercent: battery.chargePercent,
-            status: battery.status,
-            timeRemaining: battery.timeRemaining
-        )
     }
 
     private func sampleMemory(includePressure: Bool) -> MemoryResourceSummary {
@@ -845,16 +857,6 @@ final class ResourceSampler {
     private func rate(current: UInt64, previous: UInt64, elapsed: TimeInterval) -> Double? {
         guard elapsed >= 0.1, elapsed <= 30, current >= previous else { return nil }
         return Double(current - previous) / elapsed
-    }
-
-    private static func bootSessionIdentifier() -> String {
-        var buffer = [CChar](repeating: 0, count: 128)
-        var size = buffer.count
-        if sysctlbyname("kern.bootsessionuuid", &buffer, &size, nil, 0) == 0 {
-            return String(cString: buffer)
-        }
-        fputs("KillSwitch could not read the boot identity; process history will use a new session identity.\n", stderr)
-        return UUID().uuidString
     }
 
     private func commandError(_ result: CommandResult, name: String) -> Error {

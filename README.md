@@ -9,6 +9,7 @@
 KillSwitch is a native macOS resource manager and menu-bar utility for developers
 managing long-running workloads, including AI-assisted development. Monitor
 processes and 24-hour resource history, inspect connections and open files,
+find project-grouped development listeners, check battery and thermal pressure,
 manage startup entries, review disk cleanup candidates, and control sleep,
 with optional headless developer-tool integration.
 
@@ -49,7 +50,8 @@ Open Anyway** where offered. Do not bypass malware warnings or managed-device
 policy. See [opening precautions and troubleshooting](docs/troubleshooting.md).
 
 **Dev cleanup starts with auto-kill enabled for qualifying servers older than
-12 hours. Opening that tab runs a cleanup immediately.** Review its
+12 hours. Confirming entry to that page runs a cleanup immediately.** Use the
+separate, read-only **Dev servers** page for discovery. Review cleanup's
 [settings and safety rules](docs/usage.md#dev-cleanup) first.
 
 Closing the window leaves KillSwitch running in the menu bar. Choose
@@ -83,9 +85,12 @@ See [architecture and development](docs/development.md).
 
 ## Get started and configuration
 
-- **Dashboard / Resources:** compare live data and 24-hour history; inspect
-  network connections. **My processes** is the default.
-- **Open files:** inspect file descriptors and reported locks in one dedicated tab.
+- **Dashboard / Performance:** use the grouped sidebar to compare live data and
+  24-hour history. **My processes** is the default.
+- **Investigate:** browse read-only dev listeners, connections, and open files;
+  **Inspect** opens a lifetime-verified, per-process view.
+- **System / Battery / Thermal:** view public macOS counters without a helper or
+  administrator access.
 - **Startup:** review apps, services, and cron jobs before disabling future
   launches. System-wide changes require administrator approval.
 - **Dev cleanup:** understand the age-based safety rules before opening the tab;
@@ -102,7 +107,9 @@ the read-only [status command](docs/cli.md#read-saved-status).
 | Capability | Implemented behavior |
 | --- | --- |
 | Dashboard and resources | Global/per-process CPU, memory, traffic, and disk history for 24 hours, plus live energy and process actions |
-| Process inspection | Network connections in Resources and one dedicated Open files tab with search, sorting, and reported advisory locks |
+| Process inspection | Dedicated Connections and Open files pages, plus per-process files/connections with search, sorting, and reported advisory locks |
+| Developer listeners | Read-only TCP listeners grouped by project or working directory, Git branch context, copy/reveal/browser actions, and no automatic cleanup |
+| System health | CPU/hardware details, awake time since restart, load averages, public battery readings, Low Power Mode, and macOS thermal pressure |
 | Startup | Reversible login app, service, and cron controls, with protected macOS entries kept read-only |
 | Disk cleanup | Large files, temporary data, caches, and folders with confirmation and Trash |
 | Developer tools | Configurable dev cleanup, protected-process rules, CPU alerts, and JSON port syncing |

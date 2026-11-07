@@ -90,5 +90,13 @@ for BINARY in "$APP/Contents/MacOS/KillSwitch" "$INSTALLED_APP/Contents/MacOS/Ki
   [ ! -s "$STAGE/stdout" ] || die "Invalid CLI arguments unexpectedly produced stdout."
   [ "$(plutil -extract error.code raw -o - "$STAGE/stderr")" = "invalid_arguments" ] \
     || die "CLI did not return the expected JSON error."
+  LC_ALL=C grep -aFq 'The live app was not started.' "$BINARY" \
+    || die "This artifact predates guarded probe dispatch. Rebuild before checking probe rejection."
+  STATUS=0
+  "$BINARY" --performance-probe --interface-checks > "$STAGE/probe-stdout" 2> "$STAGE/probe-stderr" || STATUS=$?
+  [ "$STATUS" -eq 2 ] || die "Packaged app did not reject probe arguments before GUI startup."
+  [ ! -s "$STAGE/probe-stdout" ] || die "Packaged app unexpectedly produced probe output."
+  grep -Fq 'The live app was not started.' "$STAGE/probe-stderr" \
+    || die "Packaged app did not report probe rejection."
 done
 echo "macOS package checks passed."
