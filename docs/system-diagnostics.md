@@ -73,6 +73,10 @@ that are always unavailable are not shown on the CPU page.
 
 ## Native system health
 
+Dashboard Battery and Thermal shortcuts explicitly show collection before the
+first health snapshot. Completed unavailable readings remain unavailable, not
+perpetually collecting.
+
 System, Battery, Thermal, and the dashboard share one visible-only health
 reader. CPU/model/core, OS/kernel, uptime, and load information use public
 `sysctl`, `ProcessInfo`, and `getloadavg` interfaces. The runtime card explicitly

@@ -221,6 +221,7 @@ struct SystemStatusStrip: View {
 
 #if KILLSWITCH_PERFORMANCE_PROBE
     var performanceBatteryValue: String { batteryValue }
+    var performanceThermalValue: String { thermalValue }
 #endif
 
     var body: some View {
@@ -228,7 +229,7 @@ struct SystemStatusStrip: View {
             status(.system, value: monitor.hardware?.cpuName ?? "System details",
                    detail: monitor.hardware.map { "\($0.logicalCPUCount) logical cores / \(formatBytes($0.physicalMemoryBytes))" } ?? "CPU, hardware, and uptime")
             status(.battery, value: batteryValue, detail: monitor.snapshot?.powerSource.rawValue ?? "Collecting power information")
-            status(.thermal, value: monitor.snapshot?.thermalState.rawValue ?? "N/A", detail: "macOS thermal pressure")
+            status(.thermal, value: thermalValue, detail: "macOS thermal pressure")
         }
         .systemHealthSampling(monitor)
     }
@@ -256,6 +257,8 @@ struct SystemStatusStrip: View {
         .focused($focusedPage, equals: page)
         .accessibilityLabel("\(page.title): \(value). \(detail). Open \(page.title.lowercased()).")
     }
+
+    private var thermalValue: String { monitor.snapshot?.thermalState.rawValue ?? "Collecting thermal information" }
 
     private var batteryValue: String {
         switch monitor.snapshot?.battery {

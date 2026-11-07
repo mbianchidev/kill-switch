@@ -1027,6 +1027,8 @@ enum PerformanceProbe {
         let status = SystemStatusStrip(monitor: health, navigate: { _ in })
         check(status.performanceBatteryValue == "Collecting battery information",
               "The dashboard battery shortcut must report collection, not unavailability, before its first snapshot.")
+        check(status.performanceThermalValue == "Collecting thermal information",
+              "The dashboard thermal shortcut must distinguish initial collection from completed unavailable data.")
         var observed = false
         var state: SystemThermalState? = .unavailable
         var page = SystemHealthTab(monitor: health, resources: ResourceMonitor(), page: .thermal)
@@ -1043,6 +1045,8 @@ enum PerformanceProbe {
         health.publishPerformanceFixture()
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         check(state == .nominal, "Thermal UI must show the measured state after a successful synthetic read.")
+        check(status.performanceThermalValue == SystemThermalState.nominal.rawValue,
+              "The thermal shortcut must replace its pending text with the measured state.")
         if case .available(let battery) = health.snapshot?.battery, let percent = battery.chargePercent {
             check(status.performanceBatteryValue == "Battery \(percent)%",
                   "The dashboard battery shortcut must replace pending text with the measured charge.")
@@ -1050,6 +1054,8 @@ enum PerformanceProbe {
         health.publishPerformanceFixture(thermalState: .unavailable)
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         check(state == .unavailable, "A completed unavailable thermal reading must remain distinct from pending data.")
+        check(status.performanceThermalValue == SystemThermalState.unavailable.rawValue,
+              "A completed unavailable thermal shortcut must not revert to its collecting state.")
     }
 
     private static func filteredProjectWarningChecks(_ check: (Bool, String) -> Void) {
