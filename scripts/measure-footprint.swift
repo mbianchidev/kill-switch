@@ -71,14 +71,19 @@ func failure(_ message: String) -> MeasurementError {
     .message("\(message): \(String(cString: strerror(errno)))")
 }
 
-func processReading(pid: Int32, start: Date, clock: CPUCounterClock) throws -> FootprintReading {
+func elapsedSeconds(since start: ContinuousClock.Instant) -> Double {
+    let elapsed = start.duration(to: .now).components
+    return Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
+}
+
+func processReading(pid: Int32, start: ContinuousClock.Instant, clock: CPUCounterClock) throws -> FootprintReading {
     var info = rusage_info_v4()
     let status = withUnsafeMutablePointer(to: &info) {
         $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V4, $0) }
     }
     guard status == 0 else { throw failure("Cannot read benchmark process \(pid)") }
     return FootprintReading(
-        elapsed: Date().timeIntervalSince(start),
+        elapsed: elapsedSeconds(since: start),
         cpuSeconds: clock.seconds(info.ri_user_time + info.ri_system_time),
         residentBytes: info.ri_resident_size, footprintBytes: info.ri_phys_footprint
     )
@@ -120,7 +125,7 @@ func measure(
             waitpid(pid, &status, 0)
         }
     }
-    let start = Date()
+    let start = ContinuousClock.now
     var readings: [FootprintReading] = []
     var usage = rusage()
     var status: Int32 = 0
@@ -128,7 +133,7 @@ func measure(
         let waited = wait4(pid, &status, WNOHANG, &usage)
         if waited == pid { reaped = true; break }
         guard waited >= 0 else { throw failure("Cannot wait for benchmark") }
-        guard Date().timeIntervalSince(start) <= duration + 30 else {
+        guard elapsedSeconds(since: start) <= duration + 30 else {
             throw MeasurementError.message("Benchmark exceeded its deadline")
         }
         do { readings.append(try processReading(pid: pid, start: start, clock: clock)) }

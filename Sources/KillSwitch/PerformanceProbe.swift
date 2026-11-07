@@ -129,11 +129,12 @@ enum PerformanceProbe {
             window?.contentView = nil
             window?.close()
         }
-        let start = Date()
+        let start = ContinuousClock.now
+        let deadline = start.advanced(by: .seconds(duration))
         var nextSample = start
         var step = 51
-        while Date().timeIntervalSince(start) < duration {
-            if Date() >= nextSample {
+        while ContinuousClock.now < deadline {
+            if ContinuousClock.now >= nextSample {
                 if scenario == "navigation" {
                     let pages: [MainTab] = [.dashboard, .resources, .memory, .energy, .connections, .openFiles,
                                             .devServers, .system, .battery, .thermal]
@@ -153,7 +154,7 @@ enum PerformanceProbe {
                         return 1
                     }
                 }
-                nextSample = nextSample.addingTimeInterval(6)
+                nextSample = nextSample.advanced(by: .seconds(6))
             }
             autoreleasepool {
                 RunLoop.current.run(until: Date().addingTimeInterval(0.05))

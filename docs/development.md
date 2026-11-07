@@ -325,6 +325,10 @@ The external harness reads kernel CPU time, resident memory, and physical
 footprint every 100 ms. CPU uses one-core normalization: 100% is one logical
 CPU core, not the whole machine. It excludes the first two seconds for average
 and p95 CPU, and reports median memory from the final third of the run.
+Probe duration, sampling cadence, measurement intervals, and the runner deadline
+use a continuous monotonic clock; wall-clock corrections do not alter CPU-rate
+denominators or extend a run. Wall-clock dates remain only in synthetic history
+timestamps.
 Peak RSS includes `wait4`'s maximum; peak physical footprint is an observed
 peak, not the lifetime kernel peak. `wait4` CPU includes waited child processes;
 the synthetic scenarios launch none.
