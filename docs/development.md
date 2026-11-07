@@ -240,6 +240,9 @@ Swift style and keep failure messages actionable. Add regression checks in the
 existing executable target for the subsystem you change.
 
 `SystemHealthMonitor` is shared by Dashboard and the three health pages.
+Battery and Thermal do not observe six-second resource updates; only the
+System page's CPU/runtime leaf card subscribes to those values. The rest of
+the health interface follows the shared health snapshot instead.
 Visible clients share one monotonic automatic-refresh deadline, at least thirty
 seconds after each completed read. Page changes and hiding/reopening preserve
 that deadline rather than causing extra IOKit reads. Only visible clients keep

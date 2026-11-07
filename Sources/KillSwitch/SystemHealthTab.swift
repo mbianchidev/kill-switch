@@ -3,7 +3,7 @@ import SystemMetricsCore
 
 struct SystemHealthTab: View {
     @ObservedObject var monitor: SystemHealthMonitor
-    @ObservedObject var resources: ResourceMonitor
+    let resources: ResourceMonitor
     let page: MainTab
     @Environment(\.allowsLiveOperations) private var allowsOperations
     @Environment(\.isKillSwitchWindowVisible) private var visible
@@ -11,10 +11,15 @@ struct SystemHealthTab: View {
 
 #if KILLSWITCH_PERFORMANCE_PROBE
     var performanceObserveThermalState: ((SystemThermalState?) -> Void)?
+    var performanceObserveBody: (() -> Void)?
+    var performanceObserveCPU: ((CPUResourceSummary) -> Void)?
 #endif
 
     var body: some View {
-        Group {
+#if KILLSWITCH_PERFORMANCE_PROBE
+        performanceObserveBody?()
+#endif
+        return Group {
             if pageVisible { pageContent }
         }
     }
@@ -79,24 +84,11 @@ struct SystemHealthTab: View {
     }
 
     private var runtimeCard: some View {
-        healthCard("CPU and runtime", icon: "cpu") {
-            healthRow("CPU in use", resources.cpu.isAvailable
-                ? String(format: "%.1f%%", resources.cpu.userPercent + resources.cpu.systemPercent) : "N/A")
-            healthRow("User / system", resources.cpu.isAvailable
-                ? String(format: "%.1f%% / %.1f%%", resources.cpu.userPercent, resources.cpu.systemPercent) : "N/A")
-            healthRow("Processes / threads", resources.cpu.isAvailable
-                ? "\(resources.cpu.processCount) / \(resources.cpu.threadCount)" : "N/A")
-            healthRow("Awake time since restart", monitor.snapshot.map { formatDuration($0.uptime) } ?? "N/A")
-            healthRow("Load averages (1 / 5 / 15 min)", monitor.snapshot?.loadAverages.map {
-                $0.map { String(format: "%.2f", $0) }.joined(separator: " / ")
-            } ?? "N/A")
-            healthRow("Power source", monitor.snapshot?.powerSource.rawValue ?? "N/A")
-            healthRow("Low Power Mode", monitor.snapshot.map { $0.lowPowerMode ? "On" : "Off" } ?? "N/A")
-            Text("Global CPU uses 0-100% across the whole Mac. Process CPU uses 100% per core. Load averages count runnable or waiting work; they are not CPU percentages. Awake time since restart excludes time spent asleep.")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-            ActivityMonitorErrors(monitor: resources)
-        }
+#if KILLSWITCH_PERFORMANCE_PROBE
+        SystemRuntimeCard(resources: resources, snapshot: monitor.snapshot, performanceObserveCPU: performanceObserveCPU)
+#else
+        SystemRuntimeCard(resources: resources, snapshot: monitor.snapshot)
+#endif
     }
 
     private var batteryCard: some View {
@@ -189,6 +181,38 @@ private struct ThermalPresentationRecorder: NSViewRepresentable {
     func updateNSView(_ view: NSView, context: Context) { observe?(state) }
 }
 #endif
+
+private struct SystemRuntimeCard: View {
+    @ObservedObject var resources: ResourceMonitor
+    let snapshot: SystemHealthSnapshot?
+#if KILLSWITCH_PERFORMANCE_PROBE
+    var performanceObserveCPU: ((CPUResourceSummary) -> Void)?
+#endif
+
+    var body: some View {
+#if KILLSWITCH_PERFORMANCE_PROBE
+        performanceObserveCPU?(resources.cpu)
+#endif
+        return healthCard("CPU and runtime", icon: "cpu") {
+            healthRow("CPU in use", resources.cpu.isAvailable
+                ? String(format: "%.1f%%", resources.cpu.userPercent + resources.cpu.systemPercent) : "N/A")
+            healthRow("User / system", resources.cpu.isAvailable
+                ? String(format: "%.1f%% / %.1f%%", resources.cpu.userPercent, resources.cpu.systemPercent) : "N/A")
+            healthRow("Processes / threads", resources.cpu.isAvailable
+                ? "\(resources.cpu.processCount) / \(resources.cpu.threadCount)" : "N/A")
+            healthRow("Awake time since restart", snapshot.map { formatDuration($0.uptime) } ?? "N/A")
+            healthRow("Load averages (1 / 5 / 15 min)", snapshot?.loadAverages.map {
+                $0.map { String(format: "%.2f", $0) }.joined(separator: " / ")
+            } ?? "N/A")
+            healthRow("Power source", snapshot?.powerSource.rawValue ?? "N/A")
+            healthRow("Low Power Mode", snapshot.map { $0.lowPowerMode ? "On" : "Off" } ?? "N/A")
+            Text("Global CPU uses 0-100% across the whole Mac. Process CPU uses 100% per core. Load averages count runnable or waiting work; they are not CPU percentages. Awake time since restart excludes time spent asleep.")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            ActivityMonitorErrors(monitor: resources)
+        }
+    }
+}
 
 struct SystemStatusStrip: View {
     @ObservedObject var monitor: SystemHealthMonitor

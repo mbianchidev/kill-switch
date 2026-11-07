@@ -200,6 +200,7 @@ enum PerformanceProbe {
         check(monitor.history[.energy]?.last?.primary == 2_000, "Energy chart fixtures must contain measured power totals.")
         healthPollingChecks(check)
         thermalPresentationChecks(check)
+        healthObservationChecks(check)
         queuedInspectionChecks(check)
         filteredProjectWarningChecks(check)
         copyFeedbackChecks(check)
@@ -769,6 +770,35 @@ enum PerformanceProbe {
         monitor.focusedProcess = nil
         showDashboard()
         check(selection.wrappedValue == nil, "Returning after coalesced process changes must not restore a stale scrubbed date.")
+    }
+
+    private static func healthObservationChecks(_ check: (Bool, String) -> Void) {
+        for pageID: MainTab in [.battery, .thermal, .system] {
+            let health = SystemHealthMonitor()
+            health.publishPerformanceFixture()
+            let resources = ResourceMonitor()
+            var renderCount = 0
+            var cpu: CPUResourceSummary?
+            var page = SystemHealthTab(monitor: health, resources: resources, page: pageID)
+            page.performanceObserveBody = { renderCount += 1 }
+            page.performanceObserveCPU = { cpu = $0 }
+            let controller = NSHostingController(rootView: AnyView(page.environment(\.allowsLiveOperations, false)))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650),
+                                  styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentViewController = controller
+            controller.view.layoutSubtreeIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            let initial = renderCount
+            resources.publishPerformanceSample(fixture(date: Date(), count: 1, step: 1))
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            check(renderCount == initial, "\(pageID.title) must not rebuild for unrelated six-second resource ticks.")
+            if pageID == .system {
+                check(cpu?.processCount == 1 && cpu?.userPercent == 11, "The System CPU leaf must still update to the synthetic resource reading.")
+            }
+            window.contentViewController = nil
+            window.close()
+        }
     }
 
     private static func fixture(date: Date, count: Int, step: Int) -> ResourceSnapshot {
