@@ -189,6 +189,7 @@ enum PerformanceProbe {
         check(monitor.performanceEffectiveMetric == .energy, "Showing the window must restore the selected metric.")
         monitor.setMetric(nil, owner: second)
         check(monitor.performanceEffectiveMetric == nil, "The active page must release its sampling lease.")
+        queuedMetricVisibilityChecks(check)
         let energyDate = Date()
         for index in 0..<61 {
             monitor.publishPerformanceSample(fixture(
@@ -602,6 +603,31 @@ enum PerformanceProbe {
         controller.rootView = AnyView(EmptyView())
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         check(!copied.wrappedValue, "Hiding a copy button must clear confirmation without changing the real clipboard.")
+    }
+
+    private static func queuedMetricVisibilityChecks(_ check: (Bool, String) -> Void) {
+        for metric: ResourceMetric in [.energy, .memory] {
+            let monitor = ResourceMonitor()
+            monitor.setMetric(metric, owner: UUID())
+            check(monitor.performanceEffectiveMetric == metric, "The synthetic metric lease must be installed.")
+            let released = DispatchSemaphore(value: 0)
+            let observed = DispatchSemaphore(value: 0)
+            let received = OSAllocatedUnfairLock<ResourceMetric?>(initialState: nil)
+            let timedOut = OSAllocatedUnfairLock(initialState: false)
+            monitor.performanceEnqueue {
+                if released.wait(timeout: .now() + 5) != .success { timedOut.withLock { $0 = true } }
+            }
+            monitor.performanceReadQueuedMetric { value in
+                received.withLock { $0 = value }
+                observed.signal()
+            }
+            monitor.setWindowVisible(false)
+            released.signal()
+            check(observed.wait(timeout: .now() + 2) == .success, "The synthetic queued metric callback must run.")
+            check(received.withLock { $0 } == nil,
+                  "Queued \(metric.rawValue) collection must see hidden-window state before sampling begins.")
+            check(!timedOut.withLock { $0 }, "The controlled metric queue must not time out.")
+        }
     }
 
     private static func fixture(date: Date, count: Int, step: Int) -> ResourceSnapshot {

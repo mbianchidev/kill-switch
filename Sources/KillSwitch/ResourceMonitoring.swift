@@ -237,9 +237,14 @@ final class ResourceMonitor: ObservableObject {
     )
     private let logger = Logger(subsystem: "com.killswitch.app", category: "resources")
     private var timer: DispatchSourceTimer?
-    private var activeMetric: ResourceMetric?
-    private var activeMetricOwner: UUID?
-    private var windowVisible = true
+    private struct MetricSelection: Sendable {
+        var metric: ResourceMetric?
+        var owner: UUID?
+        var windowVisible = true
+        var effectiveMetric: ResourceMetric? { windowVisible ? metric : nil }
+    }
+    private let metricSelection = OSAllocatedUnfairLock(initialState: MetricSelection())
+    private var effectiveMetric: ResourceMetric? { metricSelection.withLock { $0.effectiveMetric } }
     private var energyHistory: [ResourceProcessIdentity: [EnergySample]] = [:]
     private var lastEnergyHistorySample: Date?
     private var running = false
@@ -254,7 +259,12 @@ final class ResourceMonitor: ObservableObject {
 
 #if KILLSWITCH_PERFORMANCE_PROBE
     var performanceEffectiveMetric: ResourceMetric? {
-        samplingQueue.sync { windowVisible ? activeMetric : nil }
+        samplingQueue.sync { effectiveMetric }
+    }
+
+    func performanceEnqueue(_ work: @escaping @Sendable () -> Void) { samplingQueue.async(execute: work) }
+    func performanceReadQueuedMetric(_ read: @escaping @Sendable (ResourceMetric?) -> Void) {
+        samplingQueue.async { read(self.effectiveMetric) }
     }
 
     func publishPerformanceSample(_ snapshot: ResourceSnapshot) {
@@ -310,16 +320,15 @@ final class ResourceMonitor: ObservableObject {
     }
 
     func setMetric(_ metric: ResourceMetric?, owner: UUID) {
-        samplingQueue.async { [weak self] in
-            guard let self else { return }
-            if metric == nil, self.activeMetricOwner != owner { return }
-            self.activeMetric = metric
-            self.activeMetricOwner = metric == nil ? nil : owner
+        metricSelection.withLock { state in
+            if metric == nil, state.owner != owner { return }
+            state.metric = metric
+            state.owner = metric == nil ? nil : owner
         }
     }
 
     func setWindowVisible(_ visible: Bool) {
-        samplingQueue.async { [weak self] in self?.windowVisible = visible }
+        metricSelection.withLock { $0.windowVisible = visible }
     }
 
     func clearHistory() {
@@ -374,13 +383,19 @@ final class ResourceMonitor: ObservableObject {
 
     private func sampleNow() {
         guard running else { return }
-        let metric = windowVisible ? activeMetric : nil
+        let metric = effectiveMetric
+        let metricSelection = metricSelection
 
         do {
             let trackedPIDs = Set(
                 processCatalog.records.values.filter { $0.terminatedAt == nil }.map { $0.process.id.pid }
             )
-            let snapshot = try sampler.sample(metric: metric, trackedPIDs: trackedPIDs)
+            let snapshot = try sampler.sample(
+                metric: metric, trackedPIDs: trackedPIDs,
+                allowsOptionalMetric: { requested in
+                    metricSelection.withLock { $0.effectiveMetric == requested }
+                }
+            )
             var sampledProcesses = snapshot.processes
             if snapshot.sampledEnergy {
                 updateEnergyHistory(processes: sampledProcesses, now: snapshot.date)

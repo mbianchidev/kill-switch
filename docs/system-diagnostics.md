@@ -24,8 +24,11 @@ throughout the app's lifetime, including when another tab is selected or the
 window is hidden. `nettop` and `netstat` therefore run continuously, not just
 while Network is selected. Energy's heavier power/battery collection runs at
 most once every **15 seconds**, only while Energy is visible, including actual
-window visibility. Power and sleep
-assertions retain separate read availability: never-read, failed, and
+window visibility.
+Visibility and page leases take effect immediately, including for already-queued
+callbacks. Energy and memory-pressure phases recheck the current selection
+before beginning; an optional phase already in progress can finish.
+Power and sleep assertions retain separate read availability: never-read, failed, and
 not-yet-observed process lifetimes remain unavailable rather than becoming
 zero power or No. Each collector retains its error until its own retry succeeds,
 including on six-second ticks that skip Energy collection. Sampling another mode

@@ -81,7 +81,10 @@ final class ResourceSampler {
         previousNetwork = nil
     }
 
-    func sample(metric: ResourceMetric?, trackedPIDs: Set<Int32> = []) throws -> ResourceSnapshot {
+    func sample(
+        metric: ResourceMetric?, trackedPIDs: Set<Int32> = [],
+        allowsOptionalMetric: @Sendable (ResourceMetric) -> Bool = { _ in true }
+    ) throws -> ResourceSnapshot {
         let timebase = try cpuTimebase.get()
         let now = Date()
         let policy = ResourceSamplingPolicy.forMetric(metric ?? .cpu)
@@ -98,7 +101,8 @@ final class ResourceSampler {
             applications: applications, beforePS: beforePS, afterPS: afterPS, timebase: timebase
         )
         var sampledEnergy = false
-        if policy.usesTop && (lastEnergyDate.map { now.timeIntervalSince($0) >= Double(policy.intervalSeconds) } ?? true) {
+        let collectsEnergy = policy.usesTop && allowsOptionalMetric(.energy)
+        if collectsEnergy && (lastEnergyDate.map { now.timeIntervalSince($0) >= Double(policy.intervalSeconds) } ?? true) {
             lastEnergyDate = now
             do {
                 energy.updatePower(try samplePower(), identities: identities)
@@ -118,7 +122,7 @@ final class ResourceSampler {
                 cachedBattery = .unavailable
                 batteryWarning = "Power source: \(error.localizedDescription) Open Energy and refresh to retry."
             }
-        } else if !policy.usesTop {
+        } else if !collectsEnergy {
             energy.clearMeasurements()
             lastEnergyDate = nil
         }
@@ -214,7 +218,7 @@ final class ResourceSampler {
         }
 
         let cpu = sampleCPU(processes: parsedProcesses)
-        let memory = sampleMemory(includePressure: policy.collectsMemoryPressure)
+        let memory = sampleMemory(includePressure: policy.collectsMemoryPressure && allowsOptionalMetric(.memory))
         if !cpu.isAvailable && previousSystemCPU == nil {
             warnings.append("CPU rates need two readable samples.")
         }

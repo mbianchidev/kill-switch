@@ -170,6 +170,10 @@ restoration through this suspension.
 Metric requests carry page-specific leases, so an outgoing page cannot clear a
 newer selection. Actual window visibility gates heavier collection while
 continuous CPU, memory, disk, and traffic sampling remains unchanged.
+Metric leases and window visibility are updated synchronously in one locked
+selection, rather than waiting behind already-queued samples. The native reader
+rechecks that selection before starting Energy or memory-pressure phases;
+continuous history sampling is not paused by hiding or minimizing.
 The app uses one macOS `Window` scene rather than permitting independent windows
 with conflicting visibility or resource selections. Dashboard scrubber-reset
 observers live outside the suspended chart subtree, so changes on another page
