@@ -230,6 +230,8 @@ HEAD as the current branch.
 Branch-metadata errors retain the discovered repository root, so nested working
 directories still group under their project while the specific warning remains
 visible.
+Symbolic branch refs are validated before display; malformed components or
+Git-forbidden characters produce a metadata warning instead of a branch label.
 
 Open files includes ordinary files, directories, and Unix sockets, with file
 descriptor, access, size, and reported lock information. Locks are best-effort

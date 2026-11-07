@@ -89,6 +89,20 @@ extension SystemMetricsChecks {
                 check((error as? DevelopmentProjectMetadataError)?.project.directory.path == worktree.path,
                       "malformed branch metadata must retain the root found above a nested working directory")
             }
+            for name in ["bad branch", "bad..branch", "bad@{branch", ".hidden", "nested/.hidden",
+                         "nested/name.lock", "bad//branch", "bad/", "bad.", "bad~name", "bad^name",
+                         "bad:name", "bad?name", "bad*name", "bad[name", "bad\\name", "-branch"] {
+                try Data("ref: refs/heads/\(name)\n".utf8).write(to: head)
+                do {
+                    _ = try DevelopmentProjectResolver.resolve(worktree)
+                    check(false, "malformed Git branch refs must reject \(name)")
+                } catch {
+                    check(error is DevelopmentProjectMetadataError, "malformed Git branch refs retain metadata errors for \(name)")
+                }
+            }
+            try Data("ref: refs/heads/feature/synthetic\n".utf8).write(to: head)
+            let nestedBranch = try DevelopmentProjectResolver.resolve(worktree)
+            check(nestedBranch.branch == "feature/synthetic", "valid nested Git branch refs remain supported")
             try Data((String(repeating: "\u{FF21}", count: 40) + "\n").utf8).write(to: head)
             do {
                 _ = try DevelopmentProjectResolver.resolve(worktree)

@@ -536,9 +536,13 @@ enum PerformanceProbe {
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         check(windowInspection.performanceSampleModes.isEmpty,
               "Application visibility must block queued inspection before SwiftUI stops its activation.")
+        windowInspection.stop()
         AppWindowVisibility.setVisible(true)
         windowInspection.start(.connections)
-        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        let windowReadDeadline = Date().addingTimeInterval(2)
+        while windowInspection.performanceSampleModes.isEmpty && Date() < windowReadDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
         check(windowInspection.performanceSampleModes == [.connections],
               "A shown inspection window must collect only its current resumed activation.")
         check(!timedOut.withLock { $0 }, "Controlled synthetic inspection queues must not time out.")
@@ -926,6 +930,7 @@ enum PerformanceProbe {
         window.contentViewController = controller
         defer { window.contentViewController = nil; window.close() }
         func render() {
+            let previousReads = reads.withLock { $0 }
             var page = DevCleanupTab(
                 allowAutomaticTermination: .constant(false),
                 visitID: Binding(get: { visit }, set: { visit = $0 }),
@@ -935,7 +940,10 @@ enum PerformanceProbe {
             page.performanceObserveState = { model, query, _ in observedMonitor = model; search = query }
             controller.rootView = AnyView(page.environment(\.allowsLiveOperations, true))
             controller.view.layoutSubtreeIfNeeded()
-            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            let readDeadline = Date().addingTimeInterval(2)
+            while reads.withLock({ $0 }) == previousReads && Date() < readDeadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            }
             monitor.performanceDrainWorkQueue()
             RunLoop.current.run(until: Date().addingTimeInterval(0.01))
         }

@@ -80,7 +80,13 @@ public enum DevelopmentProjectResolver {
         let value = head.trimmingCharacters(in: .whitespacesAndNewlines)
         if value.hasPrefix("ref: refs/heads/") {
             let name = String(value.dropFirst("ref: refs/heads/".count))
-            guard !name.isEmpty, !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+            let parts = name.split(separator: "/", omittingEmptySubsequences: false)
+            guard !name.isEmpty, !name.hasPrefix("-"), !name.hasSuffix("."),
+                  !name.contains(".."), !name.contains("@{"),
+                  !parts.contains(where: { $0.isEmpty || $0.hasPrefix(".") || $0.hasSuffix(".lock") }),
+                  !name.unicodeScalars.contains(where: {
+                      CharacterSet.controlCharacters.contains($0) || " ~^:?*[\\".unicodeScalars.contains($0)
+                  }) else {
                 throw ProcessInspectionError(message: "The project's Git branch is unreadable.")
             }
             return name
