@@ -222,13 +222,18 @@ and recovery.
 
 ## Dev cleanup
 
-**Auto-kill is enabled by default.** Sidebar entry asks for confirmation while
-automatic termination is enabled. Confirming entry immediately runs a cleanup,
+**Auto-kill is enabled by default.** Selecting the sidebar page first shows a
+safe preview while automatic termination is enabled. **Open Dev cleanup**
+explicitly asks for confirmation; confirming immediately runs a cleanup,
 which can terminate qualifying servers older than the saved age. Age is total
 process lifetime, not inactivity; a busy server can qualify.
 Use **Dev servers** for read-only discovery. If you cannot risk that first
 cleanup pass, cancel the entry confirmation. The CLI
 [status command](cli.md#read-saved-status) reads settings without running cleanup.
+
+Canceling leaves the safe preview shown; it does not reset sidebar selection or
+reopen the modal when navigating with arrow keys. Other pages remain reachable
+without authorizing cleanup.
 
 Each entry reloads saved settings without writing a retained monitor's stale
 values back to preferences. Automatic cleanup requires both current saved

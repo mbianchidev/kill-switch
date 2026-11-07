@@ -16,6 +16,7 @@ struct ContentView: View {
     @State private var windowVisible = true
     @State private var confirmCleanup = false
     @State private var cleanupAuthorized = false
+    @State private var cleanupEntryPending = false
     @State private var inspectedProcess: ActivityProcessDescriptor?
 
     init(
@@ -57,7 +58,7 @@ struct ContentView: View {
             Button("Cancel", role: .cancel) {}
             Button("Open Dev cleanup", role: .destructive) {
                 cleanupAuthorized = true
-                selectedTab = .cleanup
+                cleanupEntryPending = false
             }
         } message: {
             Text("Automatic termination is enabled. Opening this page can terminate qualifying development servers older than your saved age threshold. Age is not inactivity. Protected processes remain protected.")
@@ -93,12 +94,13 @@ struct ContentView: View {
             get: { selectedTab },
             set: { page in
                 guard let page, page != selectedTab else { return }
-                if page.requiresCleanupConfirmation(autoKillEnabled: DevCleanupPreferences().load().autoKillEnabled) {
-                    confirmCleanup = true
-                } else {
-                    if page == .cleanup { cleanupAuthorized = false }
-                    selectedTab = page
+                if page == .cleanup {
+                    cleanupAuthorized = false
+                    cleanupEntryPending = page.requiresCleanupConfirmation(
+                        autoKillEnabled: DevCleanupPreferences().load().autoKillEnabled
+                    )
                 }
+                selectedTab = page
             }
         )
     }
@@ -125,7 +127,11 @@ struct ContentView: View {
         case .diskCleanup:
             DiskCleanupTab(monitor: diskCleanupMonitor)
         case .cleanup:
-            DevCleanupTab(allowAutomaticTermination: cleanupAuthorized)
+            if cleanupEntryPending {
+                cleanupEntry
+            } else {
+                DevCleanupTab(allowAutomaticTermination: cleanupAuthorized)
+            }
         case .watchdog:
             CPUWatchdogTab(monitor: watchdog)
         case .screenTime:
@@ -137,5 +143,27 @@ struct ContentView: View {
         case .updates:
             UpdatesTab(updater: updater)
         }
+    }
+
+    private var cleanupEntry: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("Dev cleanup", systemImage: "trash")
+                .font(.system(size: 20, weight: .semibold, design: .rounded))
+            Label("Automatic termination is enabled", systemImage: "exclamationmark.triangle")
+                .foregroundColor(.orange)
+            Text("Opening cleanup can terminate qualifying development servers older than the saved age threshold. Age is not inactivity. Nothing runs while this preview is shown.")
+                .font(.system(size: 13))
+            HStack {
+                Button("Open Dev cleanup") { confirmCleanup = true }
+                Button("Show read-only Dev servers") { selectedTab = .devServers }
+            }
+            Text("Use the sidebar to keep navigating, or explicitly open cleanup and confirm. Canceling confirmation leaves this safe preview open.")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(24)
+        .background(Theme.background)
     }
 }
