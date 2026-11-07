@@ -178,6 +178,10 @@ The app uses one macOS `Window` scene rather than permitting independent windows
 with conflicting visibility or resource selections. Dashboard scrubber-reset
 observers live outside the suspended chart subtree, so changes on another page
 cannot restore a stale inspected time.
+Scrubbed dates also carry the monitor's history-selection token. Each process
+or range change rotates that token, so even coalesced changes that return to
+the original values invalidate an old scrubber when the page returns. This
+does not add observers or work to ordinary sampling ticks.
 `DevCleanupTab` also keeps its state owner mounted through the safe preview and
 confirmation, retaining filters and prior cleanup results without starting its
 active content. Session leases reject canceled queued passes and old timer

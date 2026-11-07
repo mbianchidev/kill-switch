@@ -217,11 +217,18 @@ final class ResourceMonitor: ObservableObject {
     @Published private(set) var historyProcesses: [ActivityProcessDescriptor] = []
     @Published private(set) var liveActivity: ActivitySnapshot?
     @Published var showAllUsers = false
+    @Published private(set) var historySelectionID = UUID()
     @Published var historyRange: ActivityHistoryRange = .live {
-        didSet { reloadHistory() }
+        didSet {
+            if historyRange != oldValue { historySelectionID = UUID() }
+            reloadHistory()
+        }
     }
     @Published var focusedProcess: ActivityProcessIdentity? {
-        didSet { reloadHistory() }
+        didSet {
+            if focusedProcess != oldValue { historySelectionID = UUID() }
+            reloadHistory()
+        }
     }
 
     let currentUsername = NSUserName()

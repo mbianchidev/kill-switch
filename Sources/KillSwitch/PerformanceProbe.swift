@@ -203,6 +203,7 @@ enum PerformanceProbe {
         queuedInspectionChecks(check)
         filteredProjectWarningChecks(check)
         copyFeedbackChecks(check)
+        dashboardSelectionChecks(check)
 
         let suite = "KillSwitch.synthetic-entry-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suite) else {
@@ -720,6 +721,54 @@ enum PerformanceProbe {
               "A visible affected listener must still raise its project warning.")
         check(!DevServersTab.hasProjectWarnings(in: [NetworkConnectionRecord](), identities: inspection.identities, errors: errors),
               "No matching listeners must not claim that visible rows explain hidden project errors.")
+    }
+
+    private static func dashboardSelectionChecks(_ check: (Bool, String) -> Void) {
+        let monitor = ResourceMonitor()
+        let controller = RetainedPageController()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        defer { window.contentViewController = nil; window.close() }
+        var selection: Binding<Date?>?
+        func showDashboard() {
+            var page = ActivityDashboard(monitor: monitor, systemHealth: SystemHealthMonitor(), navigate: { _ in })
+            page.performanceObserveScrubber = { selection = $0 }
+            controller.show(.dashboard, content: AnyView(page.environment(\.allowsLiveOperations, false)))
+            controller.view.layoutSubtreeIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        showDashboard()
+        guard let selection, let otherRange = ActivityHistoryRange.allCases.first(where: { $0 != monitor.historyRange }) else {
+            check(false, "The isolated dashboard must expose a scrubber and history ranges.")
+            return
+        }
+        let date = Date()
+        selection.wrappedValue = date
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        let originalSelectionID = monitor.historySelectionID
+        monitor.publishPerformanceSample(fixture(date: date, count: 1, step: 0))
+        check(monitor.historySelectionID == originalSelectionID, "Ordinary resource samples must not invalidate a scrubbed time.")
+        controller.show(.resources, content: AnyView(Text("Synthetic resource page")))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        showDashboard()
+        check(selection.wrappedValue == date, "Navigation with an unchanged history selection must preserve its inspected time.")
+        controller.show(.resources, content: AnyView(Text("Synthetic resource page")))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        let originalRange = monitor.historyRange
+        monitor.historyRange = otherRange
+        monitor.historyRange = originalRange
+        showDashboard()
+        check(selection.wrappedValue == nil, "Returning after coalesced history-range changes must not restore a stale scrubbed date.")
+        selection.wrappedValue = date
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        controller.show(.resources, content: AnyView(Text("Synthetic resource page")))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        monitor.focusedProcess = ActivityProcessIdentity(bootSession: "synthetic-dashboard", pid: 100_996, startTime: 1)
+        monitor.focusedProcess = nil
+        showDashboard()
+        check(selection.wrappedValue == nil, "Returning after coalesced process changes must not restore a stale scrubbed date.")
     }
 
     private static func fixture(date: Date, count: Int, step: Int) -> ResourceSnapshot {

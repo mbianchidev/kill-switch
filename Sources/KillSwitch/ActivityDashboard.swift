@@ -8,19 +8,38 @@ struct ActivityDashboard: View {
     let systemHealth: SystemHealthMonitor
     let navigate: (MainTab) -> Void
     @State private var search = ""
-    @State private var selectedDate: Date?
+    @State private var scrubbedTime: (date: Date, selection: UUID)?
     @State private var sorting = TableComparator(field: ActivityTableFields.cpu, order: .reverse)
     @State private var historySearch = ""
     @Environment(\.isKillSwitchPageVisible) private var pageVisible
 
     private let metrics: [ResourceMetric] = [.cpu, .memory, .network, .disk]
 
+    private var selectedDate: Date? {
+        get {
+            guard let scrubbedTime, scrubbedTime.selection == monitor.historySelectionID else { return nil }
+            return scrubbedTime.date
+        }
+        nonmutating set {
+            scrubbedTime = newValue.map { (date: $0, selection: monitor.historySelectionID) }
+        }
+    }
+
+#if KILLSWITCH_PERFORMANCE_PROBE
+    var performanceObserveScrubber: ((Binding<Date?>) -> Void)?
+#endif
+
     var body: some View {
         Group {
             if pageVisible { pageContent }
         }
-        .onChange(of: monitor.historyRange) { _ in selectedDate = nil }
-        .onChange(of: monitor.focusedProcess) { _ in selectedDate = nil }
+        .onChange(of: monitor.historySelectionID) { _ in selectedDate = nil }
+#if KILLSWITCH_PERFORMANCE_PROBE
+        .background(DashboardScrubberRecorder(
+            selection: Binding(get: { selectedDate }, set: { selectedDate = $0 }),
+            observe: performanceObserveScrubber
+        ).frame(width: 0, height: 0))
+#endif
     }
 
     private var pageContent: some View {
@@ -192,6 +211,15 @@ struct ActivityDashboard: View {
             .apply(to: scoped, sorting: sorting, identity: { $0.process.identity.key })
     }
 }
+
+#if KILLSWITCH_PERFORMANCE_PROBE
+private struct DashboardScrubberRecorder: NSViewRepresentable {
+    let selection: Binding<Date?>
+    let observe: ((Binding<Date?>) -> Void)?
+    func makeNSView(context: Context) -> NSView { observe?(selection); return NSView() }
+    func updateNSView(_ view: NSView, context: Context) { observe?(selection) }
+}
+#endif
 
 struct ProcessScopePicker: View {
     @ObservedObject var monitor: ResourceMonitor
