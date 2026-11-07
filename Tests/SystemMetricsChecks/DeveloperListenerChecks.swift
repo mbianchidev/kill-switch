@@ -73,13 +73,22 @@ extension SystemMetricsChecks {
             try FileManager.default.createDirectory(at: reftable, withIntermediateDirectories: false)
             try Data("ref: refs/heads/.invalid\n".utf8).write(to: head)
             do {
-                _ = try DevelopmentProjectResolver.resolve(worktree)
+                _ = try DevelopmentProjectResolver.resolve(worktree.appendingPathComponent("nested/worker"))
                 check(false, "unsupported reftable metadata must not invent a branch from its compatibility HEAD")
             } catch {
-                check(error.localizedDescription.lowercased().contains("reftable"),
-                      "unsupported reftable metadata must report its specific discovery limitation")
+                check(error.localizedDescription.lowercased().contains("reftable")
+                      && (error as? DevelopmentProjectMetadataError)?.project.directory.path == worktree.path,
+                      "unsupported reftable metadata must retain the discovered repository root and its specific error")
             }
             try FileManager.default.removeItem(at: reftable)
+            try Data("malformed synthetic HEAD\n".utf8).write(to: head)
+            do {
+                _ = try DevelopmentProjectResolver.resolve(worktree.appendingPathComponent("nested/worker"))
+                check(false, "malformed branch metadata must report discovery failure")
+            } catch {
+                check((error as? DevelopmentProjectMetadataError)?.project.directory.path == worktree.path,
+                      "malformed branch metadata must retain the root found above a nested working directory")
+            }
             try Data((String(repeating: "\u{FF21}", count: 40) + "\n").utf8).write(to: head)
             do {
                 _ = try DevelopmentProjectResolver.resolve(worktree)

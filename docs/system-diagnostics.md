@@ -227,6 +227,9 @@ not an invented branch label.
 Git reftable repositories retain their verified project directory but show an
 explicit unsupported-branch warning instead of interpreting the compatibility
 HEAD as the current branch.
+Branch-metadata errors retain the discovered repository root, so nested working
+directories still group under their project while the specific warning remains
+visible.
 
 Open files includes ordinary files, directories, and Unix sockets, with file
 descriptor, access, size, and reported lock information. Locks are best-effort

@@ -11,6 +11,12 @@ public struct DevelopmentProjectContext: Equatable, Sendable {
     }
 }
 
+public struct DevelopmentProjectMetadataError: LocalizedError, Sendable {
+    public let project: DevelopmentProjectContext
+    public let message: String
+    public var errorDescription: String? { message }
+}
+
 public enum DevelopmentProjectResolver {
     public static func resolve(
         _ workingDirectory: URL, shouldContinue: @Sendable () -> Bool = { true }
@@ -24,27 +30,35 @@ public enum DevelopmentProjectResolver {
             let git = directory.appendingPathComponent(".git")
             var isDirectory: ObjCBool = false
             if FileManager.default.fileExists(atPath: git.path, isDirectory: &isDirectory) {
-                let metadata: URL
-                if isDirectory.boolValue {
-                    metadata = git
-                } else {
-                    guard shouldContinue() else { throw CancellationError() }
-                    let pointer = try readSmallFile(git).trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard pointer.hasPrefix("gitdir: "), !pointer.dropFirst(8).isEmpty else {
-                        throw ProcessInspectionError(message: "The project's Git directory pointer is invalid.")
+                do {
+                    let metadata: URL
+                    if isDirectory.boolValue {
+                        metadata = git
+                    } else {
+                        guard shouldContinue() else { throw CancellationError() }
+                        let pointer = try readSmallFile(git).trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard pointer.hasPrefix("gitdir: "), !pointer.dropFirst(8).isEmpty else {
+                            throw ProcessInspectionError(message: "The project's Git directory pointer is invalid.")
+                        }
+                        let path = String(pointer.dropFirst(8))
+                        metadata = path.hasPrefix("/") ? URL(fileURLWithPath: path)
+                            : directory.appendingPathComponent(path).standardizedFileURL
                     }
-                    let path = String(pointer.dropFirst(8))
-                    metadata = path.hasPrefix("/") ? URL(fileURLWithPath: path)
-                        : directory.appendingPathComponent(path).standardizedFileURL
+                    guard shouldContinue() else { throw CancellationError() }
+                    if FileManager.default.fileExists(atPath: metadata.appendingPathComponent("reftable").path) {
+                        throw ProcessInspectionError(message: "Git reftable branch metadata is not supported; the project directory remains available.")
+                    }
+                    guard shouldContinue() else { throw CancellationError() }
+                    return DevelopmentProjectContext(
+                        directory: directory, branch: try branch(readSmallFile(metadata.appendingPathComponent("HEAD")))
+                    )
+                } catch {
+                    if error is CancellationError { throw error }
+                    throw DevelopmentProjectMetadataError(
+                        project: DevelopmentProjectContext(directory: directory, branch: nil),
+                        message: error.localizedDescription
+                    )
                 }
-                guard shouldContinue() else { throw CancellationError() }
-                if FileManager.default.fileExists(atPath: metadata.appendingPathComponent("reftable").path) {
-                    throw ProcessInspectionError(message: "Git reftable branch metadata is not supported; the project directory remains available.")
-                }
-                guard shouldContinue() else { throw CancellationError() }
-                return DevelopmentProjectContext(
-                    directory: directory, branch: try branch(readSmallFile(metadata.appendingPathComponent("HEAD")))
-                )
             }
             if manifestDirectory == nil {
                 for manifest in ["package.json", "Cargo.toml", "go.mod", "pom.xml", "build.gradle", "compose.yaml", "docker-compose.yml"] {

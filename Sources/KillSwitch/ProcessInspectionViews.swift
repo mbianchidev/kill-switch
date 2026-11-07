@@ -224,8 +224,9 @@ final class ProcessInspectionMonitor: ObservableObject {
                             } catch {
                                 if error is CancellationError { throw error }
                                 result = CachedProject(
-                                    date: now, project: DevelopmentProjectContext(directory: directory, branch: nil),
-                                    error: "Project discovery is incomplete; showing the verified working directory. \(error.localizedDescription)"
+                                    date: now, project: (error as? DevelopmentProjectMetadataError)?.project
+                                        ?? DevelopmentProjectContext(directory: directory, branch: nil),
+                                    error: "Project discovery is incomplete; showing the verified project or working directory. \(error.localizedDescription)"
                                 )
                             }
                         } catch {
