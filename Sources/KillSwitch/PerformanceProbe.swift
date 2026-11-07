@@ -5,6 +5,7 @@ import Foundation
 import SwiftUI
 import SystemMetricsCore
 import DevCleanupCore
+import os
 
 @MainActor
 final class PerformanceProbeNavigation: ObservableObject {
@@ -193,6 +194,7 @@ enum PerformanceProbe {
         }
         check(monitor.history[.energy]?.count == 51, "Energy probes must populate and prune the full five-minute chart.")
         check(monitor.history[.energy]?.last?.primary == 2_000, "Energy chart fixtures must contain measured power totals.")
+        healthPollingChecks(check)
 
         let suite = "KillSwitch.synthetic-entry-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suite) else {
@@ -245,11 +247,125 @@ enum PerformanceProbe {
         check(token != nil && tokens[.dashboard] == token, "Returning to a visited page must preserve its SwiftUI state.")
         check(activePages == [.dashboard], "Returning to a page must deactivate its predecessor.")
         if failures.isEmpty {
-            print("Interface checks passed: navigation, cleanup entry, metric leases, visibility, lazy pages, and retained state.")
+            print("Interface checks passed: navigation, cleanup entry, health polling, metric leases, visibility, lazy pages, and retained state.")
             return 0
         }
         for failure in failures { fputs("FAIL: \(failure)\n", stderr) }
         return 1
+    }
+
+    private static func healthPollingChecks(_ check: (Bool, String) -> Void) {
+        let fixtures = SystemHealthMonitor()
+        fixtures.publishPerformanceFixture()
+        guard let hardware = fixtures.hardware, let snapshot = fixtures.snapshot else {
+            check(false, "Synthetic health fixtures must be available.")
+            return
+        }
+        let reads = OSAllocatedUnfairLock(initialState: 0)
+        let hardwareReads = OSAllocatedUnfairLock(initialState: 0)
+        var sampleNow = ContinuousClock.now
+        let health = SystemHealthMonitor(
+            now: { sampleNow },
+            readHardware: {
+                hardwareReads.withLock { $0 += 1 }
+                return hardware
+            },
+            readSnapshot: {
+                reads.withLock { $0 += 1 }
+                return snapshot
+            }
+        )
+        defer { health.shutdown() }
+        func finishRead(_ monitor: SystemHealthMonitor) {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+            let deadline = Date().addingTimeInterval(2)
+            while monitor.isRefreshing && Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            }
+            check(!monitor.isRefreshing, "Synthetic health reads must finish.")
+        }
+        let client = UUID()
+        let otherClient = UUID()
+        health.setActive(true, client: client)
+        finishRead(health)
+        check(reads.withLock { $0 } == 1, "The first visible health client must receive an immediate sample.")
+        for _ in 0..<4 {
+            health.setActive(false, client: client)
+            health.setActive(true, client: client)
+            finishRead(health)
+        }
+        check(reads.withLock { $0 } == 1, "Repeated health-page navigation must not bypass the thirty-second polling limit.")
+        sampleNow = sampleNow.advanced(by: .seconds(29))
+        health.performanceFireAutomaticRefresh()
+        finishRead(health)
+        check(reads.withLock { $0 } == 1 && health.performanceHasScheduledRefresh,
+              "An early timer wake must preserve the remaining cooldown without sampling.")
+        sampleNow = sampleNow.advanced(by: .milliseconds(999))
+        health.setActive(false, client: client)
+        health.setActive(true, client: client)
+        check(reads.withLock { $0 } == 1, "Health must not sample just before the thirty-second boundary.")
+        sampleNow = sampleNow.advanced(by: .milliseconds(1))
+        health.performanceFireAutomaticRefresh()
+        finishRead(health)
+        check(reads.withLock { $0 } == 2, "Automatic health polling must resume at its original deadline.")
+        health.refresh()
+        finishRead(health)
+        check(reads.withLock { $0 } == 3, "Explicit user refresh must remain available within the automatic cooldown.")
+        health.setActive(true, client: otherClient)
+        health.setActive(false, client: client)
+        finishRead(health)
+        check(reads.withLock { $0 } == 3, "Overlapping visible clients must share the same poll budget.")
+        health.setActive(false, client: otherClient)
+        check(!health.performanceHasScheduledRefresh, "Hidden health pages must cancel their scheduled poll.")
+        sampleNow = sampleNow.advanced(by: .seconds(600))
+        health.refresh()
+        finishRead(health)
+        check(reads.withLock { $0 } == 3, "Hidden health pages must not perform any new read.")
+        health.setActive(true, client: client)
+        finishRead(health)
+        check(reads.withLock { $0 } == 4, "A stale health cache must refresh immediately on returning.")
+        check(hardwareReads.withLock { $0 } == 1, "Successful hardware information must only be read once.")
+
+        let blockedReads = OSAllocatedUnfairLock(initialState: 0)
+        let blockedHardwareReads = OSAllocatedUnfairLock(initialState: 0)
+        let timedOut = OSAllocatedUnfairLock(initialState: false)
+        let started = DispatchSemaphore(value: 0)
+        let released = DispatchSemaphore(value: 0)
+        let blockedHealth = SystemHealthMonitor(
+            now: { sampleNow },
+            readHardware: {
+                blockedHardwareReads.withLock { $0 += 1 }
+                return hardware
+            },
+            readSnapshot: {
+                blockedReads.withLock { $0 += 1 }
+                started.signal()
+                if released.wait(timeout: .now() + 5) != .success {
+                    timedOut.withLock { $0 = true }
+                }
+                return snapshot
+            }
+        )
+        defer { blockedHealth.shutdown() }
+        blockedHealth.setActive(true, client: client)
+        check(started.wait(timeout: .now() + 2) == .success, "The controlled in-flight health read must start.")
+        blockedHealth.setActive(false, client: client)
+        blockedHealth.setActive(true, client: otherClient)
+        released.signal()
+        finishRead(blockedHealth)
+        check(blockedReads.withLock { $0 } == 1 && blockedHealth.snapshot == snapshot && blockedHealth.hardware == hardware,
+              "A completing shared health read must remain available across page handoff without another poll.")
+        blockedHealth.refresh()
+        check(started.wait(timeout: .now() + 2) == .success, "An explicit in-flight refresh must start.")
+        blockedHealth.setActive(false, client: otherClient)
+        released.signal()
+        finishRead(blockedHealth)
+        check(!blockedHealth.performanceHasScheduledRefresh, "Completing a read while hidden must not schedule another poll.")
+        blockedHealth.setActive(true, client: client)
+        finishRead(blockedHealth)
+        check(blockedReads.withLock { $0 } == 2 && blockedHardwareReads.withLock { $0 } == 1,
+              "Re-entry must use the completed shared cache without rereading hardware or bypassing cooldown.")
+        check(!timedOut.withLock { $0 }, "Controlled synthetic health reads must not time out.")
     }
 
     private static func fixture(date: Date, count: Int, step: Int) -> ResourceSnapshot {

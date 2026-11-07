@@ -45,7 +45,7 @@ struct SystemHealthTab: View {
                     runtimeCard
                     thermalCard
                 }
-                Text("Public macOS counters. Health refreshes every 30 seconds while this page or the dashboard is visible. No administrator access, private sensor interfaces, serial numbers, or hardware UUIDs.")
+                Text("Public macOS counters. Automatic health refreshes run at most every 30 seconds while this page or the dashboard is visible. Refresh reads on demand. No administrator access, private sensor interfaces, serial numbers, or hardware UUIDs.")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }

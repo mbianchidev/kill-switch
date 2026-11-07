@@ -12,45 +12,53 @@ final class SystemHealthMonitor: ObservableObject {
     @Published private(set) var isRefreshing = false
     private var clients: Set<UUID> = []
     private var timer: Timer?
-    private var generation = 0
+    private var scheduledRefreshID: UUID?
+    private var nextAutomaticRefreshAt: ContinuousClock.Instant?
     private var refreshID: UUID?
     private var hardwareError: String?
+    private let now: () -> ContinuousClock.Instant
+    private let readHardware: @Sendable () throws -> SystemHardwareInfo
+    private let readSnapshot: @Sendable () -> SystemHealthSnapshot
     private let queue = DispatchQueue(label: "killswitch.system-health", qos: .utility, autoreleaseFrequency: .workItem)
     private let logger = Logger(subsystem: "com.killswitch.app", category: "system-health")
+
+    init(
+        now: @escaping () -> ContinuousClock.Instant = { .now },
+        readHardware: @escaping @Sendable () throws -> SystemHardwareInfo = { try SystemHealthReader.hardware() },
+        readSnapshot: @escaping @Sendable () -> SystemHealthSnapshot = { SystemHealthReader.sample() }
+    ) {
+        self.now = now
+        self.readHardware = readHardware
+        self.readSnapshot = readSnapshot
+    }
 
     func setActive(_ active: Bool, client: UUID) {
         if active { clients.insert(client) } else { clients.remove(client) }
         if clients.isEmpty {
-            timer?.invalidate()
-            timer = nil
-            generation += 1
+            cancelTimer()
         } else if timer == nil {
-            refresh()
-            timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-                DispatchQueue.main.async { [weak self] in self?.refresh() }
-            }
-            timer?.tolerance = 3
+            refreshAutomatically()
         }
     }
 
     func refresh() {
         guard !clients.isEmpty, refreshID == nil else { return }
+        cancelTimer()
         let id = UUID()
-        let generation = generation
         let needsHardware = hardware == nil
+        let readHardware = readHardware
+        let readSnapshot = readSnapshot
         refreshID = id
         isRefreshing = true
         queue.async { [weak self] in
-            let hardware = needsHardware ? Result { try SystemHealthReader.hardware() } : nil
-            let snapshot = SystemHealthReader.sample()
+            let hardware = needsHardware ? Result { try readHardware() } : nil
+            let snapshot = readSnapshot()
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.refreshID == id else { return }
                 self.refreshID = nil
                 self.isRefreshing = false
-                guard self.generation == generation, !self.clients.isEmpty else {
-                    if !self.clients.isEmpty { self.refresh() }
-                    return
-                }
+                self.nextAutomaticRefreshAt = self.now().advanced(by: .seconds(30))
+                // A page handoff does not invalidate a machine-wide reading.
                 if let hardware {
                     switch hardware {
                     case .success(let value):
@@ -64,18 +72,57 @@ final class SystemHealthMonitor: ObservableObject {
                 let errors = [self.hardwareError].compactMap { $0 } + snapshot.warnings
                 self.errorMessage = errors.isEmpty ? nil : errors.joined(separator: "\n")
                 if let message = self.errorMessage { self.logger.error("System health: \(message)") }
+                self.scheduleAutomaticRefresh()
             }
         }
     }
 
-    func shutdown() {
-        clients.removeAll()
+    private func refreshAutomatically() {
+        guard !clients.isEmpty, refreshID == nil else { return }
+        if let nextAutomaticRefreshAt, now() < nextAutomaticRefreshAt {
+            scheduleAutomaticRefresh()
+        } else {
+            refresh()
+        }
+    }
+
+    private func scheduleAutomaticRefresh() {
+        guard !clients.isEmpty, refreshID == nil, let nextAutomaticRefreshAt else { return }
+        cancelTimer()
+        let remaining = now().duration(to: nextAutomaticRefreshAt).components
+        let delay = max(0, Double(remaining.seconds) + Double(remaining.attoseconds) / 1e18)
+        let id = UUID()
+        scheduledRefreshID = id
+        timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.scheduledRefreshID == id else { return }
+                self.timer = nil
+                self.scheduledRefreshID = nil
+                self.refreshAutomatically()
+            }
+        }
+        timer?.tolerance = min(3, delay / 10)
+    }
+
+    private func cancelTimer() {
         timer?.invalidate()
         timer = nil
-        generation += 1
+        scheduledRefreshID = nil
+    }
+
+    func shutdown() {
+        clients.removeAll()
+        cancelTimer()
     }
 
 #if KILLSWITCH_PERFORMANCE_PROBE
+    var performanceHasScheduledRefresh: Bool { timer?.isValid == true }
+
+    func performanceFireAutomaticRefresh() {
+        timer?.fire()
+        timer?.invalidate()
+    }
+
     func publishPerformanceFixture() {
         hardware = SystemHardwareInfo(
             model: "Synthetic Mac", cpuName: "Synthetic CPU", architecture: "Apple Silicon",

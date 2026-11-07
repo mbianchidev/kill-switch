@@ -222,7 +222,14 @@ Swift style and keep failure messages actionable. Add regression checks in the
 existing executable target for the subsystem you change.
 
 `SystemHealthMonitor` is shared by Dashboard and the three health pages.
-Visible clients lease one thirty-second timer; no health history is accumulated.
+Visible clients share one monotonic automatic-refresh deadline, at least thirty
+seconds after each completed read. Page changes and hiding/reopening preserve
+that deadline rather than causing extra IOKit reads. Only visible clients keep
+a one-shot timer; an in-flight machine-wide read finishes into the shared cache
+even if its original page disappears. Explicit Refresh reads on demand and
+restarts the automatic cooldown. Synthetic interface checks cover exact timing
+boundaries, overlapping clients, hidden intervals, and in-flight handoffs.
+No health history is accumulated.
 Hardware information is loaded off the main thread and retained once available.
 Inspection uses one serial work queue per visible panel, verifies process
 lifetimes around collection, rejects stale activation results, and releases

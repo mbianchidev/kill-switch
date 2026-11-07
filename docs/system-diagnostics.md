@@ -80,9 +80,12 @@ unavailable when not exposed. Native battery readings replace the former
 Energy-only battery subprocess.
 
 Thermal pressure uses `ProcessInfo.thermalState`, not private SMC temperature or
-fan interfaces. Low Power Mode comes from `ProcessInfo`. Health polling stops
-when no relevant page is visible, and all IOKit objects/file descriptors are
-released after a read. Failed fields and verified battery absence have
+fan interfaces. Low Power Mode comes from `ProcessInfo`. Automatic health reads
+are at least thirty seconds apart after completion, including across page
+changes and hiding/reopening; explicit Refresh reads on demand. Scheduled
+polling stops when no relevant page is visible. An already-running read finishes
+into the shared cache without starting another poll, and all IOKit objects/file
+descriptors are released after a read. Failed fields and verified battery absence have
 distinct presentations. These readings do not expand the persisted history or
 collect identifying serial/UUID values.
 
