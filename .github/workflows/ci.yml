@@ -42,7 +42,7 @@ jobs:
             -Xswiftc -DKILLSWITCH_PERFORMANCE_PROBE --product KillSwitch
           PROBE="$(swift build -c release --scratch-path .build/interface \
             -Xswiftc -DKILLSWITCH_PERFORMANCE_PROBE --show-bin-path)/KillSwitch"
-          "$PROBE" --interface-checks
+          "$PROBE" --performance-probe --interface-checks
 
       - name: Test startup controls and safety
         run: swift run StartupCoreChecks

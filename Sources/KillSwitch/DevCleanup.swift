@@ -357,6 +357,12 @@ struct DevCleanupTab: View {
             monitor: monitor, portSearch: $portSearch, cleanedSearch: $cleanedSearch, observe: performanceObserveState
         ).frame(width: 0, height: 0))
 #endif
+        .onChange(of: pageVisible) { visible in
+            if !visible { copiedProcessID = nil; copyFeedbackRevision += 1 }
+        }
+        .onChange(of: entryPending) { pending in
+            if pending { copiedProcessID = nil; copyFeedbackRevision += 1 }
+        }
         .task(id: copyFeedbackRevision) {
             guard copiedProcessID != nil else { return }
             do {
@@ -705,6 +711,8 @@ struct DevCleanupTab: View {
     }
 
     private func copyCommand(_ command: String, from pid: Int32) {
+        copiedProcessID = nil
+        copyFeedbackRevision += 1
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         guard pasteboard.setString(command, forType: .string) else {
@@ -714,7 +722,6 @@ struct DevCleanupTab: View {
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
             copiedProcessID = pid
         }
-        copyFeedbackRevision += 1
     }
 
     private var cleanedSection: some View {

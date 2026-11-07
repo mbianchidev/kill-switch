@@ -126,10 +126,18 @@ struct CopyInspectionTextButton: View {
     let value: String
     @State private var copied = false
     @State private var failed = false
+    @State private var copyRevision = 0
     @Environment(\.allowsLiveOperations) private var allowsOperations
+
+#if KILLSWITCH_PERFORMANCE_PROBE
+    var performanceObserveFeedback: ((Binding<Bool>, Binding<Int>) -> Void)?
+#endif
 
     var body: some View {
         Button(copied ? "Copied" : title) {
+            copied = false
+            failed = false
+            copyRevision += 1
             NSPasteboard.general.clearContents()
             if NSPasteboard.general.setString(value, forType: .string) {
                 copied = true
@@ -139,13 +147,35 @@ struct CopyInspectionTextButton: View {
             }
         }
         .disabled(!allowsOperations)
-        .onChange(of: value) { _ in copied = false }
+#if KILLSWITCH_PERFORMANCE_PROBE
+        .background(InspectionCopyFeedbackRecorder(
+            copied: $copied, revision: $copyRevision, observe: performanceObserveFeedback
+        ).frame(width: 0, height: 0))
+#endif
+        .onChange(of: value) { _ in copied = false; copyRevision += 1 }
+        .onDisappear { copied = false; copyRevision += 1 }
+        .task(id: copyRevision) {
+            guard copied else { return }
+            do { try await Task.sleep(nanoseconds: 1_600_000_000) }
+            catch { return }
+            copied = false
+        }
         .alert("Could not copy text", isPresented: $failed) { Button("OK") {} } message: {
             Text("The clipboard did not accept the text. Try copying again.")
         }
         .accessibilityLabel(copied ? "\(title): copied" : title)
     }
 }
+
+#if KILLSWITCH_PERFORMANCE_PROBE
+private struct InspectionCopyFeedbackRecorder: NSViewRepresentable {
+    let copied: Binding<Bool>
+    let revision: Binding<Int>
+    let observe: ((Binding<Bool>, Binding<Int>) -> Void)?
+    func makeNSView(context: Context) -> NSView { observe?(copied, revision); return NSView() }
+    func updateNSView(_ view: NSView, context: Context) { observe?(copied, revision) }
+}
+#endif
 
 struct InspectionRefreshButton: View {
     @ObservedObject var monitor: ProcessInspectionMonitor

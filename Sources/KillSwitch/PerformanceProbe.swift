@@ -18,7 +18,10 @@ final class PerformanceProbeNavigation: ObservableObject {
 // This entry point is compiled only into the separately built, non-interactive probe.
 @MainActor
 enum PerformanceProbe {
+    static let executableIdentity = "KILLSWITCH_SYNTHETIC_PERFORMANCE_PROBE_PROTOCOL_1"
+
     static func run(arguments: [String]) -> Int32 {
+        if arguments == ["--probe-identity"] { print(executableIdentity); return 0 }
         if arguments == ["--interface-checks"] { return interfaceChecks() }
         if arguments == ["--native-health-check"] {
             do {
@@ -42,7 +45,7 @@ enum PerformanceProbe {
                "connections", "files", "servers", "inspector", "navigation"].contains(arguments[0]),
               let duration = Double(arguments[1]), (3...600).contains(duration),
               let count = Int(arguments[2]), (1...5_000).contains(count) else {
-            fputs("Usage: performance-probe SCENARIO SECONDS(3...600) PROCESSES(1...5000) [OFFSCREEN.png [WIDTHxHEIGHT]]; or --interface-checks\n", stderr)
+            fputs("Usage: KillSwitch --performance-probe SCENARIO SECONDS(3...600) PROCESSES(1...5000) [OFFSCREEN.png [WIDTHxHEIGHT]]; or --performance-probe --interface-checks\n", stderr)
             return 2
         }
         let scenario = arguments[0]
@@ -196,6 +199,7 @@ enum PerformanceProbe {
         check(monitor.history[.energy]?.last?.primary == 2_000, "Energy chart fixtures must contain measured power totals.")
         healthPollingChecks(check)
         queuedInspectionChecks(check)
+        copyFeedbackChecks(check)
 
         let suite = "KillSwitch.synthetic-entry-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suite) else {
@@ -562,6 +566,42 @@ enum PerformanceProbe {
         check(inFlight.lastRun != nil && inFlight.cleaned.map(\.pid) == [100_998],
               "An already-started authorized cleanup must retain its outcome after its page disappears.")
         check(!timedOut.withLock { $0 }, "The controlled synthetic cleanup queue must not time out.")
+    }
+
+    private static func copyFeedbackChecks(_ check: (Bool, String) -> Void) {
+        var copied: Binding<Bool>?
+        var revision: Binding<Int>?
+        var button = CopyInspectionTextButton(title: "Copy fixture", value: "synthetic clipboard text")
+        button.performanceObserveFeedback = { copied = $0; revision = $1 }
+        let controller = NSHostingController(rootView: AnyView(button.environment(\.allowsLiveOperations, false)))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        defer { window.contentViewController = nil; window.close() }
+        controller.view.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        guard let copied, let revision else {
+            check(false, "The synthetic copy button must expose feedback without touching the system clipboard.")
+            return
+        }
+        copied.wrappedValue = true
+        revision.wrappedValue += 1
+        RunLoop.current.run(until: Date().addingTimeInterval(1.9))
+        check(!copied.wrappedValue, "Inspection copy confirmation must expire rather than staying Copied indefinitely.")
+        copied.wrappedValue = true
+        revision.wrappedValue += 1
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        revision.wrappedValue += 1
+        RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+        check(copied.wrappedValue, "A repeated copy must not be cleared by its predecessor's expiration.")
+        RunLoop.current.run(until: Date().addingTimeInterval(1.1))
+        check(!copied.wrappedValue, "The latest copy must expire after its own feedback interval.")
+        copied.wrappedValue = true
+        revision.wrappedValue += 1
+        controller.rootView = AnyView(EmptyView())
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(!copied.wrappedValue, "Hiding a copy button must clear confirmation without changing the real clipboard.")
     }
 
     private static func fixture(date: Date, count: Int, step: Int) -> ResourceSnapshot {

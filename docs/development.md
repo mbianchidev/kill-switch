@@ -268,6 +268,11 @@ samples. The dashboard includes the navigation shell; CPU, Memory, and Energy
 render their resource views directly. AppKit renders offscreen without opening,
 activating, or controlling a desktop window. No real collectors, user history,
 cleanup, updates, startup changes, or privileged diagnostics run.
+The harness checks the compile-time probe identity in the executable before
+launching it; a normal or older unmarked app is refused without execution.
+Probe commands require `--performance-probe`, which production apps reject
+before any GUI/services start. Package verification checks that rejection
+support is present before running probe arguments against a copied app.
 
 Energy fixtures populate and prune the same session chart read by the real
 Energy page. The isolated interface checks assert both the retained point count
@@ -297,12 +302,12 @@ rows. Navigation cycles through ten safe pages without entering Dev cleanup.
 Run the deterministic native-state checks directly:
 
 ```bash
-"$PROBE" --interface-checks
-"$PROBE" dashboard 3 1000 .build/dashboard.png 900x650
+"$PROBE" --performance-probe --interface-checks
+"$PROBE" --performance-probe dashboard 3 1000 .build/dashboard.png 900x650
 ```
 
 The optional PNG is the probe's own unshown window, never a desktop capture.
-`--native-health-check` separately verifies public native health interfaces
+`--performance-probe --native-health-check` separately verifies public native health interfaces
 without identifiers, UI interaction, or privileged diagnostics; it is not a
 synthetic measurement scenario.
 

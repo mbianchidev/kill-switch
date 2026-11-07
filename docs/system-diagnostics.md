@@ -180,6 +180,9 @@ every ten seconds only while visible. Queued refreshes check their activation
 before collection, so hiding does not
 start a delayed `lsof` read. Hiding releases the current rows immediately, and
 an expired in-flight activation cannot publish its results.
+Copy actions show brief confirmation, then restore their original label. A new
+value or hidden button clears that feedback; it confirms a copy action, not
+ongoing ownership of the system clipboard.
 Names with spaces remain intact; control
 characters use `lsof` display escapes. Plain search covers identifying text;
 protocol, state, type, and measurement filters use explicit comparisons.

@@ -103,7 +103,7 @@ func measure(
           posix_spawn_file_actions_addclose(&actions, descriptor) == 0 else {
         throw MeasurementError.message("Cannot configure benchmark output")
     }
-    let strings = [executable, scenario, String(duration), String(count)]
+    let strings = [executable, "--performance-probe", scenario, String(duration), String(count)]
     var argv = strings.map { strdup($0) } + [nil]
     defer { argv.forEach { free($0) } }
     guard argv.dropLast().allSatisfy({ $0 != nil }) else { throw MeasurementError.message("Cannot allocate benchmark arguments") }
@@ -197,6 +197,13 @@ do {
     let clock = try CPUCounterClock.current()
     guard FileManager.default.isExecutableFile(atPath: executable) else {
         throw MeasurementError.message("Build the isolated release probe before measuring")
+    }
+    do {
+        let image = try Data(contentsOf: URL(fileURLWithPath: executable), options: .mappedIfSafe)
+        let identity = Data("KILLSWITCH_SYNTHETIC_PERFORMANCE_PROBE_PROTOCOL_1".utf8)
+        guard image.range(of: identity) != nil else {
+            throw MeasurementError.message("The executable is not an isolated performance probe. Rebuild with KILLSWITCH_PERFORMANCE_PROBE; nothing was launched.")
+        }
     }
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("killswitch-footprint-\(UUID().uuidString)")
     try FileManager.default.createDirectory(
