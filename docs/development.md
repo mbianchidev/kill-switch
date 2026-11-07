@@ -298,6 +298,10 @@ samples. The dashboard includes the navigation shell; CPU, Memory, and Energy
 render their resource views directly. AppKit renders offscreen without opening,
 activating, or controlling a desktop window. No real collectors, user history,
 cleanup, updates, startup changes, or privileged diagnostics run.
+Content-based scenarios use an isolated cleanup preference suite reset to fixed
+defaults, without production cleanup settings or legacy migration. The suite is
+removed on exit. Historical comparison reports predate this isolation and remain
+shared-workstation evidence, not controlled latest-head benchmarks.
 The harness checks the compile-time probe identity in the executable before
 launching it; a normal or older unmarked app is refused without execution.
 Probe commands require `--performance-probe`, which production apps reject

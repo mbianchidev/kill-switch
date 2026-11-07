@@ -62,6 +62,14 @@ enum PerformanceProbe {
             height = parsedHeight
         }
         NSApplication.shared.setActivationPolicy(.prohibited)
+        let cleanupSuite = "KillSwitch.synthetic-footprint-\(UUID().uuidString)"
+        guard let cleanupDefaults = UserDefaults(suiteName: cleanupSuite) else {
+            fputs("Performance probe could not create isolated cleanup preferences.\n", stderr)
+            return 1
+        }
+        defer { cleanupDefaults.removePersistentDomain(forName: cleanupSuite) }
+        let cleanupPreferences = DevCleanupPreferences(defaults: cleanupDefaults)
+        cleanupPreferences.resetToDefaults()
         let monitor = ResourceMonitor()
         monitor.showAllUsers = true
         SystemHealthMonitor.shared.publishPerformanceFixture()
@@ -81,7 +89,9 @@ enum PerformanceProbe {
         } else {
             let root: AnyView
             if scenario == "dashboard" || scenario == "navigation" {
-                root = AnyView(ContentView(resourceMonitor: monitor, startsServices: false))
+                root = AnyView(ContentView(
+                    resourceMonitor: monitor, startsServices: false, cleanupPreferences: cleanupPreferences
+                ))
             } else if ["cpu", "memory", "energy"].contains(scenario) {
                 let metric: ResourceMetric = scenario == "memory" ? .memory : scenario == "energy" ? .energy : .cpu
                 root = AnyView(ResourcesTab(monitor: monitor, initialMetric: metric))
@@ -100,7 +110,9 @@ enum PerformanceProbe {
                     fputs("The probe scenario could not be represented.\n", stderr)
                     return 2
                 }
-                root = AnyView(ContentView(resourceMonitor: monitor, initialTab: page, startsServices: false))
+                root = AnyView(ContentView(
+                    resourceMonitor: monitor, initialTab: page, startsServices: false, cleanupPreferences: cleanupPreferences
+                ))
             }
             let hosting = NSHostingView(rootView: AnyView(root.preferredColorScheme(.dark).environment(\.allowsLiveOperations, false)))
             hosting.setFrameSize(NSSize(width: CGFloat(width), height: CGFloat(height)))
