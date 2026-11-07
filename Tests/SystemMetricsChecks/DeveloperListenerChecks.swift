@@ -58,7 +58,43 @@ extension SystemMetricsChecks {
             let detached = try DevelopmentProjectResolver.resolve(worktree)
             check(detached.directory.path == worktree.path && detached.branch == "Detached 01234567", "worktree gitdir files and detached heads are supported")
 
+            for suffix in [" ", "\t", "\u{00A0}"] {
+                let whitespaceMetadata = root.appendingPathComponent("synthetic-metadata\(suffix)")
+                try FileManager.default.createDirectory(at: whitespaceMetadata, withIntermediateDirectories: false)
+                try Data("ref: refs/heads/whitespace-fixture\n".utf8).write(to: whitespaceMetadata.appendingPathComponent("HEAD"))
+                for ending in ["\n", "\r\n", ""] {
+                    for path in ["../\(whitespaceMetadata.lastPathComponent)", whitespaceMetadata.path] {
+                        try Data("gitdir: \(path)\(ending)".utf8).write(to: worktree.appendingPathComponent(".git"))
+                        let context = try DevelopmentProjectResolver.resolve(worktree)
+                        check(context.directory.path == worktree.path && context.branch == "whitespace-fixture",
+                              "Git directory pointers preserve path whitespace with LF, CRLF, or no terminator")
+                    }
+                }
+            }
+            try Data(" gitdir: ../synthetic-metadata\n".utf8).write(to: worktree.appendingPathComponent(".git"))
+            do {
+                _ = try DevelopmentProjectResolver.resolve(worktree)
+                check(false, "Git directory pointers must not normalize an invalid leading prefix")
+            } catch {
+                check(error is DevelopmentProjectMetadataError, "invalid Git directory prefixes retain a metadata error")
+            }
+            try Data("gitdir: ../synthetic-metadata\n".utf8).write(to: worktree.appendingPathComponent(".git"))
+
             let head = metadata.appendingPathComponent("HEAD")
+            for contents in [" ref: refs/heads/synthetic-feature\n", "ref: refs/heads/synthetic-feature \n",
+                             " \(String(repeating: "a", count: 40))\n", "\(String(repeating: "a", count: 40)) \n"] {
+                try Data(contents.utf8).write(to: head)
+                do {
+                    _ = try DevelopmentProjectResolver.resolve(worktree)
+                    check(false, "Git HEAD whitespace must not be normalized into a different valid identity")
+                } catch {
+                    check(error is DevelopmentProjectMetadataError, "invalid Git HEAD whitespace retains a metadata error")
+                }
+            }
+            try Data("ref: refs/heads/synthetic-feature\u{00A0}\r\n".utf8).write(to: head)
+            let whitespaceBranch = try DevelopmentProjectResolver.resolve(worktree)
+            check(whitespaceBranch.branch == "synthetic-feature\u{00A0}", "valid non-ASCII branch whitespace remains part of the name")
+
             for length in 39...65 where length != 40 && length != 64 {
                 try Data((String(repeating: "a", count: length) + "\n").utf8).write(to: head)
                 do {

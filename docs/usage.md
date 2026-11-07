@@ -155,8 +155,10 @@ actions. Not every TCP listener is an HTTP server. Wildcard listeners use a
 loopback HTTP address; malformed or non-IP endpoints do not become browser
 URLs. Project discovery reads native working-directory information and bounded
 Git metadata, including worktree `gitdir` pointers, without invoking git,
-Docker, or a shell. Missing metadata is explained; a verified working directory
-can still be shown when branch discovery fails.
+Docker, or a shell. Only Git's CR/LF line terminators are discarded; whitespace
+in directory paths and valid branch names is preserved. Missing metadata is
+explained; a verified working directory can still be shown when branch discovery
+fails.
 
 Listeners refresh every ten seconds only while visible. Project context is
 cached by process lifetime for at most thirty seconds and released when hidden.
@@ -240,11 +242,13 @@ Canceling leaves the safe preview shown; it does not reset sidebar selection or
 reopen the modal when navigating with arrow keys. Other pages remain reachable
 without authorizing cleanup.
 The preview retains cleanup filters and prior session results. Navigating away,
-hiding the window, or reopening the preview immediately cancels not-yet-started
-scans and cleanup passes. Showing the window again requires fresh confirmation
-while automatic termination remains enabled. Read-only cleanup restarts its
-session automatically, including rapid hide/show and away/back transitions. An
-already-started authorized pass can finish; its outcome remains available on
+hiding or minimizing the window, fully covering it with other windows, or
+reopening the preview revokes visit authorization and immediately cancels
+not-yet-started scans and cleanup passes. Uncovering or showing the window again
+requires fresh confirmation while automatic termination remains enabled.
+Read-only cleanup restarts its session automatically, including rapid visibility
+and navigation changes. An already-started authorized pass can finish; its
+outcome remains available on
 return. Queued scans and cleanup passes reread saved settings before starting,
 so later saved filters apply and disablement still prevents automatic termination.
 Entry, reset, and enable confirmations belong to both their visit and individual

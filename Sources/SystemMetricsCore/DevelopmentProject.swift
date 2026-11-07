@@ -36,7 +36,7 @@ public enum DevelopmentProjectResolver {
                         metadata = git
                     } else {
                         guard shouldContinue() else { throw CancellationError() }
-                        let pointer = try readSmallFile(git).trimmingCharacters(in: .whitespacesAndNewlines)
+                        let pointer = try readSmallFile(git)
                         guard pointer.hasPrefix("gitdir: "), !pointer.dropFirst(8).isEmpty else {
                             throw ProcessInspectionError(message: "The project's Git directory pointer is invalid.")
                         }
@@ -76,8 +76,7 @@ public enum DevelopmentProjectResolver {
         return DevelopmentProjectContext(directory: manifestDirectory ?? original, branch: nil)
     }
 
-    private static func branch(_ head: String) throws -> String {
-        let value = head.trimmingCharacters(in: .whitespacesAndNewlines)
+    private static func branch(_ value: String) throws -> String {
         if value.hasPrefix("ref: refs/heads/") {
             let name = String(value.dropFirst("ref: refs/heads/".count))
             let parts = name.split(separator: "/", omittingEmptySubsequences: false)
@@ -111,8 +110,11 @@ public enum DevelopmentProjectResolver {
         }
         var bytes = [UInt8](repeating: 0, count: 4_097)
         let count = Darwin.read(descriptor, &bytes, bytes.count)
-        guard count >= 0, count <= 4_096, let value = String(bytes: bytes.prefix(max(0, count)), encoding: .utf8) else {
+        guard count >= 0, count <= 4_096, var value = String(bytes: bytes.prefix(max(0, count)), encoding: .utf8) else {
             throw ProcessInspectionError(message: "Git metadata is unavailable or is not readable UTF-8 text.")
+        }
+        while let last = value.unicodeScalars.last, last == "\n" || last == "\r" {
+            value.unicodeScalars.removeLast()
         }
         return value
     }

@@ -170,6 +170,8 @@ restoration through this suspension.
 Metric requests carry page-specific leases, so an outgoing page cannot clear a
 newer selection. Actual window visibility gates heavier collection while
 continuous CPU, memory, disk, and traffic sampling remains unchanged.
+Native window visibility includes occlusion: minimizing or fully covering the
+window pauses optional work and revokes cleanup authorization, just like hiding.
 Metric leases and window visibility are updated synchronously in one locked
 selection, rather than waiting behind already-queued samples. The native reader
 rechecks that selection before starting Energy or memory-pressure phases;
