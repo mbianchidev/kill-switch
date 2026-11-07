@@ -4,6 +4,7 @@ import Darwin
 import Foundation
 import SwiftUI
 import SystemMetricsCore
+import DevCleanupCore
 
 @MainActor
 final class PerformanceProbeNavigation: ObservableObject {
@@ -182,6 +183,28 @@ enum PerformanceProbe {
         check(monitor.performanceEffectiveMetric == .energy, "Showing the window must restore the selected metric.")
         monitor.setMetric(nil, owner: second)
         check(monitor.performanceEffectiveMetric == nil, "The active page must release its sampling lease.")
+
+        let suite = "KillSwitch.synthetic-entry-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            fputs("Cannot create isolated cleanup-entry preferences.\n", stderr)
+            return 1
+        }
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = DevCleanupPreferences(defaults: defaults)
+        preferences.setAutoKillEnabled(true)
+        let cleanup = DevCleanupMonitor(preferences: preferences)
+        preferences.setAutoKillEnabled(false)
+        cleanup.prepareForEntry(allowAutomaticTermination: false)
+        check(!cleanup.autoKillEnabled && !cleanup.cleanupConfiguration().autoKillEnabled,
+              "A retained monitor must not restore stale automatic termination.")
+        preferences.setAutoKillEnabled(true)
+        cleanup.prepareForEntry(allowAutomaticTermination: false)
+        check(!cleanup.autoKillEnabled && preferences.load().autoKillEnabled,
+              "Read-only entry must remain unauthorized without overwriting saved settings.")
+        cleanup.prepareForEntry(allowAutomaticTermination: true)
+        check(cleanup.cleanupConfiguration().autoKillEnabled, "Explicitly authorized entry may use current saved settings.")
+        preferences.setAutoKillEnabled(false)
+        check(!cleanup.cleanupConfiguration().autoKillEnabled, "Later saved disablement must block the ensuing cleanup.")
 
         let controller = RetainedPageController()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650),

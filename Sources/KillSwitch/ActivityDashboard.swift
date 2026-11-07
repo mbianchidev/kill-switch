@@ -19,6 +19,8 @@ struct ActivityDashboard: View {
         Group {
             if pageVisible { pageContent }
         }
+        .onChange(of: monitor.historyRange) { _ in selectedDate = nil }
+        .onChange(of: monitor.focusedProcess) { _ in selectedDate = nil }
     }
 
     private var pageContent: some View {
@@ -125,8 +127,6 @@ struct ActivityDashboard: View {
             }
         }
         .background(Theme.background)
-        .onChange(of: monitor.historyRange) { _ in selectedDate = nil }
-        .onChange(of: monitor.focusedProcess) { _ in selectedDate = nil }
     }
 
     private var timelineScrubber: some View {

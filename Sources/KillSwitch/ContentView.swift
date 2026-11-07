@@ -15,6 +15,7 @@ struct ContentView: View {
     private let systemHealth = SystemHealthMonitor.shared
     @State private var windowVisible = true
     @State private var confirmCleanup = false
+    @State private var cleanupAuthorized = false
     @State private var inspectedProcess: ActivityProcessDescriptor?
 
     init(
@@ -50,7 +51,10 @@ struct ContentView: View {
         .safeAreaInset(edge: .top) { UpdateBanner(updater: updater) }
         .alert("Open Dev cleanup?", isPresented: $confirmCleanup) {
             Button("Cancel", role: .cancel) {}
-            Button("Open Dev cleanup", role: .destructive) { selectedTab = .cleanup }
+            Button("Open Dev cleanup", role: .destructive) {
+                cleanupAuthorized = true
+                selectedTab = .cleanup
+            }
         } message: {
             Text("Automatic termination is enabled. Opening this page can terminate qualifying development servers older than your saved age threshold. Age is not inactivity. Protected processes remain protected.")
         }
@@ -87,7 +91,10 @@ struct ContentView: View {
                 guard let page, page != selectedTab else { return }
                 if page.requiresCleanupConfirmation(autoKillEnabled: DevCleanupPreferences().load().autoKillEnabled) {
                     confirmCleanup = true
-                } else { selectedTab = page }
+                } else {
+                    if page == .cleanup { cleanupAuthorized = false }
+                    selectedTab = page
+                }
             }
         )
     }
@@ -114,7 +121,7 @@ struct ContentView: View {
         case .diskCleanup:
             DiskCleanupTab(monitor: diskCleanupMonitor)
         case .cleanup:
-            DevCleanupTab()
+            DevCleanupTab(allowAutomaticTermination: cleanupAuthorized)
         case .watchdog:
             CPUWatchdogTab(monitor: watchdog)
         case .screenTime:

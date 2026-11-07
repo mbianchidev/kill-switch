@@ -20,15 +20,16 @@ final class DevCleanupMonitor: ObservableObject {
     /// Whether long-running dev servers are auto-terminated. When off, the tab only
     /// lists ports/dev servers and leaves killing to the manual buttons.
     @Published var autoKillEnabled: Bool {
-        didSet { preferences.setAutoKillEnabled(autoKillEnabled) }
+        didSet { if !applyingSettings { preferences.setAutoKillEnabled(autoKillEnabled) } }
     }
     /// Age (in hours) a dev server must exceed before it is auto-killed.
     @Published var ageThresholdHours: Int {
-        didSet { preferences.setAgeThresholdHours(ageThresholdHours) }
+        didSet { if !applyingSettings { preferences.setAgeThresholdHours(ageThresholdHours) } }
     }
     /// How often (seconds) the listening-ports list is refreshed.
     @Published var portScanIntervalSeconds: Int {
         didSet {
+            guard !applyingSettings else { return }
             preferences.setPortScanIntervalSeconds(portScanIntervalSeconds)
             reschedule()
         }
@@ -36,25 +37,26 @@ final class DevCleanupMonitor: ObservableObject {
     /// How often (seconds) the auto-cleanup pass runs.
     @Published var cleanupIntervalSeconds: Int {
         didSet {
+            guard !applyingSettings else { return }
             preferences.setCleanupIntervalSeconds(cleanupIntervalSeconds)
             reschedule()
         }
     }
     /// The watched dev ports. A process listening on any of these is always listed.
     @Published var ports: [Int] {
-        didSet { preferences.setUserPorts(ports) }
+        didSet { if !applyingSettings { preferences.setUserPorts(ports) } }
     }
     /// Runtime binaries that indicate a dev server (matched on the executable name).
     @Published var runtimes: [String] {
-        didSet { preferences.setRuntimes(runtimes) }
+        didSet { if !applyingSettings { preferences.setRuntimes(runtimes) } }
     }
     /// Command-line signatures that mark a process as an actual dev server.
     @Published var devIndicators: [String] {
-        didSet { preferences.setIndicators(devIndicators) }
+        didSet { if !applyingSettings { preferences.setIndicators(devIndicators) } }
     }
     /// Substrings that protect a process from being auto-killed.
     @Published var exclusions: [String] {
-        didSet { preferences.setExclusions(exclusions) }
+        didSet { if !applyingSettings { preferences.setExclusions(exclusions) } }
     }
 
     var ageThresholdSeconds: Int { ageThresholdHours * 3600 }
@@ -86,7 +88,8 @@ final class DevCleanupMonitor: ObservableObject {
     private var portTimer: Timer?
     private var cleanupTimer: Timer?
     private let username = NSUserName()
-    private let preferences = DevCleanupPreferences()
+    private let preferences: DevCleanupPreferences
+    private var applyingSettings = false
     private lazy var service = DevCleanupService.live(username: username)
 
     /// Serial queue so a port scan and a cleanup pass never run concurrently.
@@ -96,7 +99,8 @@ final class DevCleanupMonitor: ObservableObject {
     private var isRefreshing = false
     private var isCleaning = false
 
-    init() {
+    init(preferences: DevCleanupPreferences = DevCleanupPreferences()) {
+        self.preferences = preferences
         let settings = preferences.load()
         autoKillEnabled = settings.autoKillEnabled
         ageThresholdHours = settings.ageThresholdHours
@@ -155,7 +159,22 @@ final class DevCleanupMonitor: ObservableObject {
         self[keyPath: keyPath].removeAll { $0 == value }
     }
 
-    func start() {
+    func prepareForEntry(allowAutomaticTermination: Bool) {
+        let settings = preferences.load()
+        applyingSettings = true
+        defer { applyingSettings = false }
+        autoKillEnabled = settings.autoKillEnabled && allowAutomaticTermination
+        ageThresholdHours = settings.ageThresholdHours
+        portScanIntervalSeconds = settings.portScanIntervalSeconds
+        cleanupIntervalSeconds = settings.cleanupIntervalSeconds
+        ports = settings.userPorts
+        runtimes = settings.runtimes
+        devIndicators = settings.indicators
+        exclusions = settings.exclusions
+    }
+
+    func start(allowAutomaticTermination: Bool) {
+        prepareForEntry(allowAutomaticTermination: allowAutomaticTermination)
         runCleanup()
         reschedule()
     }
@@ -214,7 +233,7 @@ final class DevCleanupMonitor: ObservableObject {
     func runCleanup() {
         guard !isCleaning else { return }
         isCleaning = true
-        let configuration = currentConfiguration()
+        let configuration = cleanupConfiguration()
         workQueue.async { [weak self] in
             guard let self = self else { return }
             do {
@@ -235,6 +254,10 @@ final class DevCleanupMonitor: ObservableObject {
         }
     }
 
+    func cleanupConfiguration() -> DevCleanupConfiguration {
+        preferences.load().configuration(allowAutomaticTermination: autoKillEnabled)
+    }
+
     private func currentConfiguration() -> DevCleanupConfiguration {
         let integrationPorts = preferences.loadIntegrationPorts()
         return DevCleanupConfiguration(
@@ -253,6 +276,7 @@ final class DevCleanupMonitor: ObservableObject {
 // MARK: - View
 
 struct DevCleanupTab: View {
+    let allowAutomaticTermination: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var monitor = DevCleanupMonitor()
     @State private var portText = ""
@@ -281,7 +305,7 @@ struct DevCleanupTab: View {
             }
         }
         .background(Theme.background)
-        .onAppear { monitor.start() }
+        .onAppear { monitor.start(allowAutomaticTermination: allowAutomaticTermination) }
         .onDisappear { monitor.stop() }
         .task(id: copyFeedbackRevision) {
             guard copiedProcessID != nil else { return }

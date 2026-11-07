@@ -38,6 +38,10 @@ Energy have individual pages. Visited pages retain their filters and sorting;
 unvisited pages are not instantiated. The dashboard's resource headings and
 system, battery, and thermal cards also open their corresponding pages.
 
+KillSwitch intentionally has one main window, matching its single menu-bar
+utility and shared resource selection. It does not expose a second independent
+window with conflicting collection visibility.
+
 The window supports a 900 x 650 minimum. Charts become a single column in narrow
 detail areas, history controls wrap, and wide data tables remain horizontally
 scrollable. Closing or fully obscuring the window pauses optional health and
@@ -223,6 +227,12 @@ process lifetime, not inactivity; a busy server can qualify.
 Use **Dev servers** for read-only discovery. If you cannot risk that first
 cleanup pass, cancel the entry confirmation. The CLI
 [status command](cli.md#read-saved-status) reads settings without running cleanup.
+
+Each entry reloads saved settings without writing a retained monitor's stale
+values back to preferences. Automatic cleanup requires both current saved
+enablement and authorization for this visit (confirmation, or an explicit
+Auto-kill switch action). A read-only entry cannot inherit later external
+enablement, and saved disablement blocks the ensuing cleanup pass.
 
 The table shows PID, command, and port for watched listeners and recognized dev
 servers, with manual kill buttons. Automatic cleanup requires current-user

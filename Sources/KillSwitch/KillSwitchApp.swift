@@ -6,7 +6,7 @@ struct KillSwitchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        WindowGroup {
+        Window("KillSwitch", id: "main") {
             ContentView()
                 .frame(minWidth: 900, minHeight: 650)
         }

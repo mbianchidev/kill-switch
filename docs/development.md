@@ -170,6 +170,10 @@ restoration through this suspension.
 Metric requests carry page-specific leases, so an outgoing page cannot clear a
 newer selection. Actual window visibility gates heavier collection while
 continuous CPU, memory, disk, and traffic sampling remains unchanged.
+The app uses one macOS `Window` scene rather than permitting independent windows
+with conflicting visibility or resource selections. Dashboard scrubber-reset
+observers live outside the suspended chart subtree, so changes on another page
+cannot restore a stale inspected time.
 The native
 history-process menu creates its choices on opening and releases them after
 closing instead of maintaining a SwiftUI view for every recorded process.

@@ -106,10 +106,14 @@ struct DevServersTab: View {
                                 Spacer()
                                 if let project = group.project {
                                     Button("Reveal folder") {
-                                        if !NSWorkspace.shared.open(project.directory) {
-                                            revealError = "macOS could not open the project folder in Finder."
-                                            fputs("KillSwitch could not reveal a development project folder.\n", stderr)
+                                        var isDirectory: ObjCBool = false
+                                        guard FileManager.default.fileExists(atPath: project.directory.path, isDirectory: &isDirectory),
+                                              isDirectory.boolValue else {
+                                            revealError = "The project folder is no longer available."
+                                            fputs("KillSwitch could not reveal an unavailable development project folder.\n", stderr)
+                                            return
                                         }
+                                        NSWorkspace.shared.activateFileViewerSelecting([project.directory])
                                     }
                                     .disabled(!allowsOperations)
                                 }
