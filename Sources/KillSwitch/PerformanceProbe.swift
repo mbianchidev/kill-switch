@@ -199,6 +199,7 @@ enum PerformanceProbe {
         check(monitor.history[.energy]?.count == 51, "Energy probes must populate and prune the full five-minute chart.")
         check(monitor.history[.energy]?.last?.primary == 2_000, "Energy chart fixtures must contain measured power totals.")
         healthPollingChecks(check)
+        thermalPresentationChecks(check)
         queuedInspectionChecks(check)
         copyFeedbackChecks(check)
 
@@ -679,6 +680,29 @@ enum PerformanceProbe {
         monitor.stop()
         check(!monitor.cleanupConfiguration().autoKillEnabled, "Stopping the visit must revoke permission despite retained enabled settings.")
         check(!timedOut.withLock { $0 }, "The authorization-revocation queue must not time out.")
+    }
+
+    private static func thermalPresentationChecks(_ check: (Bool, String) -> Void) {
+        let health = SystemHealthMonitor()
+        var observed = false
+        var state: SystemThermalState? = .unavailable
+        var page = SystemHealthTab(monitor: health, resources: ResourceMonitor(), page: .thermal)
+        page.performanceObserveThermalState = { observed = true; state = $0 }
+        let controller = NSHostingController(rootView: AnyView(page.environment(\.allowsLiveOperations, false)))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        defer { window.contentViewController = nil; window.close() }
+        controller.view.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(observed && state == nil, "Thermal UI must show pending data, not a read failure, before its first snapshot.")
+        health.publishPerformanceFixture()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(state == .nominal, "Thermal UI must show the measured state after a successful synthetic read.")
+        health.publishPerformanceFixture(thermalState: .unavailable)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(state == .unavailable, "A completed unavailable thermal reading must remain distinct from pending data.")
     }
 
     private static func fixture(date: Date, count: Int, step: Int) -> ResourceSnapshot {

@@ -9,6 +9,10 @@ struct SystemHealthTab: View {
     @Environment(\.isKillSwitchWindowVisible) private var visible
     @Environment(\.isKillSwitchPageVisible) private var pageVisible
 
+#if KILLSWITCH_PERFORMANCE_PROBE
+    var performanceObserveThermalState: ((SystemThermalState?) -> Void)?
+#endif
+
     var body: some View {
         Group {
             if pageVisible { pageContent }
@@ -136,39 +140,55 @@ struct SystemHealthTab: View {
     }
 
     private var thermalCard: some View {
-        let state = monitor.snapshot?.thermalState ?? .unavailable
+        let state = monitor.snapshot?.thermalState
         return healthCard("Thermal pressure", icon: "thermometer.medium") {
-            HStack(spacing: 12) {
-                Image(systemName: "thermometer.medium")
-                    .font(.system(size: 30))
-                    .foregroundColor(thermalColor(state))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(state.rawValue)
-                        .font(.system(size: 26, weight: .semibold, design: .rounded))
-                    Text(state.detail).foregroundColor(.secondary)
-                }
-            }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 130))], spacing: 8) {
-                ForEach(SystemThermalState.allCases.filter { $0 != .unavailable }, id: \.self) { level in
-                    VStack(spacing: 6) {
-                        Text(level.rawValue).font(.system(size: 12, weight: .medium))
-                        Text(level == state ? "Current" : " ")
-                            .font(.system(size: 10))
+            if let state {
+                HStack(spacing: 12) {
+                    Image(systemName: "thermometer.medium")
+                        .font(.system(size: 30))
+                        .foregroundColor(thermalColor(state))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(state.rawValue)
+                            .font(.system(size: 26, weight: .semibold, design: .rounded))
+                        Text(state.detail).foregroundColor(.secondary)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(10)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(level == state ? thermalColor(level).opacity(0.18) : Theme.raisedPanel))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(level == state ? thermalColor(level) : Theme.border))
-                    .accessibilityElement(children: .combine)
                 }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 130))], spacing: 8) {
+                    ForEach(SystemThermalState.allCases.filter { $0 != .unavailable }, id: \.self) { level in
+                        VStack(spacing: 6) {
+                            Text(level.rawValue).font(.system(size: 12, weight: .medium))
+                            Text(level == state ? "Current" : " ")
+                                .font(.system(size: 10))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(level == state ? thermalColor(level).opacity(0.18) : Theme.raisedPanel))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(level == state ? thermalColor(level) : Theme.border))
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+                Text("Thermal pressure is macOS's assessment of heat-related performance limits, not a temperature reading. Fan speeds and sensor temperatures are not fabricated.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            } else {
+                Text("Collecting thermal information").foregroundColor(.secondary)
             }
-            Text("Thermal pressure is macOS's assessment of heat-related performance limits, not a temperature reading. Fan speeds and sensor temperatures are not fabricated.")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
         }
+#if KILLSWITCH_PERFORMANCE_PROBE
+        .background(ThermalPresentationRecorder(state: state, observe: performanceObserveThermalState).frame(width: 0, height: 0))
+#endif
     }
 }
+
+#if KILLSWITCH_PERFORMANCE_PROBE
+private struct ThermalPresentationRecorder: NSViewRepresentable {
+    let state: SystemThermalState?
+    let observe: ((SystemThermalState?) -> Void)?
+    func makeNSView(context: Context) -> NSView { observe?(state); return NSView() }
+    func updateNSView(_ view: NSView, context: Context) { observe?(state) }
+}
+#endif
 
 struct SystemStatusStrip: View {
     @ObservedObject var monitor: SystemHealthMonitor

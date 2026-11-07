@@ -139,14 +139,14 @@ final class SystemHealthMonitor: ObservableObject {
         timer?.invalidate()
     }
 
-    func publishPerformanceFixture() {
+    func publishPerformanceFixture(thermalState: SystemThermalState = .nominal) {
         hardware = SystemHardwareInfo(
             model: "Synthetic Mac", cpuName: "Synthetic CPU", architecture: "Apple Silicon",
             physicalCPUCount: 8, logicalCPUCount: 8, activeCPUCount: 8,
             physicalMemoryBytes: 16 * 1_073_741_824, operatingSystem: "Synthetic macOS", kernelVersion: "Synthetic kernel"
         )
         snapshot = SystemHealthSnapshot(
-            date: Date(), thermalState: .nominal, lowPowerMode: false, uptime: 86_400,
+            date: Date(), thermalState: thermalState, lowPowerMode: false, uptime: 86_400,
             loadAverages: [1, 1.5, 2], powerSource: .mains,
             battery: .available(SystemBatteryReading(
                 currentCapacity: 80, maximumCapacity: 100, isCharging: true, isFullyCharged: false,

@@ -83,7 +83,9 @@ unavailable when not exposed. Native battery readings replace the former
 Energy-only battery subprocess.
 
 Thermal pressure uses `ProcessInfo.thermalState`, not private SMC temperature or
-fan interfaces. Low Power Mode comes from `ProcessInfo`. Automatic health reads
+fan interfaces. Before the first health snapshot, the card shows that thermal
+information is being collected; an unavailable state is shown only after a
+completed read reports it. Low Power Mode comes from `ProcessInfo`. Automatic health reads
 are at least thirty seconds apart after completion, including across page
 changes and hiding/reopening; explicit Refresh reads on demand. Scheduled
 polling stops when no relevant page is visible. An already-running read finishes
