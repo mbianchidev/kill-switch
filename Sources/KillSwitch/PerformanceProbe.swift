@@ -201,6 +201,7 @@ enum PerformanceProbe {
         healthPollingChecks(check)
         thermalPresentationChecks(check)
         queuedInspectionChecks(check)
+        filteredProjectWarningChecks(check)
         copyFeedbackChecks(check)
 
         let suite = "KillSwitch.synthetic-entry-\(UUID().uuidString)"
@@ -703,6 +704,22 @@ enum PerformanceProbe {
         health.publishPerformanceFixture(thermalState: .unavailable)
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         check(state == .unavailable, "A completed unavailable thermal reading must remain distinct from pending data.")
+    }
+
+    private static func filteredProjectWarningChecks(_ check: (Bool, String) -> Void) {
+        let inspection = ProcessInspectionMonitor()
+        let rows = Array(inspection.connections.prefix(2))
+        guard rows.count == 2, let identity = inspection.identities[rows[1].pid] else {
+            check(false, "Synthetic listener identities must be available.")
+            return
+        }
+        let errors = [identity: "Synthetic project metadata is unavailable."]
+        check(!DevServersTab.hasProjectWarnings(in: rows.prefix(1), identities: inspection.identities, errors: errors),
+              "A project error on a filtered-out listener must not raise an unexplained visible warning.")
+        check(DevServersTab.hasProjectWarnings(in: rows.suffix(1), identities: inspection.identities, errors: errors),
+              "A visible affected listener must still raise its project warning.")
+        check(!DevServersTab.hasProjectWarnings(in: [NetworkConnectionRecord](), identities: inspection.identities, errors: errors),
+              "No matching listeners must not claim that visible rows explain hidden project errors.")
     }
 
     private static func fixture(date: Date, count: Int, step: Int) -> ResourceSnapshot {

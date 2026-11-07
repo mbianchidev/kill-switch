@@ -78,7 +78,9 @@ struct DevServersTab: View {
                 Spacer()
             }
             InspectionStatus(monitor: monitor, count: groups.reduce(0) { $0 + $1.connections.count }, noun: "listeners")
-            if !monitor.projectErrors.isEmpty {
+            if Self.hasProjectWarnings(
+                in: groups.lazy.flatMap(\.connections), identities: monitor.identities, errors: monitor.projectErrors
+            ) {
                 Label("Some project details are unavailable. The affected rows explain why.", systemImage: "exclamationmark.triangle")
                     .font(.system(size: 11))
                     .foregroundColor(.orange)
@@ -169,6 +171,14 @@ struct DevServersTab: View {
                     .foregroundColor(.orange)
                     .textSelection(.enabled)
             }
+        }
+    }
+
+    static func hasProjectWarnings<Rows: Sequence>(
+        in rows: Rows, identities: [Int32: ActivityProcessIdentity], errors: [ActivityProcessIdentity: String]
+    ) -> Bool where Rows.Element == NetworkConnectionRecord {
+        rows.contains { connection in
+            identities[connection.pid].map { errors[$0] != nil } ?? false
         }
     }
 

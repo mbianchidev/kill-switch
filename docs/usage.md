@@ -146,6 +146,10 @@ grouped by the nearest Git project, a recognized project manifest, or working
 directory. Search listener fields and numeric ports, or independently find
 project names, paths, and branches.
 
+Project-warning banners follow the visible listener and project filters;
+affected visible rows show their specific reason. Errors remain retained for
+filtered-out listeners and reappear when those rows are shown.
+
 **Copy address**, **Reveal folder**, **Open HTTP**, and **Inspect** are explicit
 actions. Not every TCP listener is an HTTP server. Wildcard listeners use a
 loopback HTTP address; malformed or non-IP endpoints do not become browser
