@@ -270,9 +270,13 @@ launches:
 | Protected substrings | Listed below | Editable automatic-cleanup exclusions |
 
 **Run cleanup now** uses the saved auto-kill and age settings and displays
-candidate and termination counts. **Reset to defaults** re-enables auto-kill,
-restores all values, clears synced integration ports, and immediately runs
-cleanup. Integration ports remain cleared until that integration syncs again.
+candidate and termination counts. **Reset to defaults** first asks for explicit
+confirmation. Confirming **Reset and enable auto-kill** restores all values,
+clears synced integration ports, re-enables automatic termination, and
+immediately runs cleanup. Canceling changes nothing. Re-enabling the auto-kill
+switch also requires confirmation; disabling it takes effect immediately.
+Changing settings alone never authorizes a read-only visit to terminate
+processes. Integration ports remain cleared until that integration syncs again.
 
 ### Developer cleanup defaults
 

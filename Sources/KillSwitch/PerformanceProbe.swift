@@ -225,6 +225,7 @@ enum PerformanceProbe {
         check(!cleanup.cleanupConfiguration().autoKillEnabled, "Later saved disablement must block the ensuing cleanup.")
         cleanupStateChecks(preferences: preferences, check)
         queuedCleanupChecks(preferences: preferences, check)
+        resetAuthorizationChecks(preferences: preferences, check)
 
         let controller = RetainedPageController()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650),
@@ -455,7 +456,7 @@ enum PerformanceProbe {
         var cleanedSearch: Binding<String>?
         func showCleanup(entryPending: Bool) {
             var page = DevCleanupTab(
-                allowAutomaticTermination: false, entryPending: entryPending,
+                allowAutomaticTermination: .constant(false), entryPending: entryPending,
                 requestConfirmation: {}, showDevServers: {}, preferences: preferences
             )
             page.performanceObserveState = {
@@ -628,6 +629,56 @@ enum PerformanceProbe {
                   "Queued \(metric.rawValue) collection must see hidden-window state before sampling begins.")
             check(!timedOut.withLock { $0 }, "The controlled metric queue must not time out.")
         }
+    }
+
+    private static func resetAuthorizationChecks(preferences: DevCleanupPreferences, _ check: (Bool, String) -> Void) {
+        let savedAutoKill = preferences.load().autoKillEnabled
+        defer { preferences.setAutoKillEnabled(savedAutoKill) }
+        preferences.setAutoKillEnabled(false)
+        let terminated = OSAllocatedUnfairLock(initialState: [Int32]())
+        let service = DevCleanupService(
+            username: "synthetic-owner",
+            processProvider: { [DevCleanupProcess(
+                pid: 100_997, user: "synthetic-owner", elapsedSeconds: 1_000_000,
+                command: "/synthetic/node /synthetic/vite/bin/vite.js"
+            )] },
+            listeningPortsProvider: { [100_997: [3_000]] },
+            terminator: { pid in terminated.withLock { $0.append(pid) }; return true }
+        )
+        let monitor = DevCleanupMonitor(preferences: preferences, service: service)
+        defer { monitor.stop() }
+        monitor.start(allowAutomaticTermination: false)
+        monitor.performanceDrainWorkQueue()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        monitor.resetToDefaults()
+        monitor.performanceDrainWorkQueue()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(terminated.withLock { $0.isEmpty } && !monitor.cleanupConfiguration().autoKillEnabled,
+              "Reset defaults must not authorize automatic termination during an unconfirmed read-only visit.")
+        monitor.autoKillEnabled = true
+        monitor.runCleanup()
+        monitor.performanceDrainWorkQueue()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(terminated.withLock { $0.isEmpty }, "Changing the auto-kill setting alone must not grant visit authorization.")
+        monitor.prepareForEntry(allowAutomaticTermination: true)
+        monitor.runCleanup()
+        monitor.performanceDrainWorkQueue()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(terminated.withLock { $0 } == [100_997], "Explicit authorization must still permit the injected qualifying cleanup.")
+        let released = DispatchSemaphore(value: 0)
+        let timedOut = OSAllocatedUnfairLock(initialState: false)
+        monitor.performanceEnqueue {
+            if released.wait(timeout: .now() + 5) != .success { timedOut.withLock { $0 = true } }
+        }
+        monitor.runCleanup()
+        monitor.prepareForEntry(allowAutomaticTermination: false)
+        released.signal()
+        monitor.performanceDrainWorkQueue()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(terminated.withLock { $0 } == [100_997], "Revoking authorization must also gate a previously queued cleanup request.")
+        monitor.stop()
+        check(!monitor.cleanupConfiguration().autoKillEnabled, "Stopping the visit must revoke permission despite retained enabled settings.")
+        check(!timedOut.withLock { $0 }, "The authorization-revocation queue must not time out.")
     }
 
     private static func fixture(date: Date, count: Int, step: Int) -> ResourceSnapshot {

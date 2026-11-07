@@ -101,6 +101,7 @@ final class DevCleanupMonitor: ObservableObject {
     private var isRefreshing = false
     private var isCleaning = false
     private let activeSession = OSAllocatedUnfairLock<UUID?>(initialState: nil)
+    private let automaticTerminationAuthorized = OSAllocatedUnfairLock(initialState: false)
 
     init(preferences: DevCleanupPreferences = DevCleanupPreferences(), service: DevCleanupService? = nil) {
         self.preferences = preferences
@@ -164,6 +165,7 @@ final class DevCleanupMonitor: ObservableObject {
     }
 
     func prepareForEntry(allowAutomaticTermination: Bool) {
+        automaticTerminationAuthorized.withLock { $0 = allowAutomaticTermination }
         let settings = preferences.load()
         applyingSettings = true
         defer { applyingSettings = false }
@@ -187,6 +189,7 @@ final class DevCleanupMonitor: ObservableObject {
 
     func stop() {
         activeSession.withLock { $0 = nil }
+        automaticTerminationAuthorized.withLock { $0 = false }
         cancelTimers()
         isRefreshing = false
         isCleaning = false
@@ -263,6 +266,7 @@ final class DevCleanupMonitor: ObservableObject {
             do {
                 let current = self.preferences.load().configuration(
                     allowAutomaticTermination: configuration.autoKillEnabled
+                        && self.automaticTerminationAuthorized.withLock { $0 }
                 )
                 let result = try self.service.cleanup(configuration: current)
                 DispatchQueue.main.async {
@@ -284,7 +288,9 @@ final class DevCleanupMonitor: ObservableObject {
     }
 
     func cleanupConfiguration() -> DevCleanupConfiguration {
-        preferences.load().configuration(allowAutomaticTermination: autoKillEnabled)
+        preferences.load().configuration(
+            allowAutomaticTermination: autoKillEnabled && automaticTerminationAuthorized.withLock { $0 }
+        )
     }
 
     private func currentConfiguration() -> DevCleanupConfiguration {
@@ -305,7 +311,8 @@ final class DevCleanupMonitor: ObservableObject {
 // MARK: - View
 
 struct DevCleanupTab: View {
-    let allowAutomaticTermination: Bool
+    private enum AuthorizationAction: Equatable { case enable, resetDefaults }
+    @Binding var allowAutomaticTermination: Bool
     let entryPending: Bool
     let requestConfirmation: () -> Void
     let showDevServers: () -> Void
@@ -323,6 +330,7 @@ struct DevCleanupTab: View {
     @State private var portSorting = TableComparator(field: DevPortTableFields.port)
     @State private var cleanedSearch = ""
     @State private var cleanedSorting = TableComparator(field: CleanedProcessTableFields.age, order: .reverse)
+    @State private var authorizationAction: AuthorizationAction?
 
 #if KILLSWITCH_PERFORMANCE_PROBE
     typealias PerformanceStateObserver = (DevCleanupMonitor, Binding<String>, Binding<String>) -> Void
@@ -330,11 +338,11 @@ struct DevCleanupTab: View {
 #endif
 
     init(
-        allowAutomaticTermination: Bool, entryPending: Bool,
+        allowAutomaticTermination: Binding<Bool>, entryPending: Bool,
         requestConfirmation: @escaping () -> Void, showDevServers: @escaping () -> Void,
         preferences: DevCleanupPreferences = DevCleanupPreferences()
     ) {
-        self.allowAutomaticTermination = allowAutomaticTermination
+        _allowAutomaticTermination = allowAutomaticTermination
         self.entryPending = entryPending
         self.requestConfirmation = requestConfirmation
         self.showDevServers = showDevServers
@@ -358,10 +366,32 @@ struct DevCleanupTab: View {
         ).frame(width: 0, height: 0))
 #endif
         .onChange(of: pageVisible) { visible in
-            if !visible { copiedProcessID = nil; copyFeedbackRevision += 1 }
+            if !visible {
+                copiedProcessID = nil
+                copyFeedbackRevision += 1
+                authorizationAction = nil
+            }
         }
         .onChange(of: entryPending) { pending in
-            if pending { copiedProcessID = nil; copyFeedbackRevision += 1 }
+            if pending { copiedProcessID = nil; copyFeedbackRevision += 1; authorizationAction = nil }
+        }
+        .onChange(of: allowAutomaticTermination) { allowed in
+            monitor.prepareForEntry(allowAutomaticTermination: allowed)
+        }
+        .alert("Authorize automatic termination?", isPresented: Binding(
+            get: { authorizationAction != nil },
+            set: { if !$0 { authorizationAction = nil } }
+        ), presenting: authorizationAction) { action in
+            Button("Cancel", role: .cancel) { authorizationAction = nil }
+            Button(action == .resetDefaults ? "Reset and enable auto-kill" : "Enable auto-kill", role: .destructive) {
+                allowAutomaticTermination = true
+                monitor.prepareForEntry(allowAutomaticTermination: true)
+                if action == .resetDefaults { monitor.resetToDefaults() } else { monitor.autoKillEnabled = true }
+            }
+        } message: { action in
+            Text(action == .resetDefaults
+                ? "Resetting restores automatic termination and immediately runs cleanup using the default age threshold. Qualifying development servers can be terminated. Age is not inactivity. Protected processes remain protected."
+                : "Automatic cleanup can terminate qualifying development servers older than the saved age threshold. Age is not inactivity. Protected processes remain protected.")
         }
         .task(id: copyFeedbackRevision) {
             guard copiedProcessID != nil else { return }
@@ -472,22 +502,35 @@ struct DevCleanupTab: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.white.opacity(0.7))
                 Spacer()
-                Button { monitor.resetToDefaults() } label: {
+                Button { authorizationAction = .resetDefaults } label: {
                     Label("Reset to defaults", systemImage: "arrow.counterclockwise")
                         .font(.system(size: 11))
                 }
                 .buttonStyle(.borderless)
                 .foregroundColor(.white.opacity(0.7))
+                .disabled(!allowsOperations)
             }
 
             HStack(spacing: 16) {
-                Toggle(isOn: $monitor.autoKillEnabled) {
+                Toggle(isOn: Binding(
+                    get: { monitor.autoKillEnabled },
+                    set: { enabled in
+                        if enabled {
+                            authorizationAction = .enable
+                        } else {
+                            monitor.autoKillEnabled = false
+                            allowAutomaticTermination = false
+                            monitor.prepareForEntry(allowAutomaticTermination: false)
+                        }
+                    }
+                )) {
                     Text("Auto-kill stale servers")
                         .font(.system(size: 12))
                         .foregroundColor(.white.opacity(0.8))
                 }
                 .toggleStyle(.switch)
                 .tint(.orange)
+                .disabled(!allowsOperations)
 
                 labeledPicker("Kill after") {
                     Picker("", selection: $monitor.ageThresholdHours) {

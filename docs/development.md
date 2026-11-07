@@ -184,6 +184,10 @@ active content. Session leases reject canceled queued passes and old timer
 callbacks. Cleanup rereads saved settings at queue admission; outcomes from
 already-started authorized passes remain retained after hiding. Interface
 checks use an injected synthetic cleanup service, never the live terminator.
+Visit authorization is separate from the editable auto-kill setting and is
+revoked on stop. Resetting preferences cannot grant it. The view requires
+explicit confirmation for resetting defaults or re-enabling auto-kill; queue
+admission rechecks authorization as well as current saved settings.
 The native
 history-process menu creates its choices on opening and releases them after
 closing instead of maintaining a SwiftUI view for every recorded process.

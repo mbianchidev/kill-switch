@@ -128,7 +128,7 @@ struct ContentView: View {
             DiskCleanupTab(monitor: diskCleanupMonitor)
         case .cleanup:
             DevCleanupTab(
-                allowAutomaticTermination: cleanupAuthorized,
+                allowAutomaticTermination: $cleanupAuthorized,
                 entryPending: cleanupEntryPending,
                 requestConfirmation: { confirmCleanup = true },
                 showDevServers: { navigationSelection.wrappedValue = .devServers }
