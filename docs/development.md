@@ -192,10 +192,17 @@ Visit authorization is separate from the editable auto-kill setting and is
 revoked on stop. Resetting preferences cannot grant it. The view requires
 explicit confirmation for resetting defaults or re-enabling auto-kill; queue
 admission rechecks authorization as well as current saved settings.
+`ContentView` owns the retained cleanup monitor without observing its updates,
+so navigation and window hiding revoke the monitor's lease synchronously rather
+than waiting for SwiftUI lifecycle callbacks. Hidden cleanup content is removed;
+returning to enabled cleanup restores the safe entry preview.
 Transient copy feedback and authorization requests carry a cleanup-visit token.
 Navigation and hiding rotate that token directly, so coalesced conditional-view
 updates cannot revive old feedback or dialogs. Confirmation callbacks also
-check the current token before changing settings.
+check the current token and individual request identity before changing settings.
+Presentation dismissal alone retains the payload for the native button action;
+Cancel and completed actions consume it, preventing replay or approval of a
+newer dialog.
 The native
 history-process menu creates its choices on opening and releases them after
 closing instead of maintaining a SwiftUI view for every recorded process.

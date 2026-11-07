@@ -239,11 +239,16 @@ cleanup pass, cancel the entry confirmation. The CLI
 Canceling leaves the safe preview shown; it does not reset sidebar selection or
 reopen the modal when navigating with arrow keys. Other pages remain reachable
 without authorizing cleanup.
-The preview retains cleanup filters and prior session results. Navigating away
-or reopening the preview cancels not-yet-started scans and cleanup passes. An
+The preview retains cleanup filters and prior session results. Navigating away,
+hiding the window, or reopening the preview immediately cancels not-yet-started
+scans and cleanup passes. Showing the window again requires fresh confirmation
+while automatic termination remains enabled. An
 already-started authorized pass can finish; its outcome remains available on
-return. Queued passes reread saved settings before starting, so later saved
-disablement still prevents automatic termination.
+return. Queued scans and cleanup passes reread saved settings before starting,
+so later saved filters apply and disablement still prevents automatic termination.
+Entry, reset, and enable confirmations belong to both their visit and individual
+request. Canceling or replacing a dialog invalidates its old callback without
+canceling a newer request.
 
 Each entry reloads saved settings without writing a retained monitor's stale
 values back to preferences. Automatic cleanup requires both current saved

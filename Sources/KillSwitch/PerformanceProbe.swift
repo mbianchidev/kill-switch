@@ -230,6 +230,9 @@ enum PerformanceProbe {
         cleanupStateChecks(preferences: preferences, check)
         queuedCleanupChecks(preferences: preferences, check)
         resetAuthorizationChecks(preferences: preferences, check)
+        cleanupEntryCancellationChecks(preferences: preferences, check)
+        cleanupDialogCancellationChecks(preferences: preferences, check)
+        queuedScanSettingsChecks(preferences: preferences, check)
         let firstVisit = UUID()
         let nextVisit = UUID()
         let copiedVisit = CleanupVisitValue(visit: firstVisit, value: Int32(100_995))
@@ -606,6 +609,227 @@ enum PerformanceProbe {
         check(inFlight.lastRun != nil && inFlight.cleaned.map(\.pid) == [100_998],
               "An already-started authorized cleanup must retain its outcome after its page disappears.")
         check(!timedOut.withLock { $0 }, "The controlled synthetic cleanup queue must not time out.")
+    }
+
+    private static func cleanupEntryCancellationChecks(preferences: DevCleanupPreferences, _ check: (Bool, String) -> Void) {
+        let savedAutoKill = preferences.load().autoKillEnabled
+        defer { preferences.setAutoKillEnabled(savedAutoKill) }
+        preferences.setAutoKillEnabled(true)
+        let terminated = OSAllocatedUnfairLock(initialState: [Int32]())
+        let service = DevCleanupService(
+            username: "synthetic-owner",
+            processProvider: { [DevCleanupProcess(
+                pid: 100_996, user: "synthetic-owner", elapsedSeconds: 1_000_000,
+                command: "/synthetic/node /synthetic/vite/bin/vite.js"
+            )] },
+            listeningPortsProvider: { [100_996: [3_000]] },
+            terminator: { pid in terminated.withLock { $0.append(pid) }; return true }
+        )
+        let monitor = DevCleanupMonitor(preferences: preferences, service: service)
+        defer { monitor.stop() }
+        var controls: ContentView.CleanupEntryProbeControls?
+        var root = ContentView(
+            resourceMonitor: ResourceMonitor(), startsServices: false,
+            cleanupPreferences: preferences, cleanupMonitor: monitor
+        )
+        root.performanceObserveCleanupEntry = { controls = $0 }
+        let controller = NSHostingController(rootView: root)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        defer { window.contentViewController = nil; window.close() }
+        controller.view.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        guard let controls else {
+            check(false, "The isolated parent must expose its real cleanup-entry handlers.")
+            return
+        }
+        controls.navigation.wrappedValue = .cleanup
+        controls.open(controls.visit.wrappedValue)
+        guard let firstRequest = controls.request() else {
+            check(false, "A current cleanup visit must be able to request confirmation.")
+            return
+        }
+        controls.navigation.wrappedValue = .devServers
+        controls.navigation.wrappedValue = .cleanup
+        controls.approve(firstRequest)
+        check(!controls.authorized.wrappedValue && controls.pending.wrappedValue,
+              "A delayed confirmation from a canceled visit must not authorize a coalesced new cleanup visit.")
+        monitor.start(allowAutomaticTermination: controls.authorized.wrappedValue)
+        monitor.performanceDrainWorkQueue()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        check(terminated.withLock { $0.isEmpty }, "A canceled parent confirmation must not authorize the mock terminator.")
+        monitor.stop()
+        terminated.withLock { $0 = [] }
+
+        controls.navigation.wrappedValue = .devServers
+        controls.navigation.wrappedValue = .cleanup
+        controls.open(controls.visit.wrappedValue)
+        guard let canceledRequest = controls.request() else {
+            check(false, "A subsequent cleanup preview must be able to request confirmation.")
+            return
+        }
+        controls.cancel(canceledRequest)
+        controls.approve(canceledRequest)
+        check(!controls.authorized.wrappedValue && controls.pending.wrappedValue,
+              "Cancel must invalidate the request even without leaving its cleanup visit.")
+        controls.open(controls.visit.wrappedValue)
+        guard let currentRequest = controls.request() else {
+            check(false, "Cancel must preserve the ability to explicitly retry confirmation.")
+            return
+        }
+        controls.approve(canceledRequest)
+        check(!controls.authorized.wrappedValue && controls.request()?.id == currentRequest.id,
+              "An old same-visit confirmation must not consume or approve a newer request.")
+        controls.dismissPresentation()
+        controls.approve(currentRequest)
+        check(controls.authorized.wrappedValue && !controls.pending.wrappedValue && controls.request() == nil,
+              "A valid presented confirmation must remain usable when the native alert first clears its presentation binding.")
+
+        let released = DispatchSemaphore(value: 0)
+        let timedOut = OSAllocatedUnfairLock(initialState: false)
+        monitor.performanceEnqueue {
+            if released.wait(timeout: .now() + 5) != .success { timedOut.withLock { $0 = true } }
+        }
+        monitor.start(allowAutomaticTermination: true)
+        controls.visibility(false)
+        check(!controls.authorized.wrappedValue && !monitor.cleanupConfiguration().autoKillEnabled,
+              "Hiding must synchronously revoke parent and monitor authorization without waiting for a SwiftUI redraw.")
+        controls.visibility(true)
+        released.signal()
+        monitor.performanceDrainWorkQueue()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        check(terminated.withLock { $0.isEmpty },
+              "A queued authorized cleanup must not begin after its window-hidden visit was canceled.")
+        controls.approve(currentRequest)
+        check(!controls.authorized.wrappedValue && controls.pending.wrappedValue,
+              "Showing the window must restore the safe preview instead of accepting a pre-hide confirmation.")
+        controls.open(firstRequest.visit)
+        check(controls.request() == nil, "A delayed preview button must not request confirmation for an expired visit.")
+        check(!timedOut.withLock { $0 }, "The window-cancellation mock queue must not time out.")
+    }
+
+    private static func cleanupDialogCancellationChecks(preferences: DevCleanupPreferences, _ check: (Bool, String) -> Void) {
+        let savedAutoKill = preferences.load().autoKillEnabled
+        defer { preferences.setAutoKillEnabled(savedAutoKill) }
+        preferences.setAutoKillEnabled(false)
+        let terminated = OSAllocatedUnfairLock(initialState: [Int32]())
+        let service = DevCleanupService(
+            username: "synthetic-owner",
+            processProvider: { [DevCleanupProcess(
+                pid: 100_994, user: "synthetic-owner", elapsedSeconds: 1_000_000,
+                command: "/synthetic/node /synthetic/vite/bin/vite.js"
+            )] },
+            listeningPortsProvider: { [100_994: [3_000]] },
+            terminator: { pid in terminated.withLock { $0.append(pid) }; return true }
+        )
+        let monitor = DevCleanupMonitor(preferences: preferences, service: service)
+        defer { monitor.stop() }
+        var authorized = false
+        var controls: DevCleanupTab.AuthorizationProbeControls?
+        var page = DevCleanupTab(
+            allowAutomaticTermination: Binding(get: { authorized }, set: { authorized = $0 }),
+            visitID: .constant(UUID()), entryPending: false, requestConfirmation: {}, showDevServers: {},
+            preferences: preferences, monitor: monitor
+        )
+        page.performanceObserveAuthorization = { controls = $0 }
+        let controller = NSHostingController(rootView: page.environment(\.allowsLiveOperations, false))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        defer { window.contentViewController = nil; window.close() }
+        controller.view.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        guard let controls else {
+            check(false, "The synthetic cleanup view must expose its actual reset/enable confirmation handlers.")
+            return
+        }
+        monitor.start(allowAutomaticTermination: false)
+        monitor.performanceDrainWorkQueue()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        controls.reset()
+        guard let canceledReset = controls.confirmation() else {
+            check(false, "A current reset must be able to request explicit confirmation.")
+            return
+        }
+        controls.cancel()
+        canceledReset()
+        check(!authorized && !preferences.load().autoKillEnabled && !monitor.cleanupConfiguration().autoKillEnabled,
+              "A canceled reset confirmation must not restore settings or grant termination permission within the same visit.")
+        controls.enable()
+        let enableID = controls.requestID()
+        canceledReset()
+        check(!authorized && controls.requestID() == enableID,
+              "A delayed reset callback must not approve or consume a newer enable request.")
+        controls.reset()
+        guard let currentReset = controls.confirmation() else {
+            check(false, "Cancel must preserve the ability to request a fresh reset.")
+            return
+        }
+        controls.dismissPresentation()
+        currentReset()
+        monitor.performanceDrainWorkQueue()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        check(authorized && preferences.load().autoKillEnabled && monitor.cleanupConfiguration().autoKillEnabled
+              && controls.requestID() == nil,
+              "A current reset must remain valid after native presentation dismissal and consume its own request.")
+        let originalTerminationCount = terminated.withLock { $0.count }
+        check(originalTerminationCount == 1, "A freshly confirmed reset must still permit the single synthetic eligible termination.")
+        currentReset()
+        monitor.performanceDrainWorkQueue()
+        check(terminated.withLock { $0.count } == originalTerminationCount,
+              "Replaying a consumed reset must not enqueue an additional mock termination.")
+    }
+
+    private static func queuedScanSettingsChecks(preferences: DevCleanupPreferences, _ check: (Bool, String) -> Void) {
+        let saved = preferences.load()
+        defer {
+            preferences.setAutoKillEnabled(saved.autoKillEnabled)
+            preferences.setUserPorts(saved.userPorts)
+            preferences.setRuntimes(saved.runtimes)
+            preferences.setIndicators(saved.indicators)
+            preferences.setExclusions(saved.exclusions)
+        }
+        preferences.setAutoKillEnabled(false)
+        preferences.setUserPorts([3_000])
+        let terminations = OSAllocatedUnfairLock(initialState: 0)
+        let service = DevCleanupService(
+            username: "synthetic-owner",
+            processProvider: { [
+                DevCleanupProcess(pid: 100_991, user: "synthetic-owner", elapsedSeconds: 1,
+                                  command: "/synthetic/other-worker"),
+                DevCleanupProcess(pid: 100_992, user: "synthetic-owner", elapsedSeconds: 1,
+                                  command: "/synthetic/synthetic-runtime /synthetic/synthetic-worker"),
+                DevCleanupProcess(pid: 100_993, user: "synthetic-owner", elapsedSeconds: 1,
+                                  command: "/synthetic/synthetic-runtime /synthetic/synthetic-worker protected-worker")
+            ] },
+            listeningPortsProvider: { [100_991: [7_654], 100_992: [7_655], 100_993: [7_656]] },
+            terminator: { _ in terminations.withLock { $0 += 1 }; return false }
+        )
+        let monitor = DevCleanupMonitor(preferences: preferences, service: service)
+        defer { monitor.stop() }
+        monitor.start(allowAutomaticTermination: false)
+        monitor.performanceDrainWorkQueue()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        let released = DispatchSemaphore(value: 0)
+        let timedOut = OSAllocatedUnfairLock(initialState: false)
+        monitor.performanceEnqueue {
+            if released.wait(timeout: .now() + 5) != .success { timedOut.withLock { $0 = true } }
+        }
+        monitor.refreshPorts()
+        preferences.setUserPorts([7_654])
+        preferences.setRuntimes(["synthetic-runtime"])
+        preferences.setIndicators(["synthetic-worker"])
+        preferences.setExclusions(["protected-worker"])
+        released.signal()
+        monitor.performanceDrainWorkQueue()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        check(monitor.portProcesses.map(\.pid) == [100_991, 100_992],
+              "Queued port scans must use the latest saved ports, runtimes, indicators, and exclusions at admission.")
+        check(terminations.withLock { $0 } == 0, "A read-only synthetic port scan must never terminate a process.")
+        check(!timedOut.withLock { $0 }, "The queued settings scan must not time out.")
     }
 
     private static func copyFeedbackChecks(_ check: (Bool, String) -> Void) {

@@ -68,8 +68,8 @@ macOS denies some `libproc` data for protected or other-user processes. Those
 rows remain visible in **All processes**, but restricted disk or architecture
 fields show a dash. Per-process GPU and App Nap counters are also not exposed by a
 supported public interface, so KillSwitch does not invent values for them.
-The **All processes** scope does not grant administrator privileges. Always-
-unavailable GPU columns are not shown on the CPU page.
+The **All processes** scope does not grant administrator privileges. GPU columns
+that are always unavailable are not shown on the CPU page.
 
 ## Native system health
 

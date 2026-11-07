@@ -236,10 +236,10 @@ final class DevCleanupMonitor: ObservableObject {
     func refreshPorts() {
         guard let session = activeSession.withLock({ $0 }), !isRefreshing else { return }
         isRefreshing = true
-        let configuration = currentConfiguration()
         workQueue.async { [weak self] in
             guard let self, self.activeSession.withLock({ $0 }) == session else { return }
             do {
+                let configuration = self.preferences.load().configuration(allowAutomaticTermination: false)
                 let result = try self.service.scan(configuration: configuration)
                 DispatchQueue.main.async {
                     guard self.activeSession.withLock({ $0 }) == session else { return }
@@ -293,24 +293,12 @@ final class DevCleanupMonitor: ObservableObject {
         )
     }
 
-    private func currentConfiguration() -> DevCleanupConfiguration {
-        let integrationPorts = preferences.loadIntegrationPorts()
-        return DevCleanupConfiguration(
-            autoKillEnabled: autoKillEnabled,
-            ageThresholdSeconds: ageThresholdSeconds,
-            effectivePorts: DevCleanupPreferences.normalizedPorts(
-                ports + integrationPorts.values.flatMap { $0 }
-            ),
-            runtimes: runtimes,
-            indicators: devIndicators,
-            exclusions: exclusions
-        )
-    }
 }
 
 // MARK: - View
 
 struct CleanupVisitValue<Value> {
+    let id = UUID()
     let visit: UUID
     let value: Value
 
@@ -326,6 +314,7 @@ struct DevCleanupTab: View {
     let showDevServers: () -> Void
     @Environment(\.allowsLiveOperations) private var allowsOperations
     @Environment(\.isKillSwitchPageVisible) private var pageVisible
+    @Environment(\.isKillSwitchWindowVisible) private var windowVisible
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var monitor: DevCleanupMonitor
     @State private var portText = ""
@@ -339,6 +328,9 @@ struct DevCleanupTab: View {
     @State private var cleanedSearch = ""
     @State private var cleanedSorting = TableComparator(field: CleanedProcessTableFields.age, order: .reverse)
     @State private var authorizationRequest: CleanupVisitValue<AuthorizationAction>?
+    @State private var authorizationPresented = false
+
+    private var active: Bool { pageVisible && windowVisible }
 
     private var copiedProcessID: Int32? {
         get { copiedFeedback?.value(for: visitID) }
@@ -347,11 +339,14 @@ struct DevCleanupTab: View {
 
     private var authorizationAction: AuthorizationAction? {
         get { authorizationRequest?.value(for: visitID) }
-        nonmutating set { authorizationRequest = newValue.map { CleanupVisitValue(visit: visitID, value: $0) } }
+        nonmutating set {
+            authorizationRequest = newValue.map { CleanupVisitValue(visit: visitID, value: $0) }
+            authorizationPresented = newValue != nil
+        }
     }
 
     private var currentAuthorizationRequest: CleanupVisitValue<AuthorizationAction>? {
-        guard pageVisible, !entryPending, let authorizationRequest,
+        guard active, !entryPending, let authorizationRequest,
               authorizationRequest.value(for: visitID) != nil else { return nil }
         return authorizationRequest
     }
@@ -359,24 +354,35 @@ struct DevCleanupTab: View {
 #if KILLSWITCH_PERFORMANCE_PROBE
     typealias PerformanceStateObserver = (DevCleanupMonitor, Binding<String>, Binding<String>) -> Void
     var performanceObserveState: PerformanceStateObserver?
+    struct AuthorizationProbeControls {
+        let reset: () -> Void
+        let enable: () -> Void
+        let confirmation: () -> (() -> Void)?
+        let cancel: () -> Void
+        let dismissPresentation: () -> Void
+        let requestID: () -> UUID?
+    }
+    var performanceObserveAuthorization: ((AuthorizationProbeControls) -> Void)?
 #endif
 
     init(
         allowAutomaticTermination: Binding<Bool>, visitID: Binding<UUID>, entryPending: Bool,
         requestConfirmation: @escaping () -> Void, showDevServers: @escaping () -> Void,
-        preferences: DevCleanupPreferences = DevCleanupPreferences()
+        preferences: DevCleanupPreferences = DevCleanupPreferences(),
+        monitor: DevCleanupMonitor? = nil
     ) {
         _allowAutomaticTermination = allowAutomaticTermination
         _visitID = visitID
         self.entryPending = entryPending
         self.requestConfirmation = requestConfirmation
         self.showDevServers = showDevServers
-        _monitor = StateObject(wrappedValue: DevCleanupMonitor(preferences: preferences))
+        _monitor = StateObject(wrappedValue: monitor ?? DevCleanupMonitor(preferences: preferences))
     }
 
     var body: some View {
-        Group {
-            if pageVisible {
+        let displayedVisit = visitID
+        return Group {
+            if active {
                 if entryPending {
                     cleanupEntry
                 } else {
@@ -389,8 +395,21 @@ struct DevCleanupTab: View {
         .background(DevCleanupStateRecorder(
             monitor: monitor, portSearch: $portSearch, cleanedSearch: $cleanedSearch, observe: performanceObserveState
         ).frame(width: 0, height: 0))
+        .onAppear {
+            performanceObserveAuthorization?(AuthorizationProbeControls(
+                reset: { authorizationAction = .resetDefaults }, enable: { authorizationAction = .enable },
+                confirmation: {
+                    guard let request = currentAuthorizationRequest else { return nil }
+                    return { performAuthorization(request) }
+                },
+                cancel: { if let request = authorizationRequest { cancelAuthorization(request) } },
+                dismissPresentation: { authorizationPresented = false },
+                requestID: { authorizationRequest?.id }
+            ))
+        }
 #endif
-        .onChange(of: pageVisible) { visible in
+        .onChange(of: active) { visible in
+            guard displayedVisit == visitID else { return }
             if !visible {
                 copiedProcessID = nil
                 copyFeedbackRevision += 1
@@ -398,29 +417,28 @@ struct DevCleanupTab: View {
             }
         }
         .onChange(of: entryPending) { pending in
+            guard displayedVisit == visitID else { return }
             if pending { copiedProcessID = nil; copyFeedbackRevision += 1; authorizationAction = nil }
         }
         .onChange(of: allowAutomaticTermination) { allowed in
+            guard displayedVisit == visitID else { return }
             monitor.prepareForEntry(allowAutomaticTermination: allowed)
         }
-        .onChange(of: visitID) { _ in
-            copiedProcessID = nil
-            copyFeedbackRevision += 1
-            authorizationAction = nil
+        .onChange(of: visitID) { currentVisit in
+            guard currentVisit == visitID else { return }
+            if copiedFeedback?.visit != currentVisit {
+                copiedFeedback = nil
+                copyFeedbackRevision += 1
+            }
+            if authorizationRequest?.visit != currentVisit { authorizationAction = nil }
         }
         .alert("Authorize automatic termination?", isPresented: Binding(
-            get: { allowsOperations && currentAuthorizationRequest != nil },
-            set: { if !$0 { authorizationAction = nil } }
+            get: { allowsOperations && authorizationPresented && currentAuthorizationRequest != nil },
+            set: { authorizationPresented = $0 }
         ), presenting: currentAuthorizationRequest) { request in
-            Button("Cancel", role: .cancel) { authorizationAction = nil }
+            Button("Cancel", role: .cancel) { cancelAuthorization(request) }
             Button(request.value == .resetDefaults ? "Reset and enable auto-kill" : "Enable auto-kill", role: .destructive) {
-                guard request.visit == visitID else {
-                    fputs("KillSwitch canceled an expired cleanup authorization request; no settings were changed.\n", stderr)
-                    return
-                }
-                allowAutomaticTermination = true
-                monitor.prepareForEntry(allowAutomaticTermination: true)
-                if request.value == .resetDefaults { monitor.resetToDefaults() } else { monitor.autoKillEnabled = true }
+                performAuthorization(request)
             }
         } message: { request in
             Text(request.value == .resetDefaults
@@ -441,8 +459,25 @@ struct DevCleanupTab: View {
         }
     }
 
+    private func cancelAuthorization(_ request: CleanupVisitValue<AuthorizationAction>) {
+        guard authorizationRequest?.id == request.id else { return }
+        authorizationAction = nil
+    }
+
+    private func performAuthorization(_ request: CleanupVisitValue<AuthorizationAction>) {
+        guard active, !entryPending, request.visit == visitID, authorizationRequest?.id == request.id else {
+            fputs("KillSwitch canceled an expired cleanup authorization request; no settings were changed.\n", stderr)
+            return
+        }
+        authorizationAction = nil
+        allowAutomaticTermination = true
+        monitor.prepareForEntry(allowAutomaticTermination: true)
+        if request.value == .resetDefaults { monitor.resetToDefaults() } else { monitor.autoKillEnabled = true }
+    }
+
     private var cleanupContent: some View {
-        VStack(spacing: 0) {
+        let displayedVisit = visitID
+        return VStack(spacing: 0) {
             header
             Divider()
             ScrollView {
@@ -456,13 +491,16 @@ struct DevCleanupTab: View {
             }
         }
         .onAppear {
-            if allowsOperations { monitor.start(allowAutomaticTermination: allowAutomaticTermination) }
+            if allowsOperations && displayedVisit == visitID {
+                monitor.start(allowAutomaticTermination: allowAutomaticTermination)
+            }
         }
-        .onDisappear { monitor.stop() }
+        .onDisappear { if displayedVisit == visitID { monitor.stop() } }
     }
 
     private var cleanupEntry: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        let displayedVisit = visitID
+        return VStack(alignment: .leading, spacing: 16) {
             Label("Dev cleanup", systemImage: "trash")
                 .font(.system(size: 20, weight: .semibold, design: .rounded))
             Label("Automatic termination is enabled", systemImage: "exclamationmark.triangle")
@@ -480,7 +518,9 @@ struct DevCleanupTab: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(24)
-        .onAppear { monitor.stop() }
+        .onAppear {
+            if displayedVisit == visitID && !allowAutomaticTermination { monitor.stop() }
+        }
     }
 
     private var header: some View {
