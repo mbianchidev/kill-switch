@@ -128,7 +128,7 @@ struct SystemHealthTab: View {
             case .absent:
                 Label("No internal battery", systemImage: "powerplug")
                     .font(.system(size: 22, weight: .semibold, design: .rounded))
-                Text("This Mac is powered by \(monitor.snapshot?.powerSource.rawValue.lowercased() ?? "an unavailable source"). An attached UPS is not reported as an internal battery.")
+                Text("This Mac is powered by \(monitor.snapshot?.powerSource.rawValue ?? "an unavailable source"). An attached UPS is not reported as an internal battery.")
                     .foregroundColor(.secondary)
             case .unavailable(let message):
                 Label("Battery information unavailable", systemImage: "exclamationmark.triangle")
