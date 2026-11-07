@@ -242,7 +242,8 @@ without authorizing cleanup.
 The preview retains cleanup filters and prior session results. Navigating away,
 hiding the window, or reopening the preview immediately cancels not-yet-started
 scans and cleanup passes. Showing the window again requires fresh confirmation
-while automatic termination remains enabled. An
+while automatic termination remains enabled. Read-only cleanup restarts its
+session automatically, including rapid hide/show and away/back transitions. An
 already-started authorized pass can finish; its outcome remains available on
 return. Queued scans and cleanup passes reread saved settings before starting,
 so later saved filters apply and disablement still prevents automatic termination.

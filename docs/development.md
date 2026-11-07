@@ -196,6 +196,8 @@ admission rechecks authorization as well as current saved settings.
 so navigation and window hiding revoke the monitor's lease synchronously rather
 than waiting for SwiftUI lifecycle callbacks. Hidden cleanup content is removed;
 returning to enabled cleanup restores the safe entry preview.
+Read-only cleanup keys its startup task by the visit token, so a coalesced
+hide/show or away/back still starts a fresh session without losing outer filters.
 Transient copy feedback and authorization requests carry a cleanup-visit token.
 Navigation and hiding rotate that token directly, so coalesced conditional-view
 updates cannot revive old feedback or dialogs. Confirmation callbacks also
@@ -203,6 +205,8 @@ check the current token and individual request identity before changing settings
 Presentation dismissal alone retains the payload for the native button action;
 Cancel and completed actions consume it, preventing replay or approval of a
 newer dialog.
+The process-inspection sheet observes resource updates only in its live header;
+six-second samples do not rebuild or re-sort its files/connections tables.
 The native
 history-process menu creates its choices on opening and releases them after
 closing instead of maintaining a SwiftUI view for every recorded process.

@@ -219,11 +219,15 @@ struct SystemStatusStrip: View {
     let navigate: (MainTab) -> Void
     @FocusState private var focusedPage: MainTab?
 
+#if KILLSWITCH_PERFORMANCE_PROBE
+    var performanceBatteryValue: String { batteryValue }
+#endif
+
     var body: some View {
         HStack(spacing: 10) {
             status(.system, value: monitor.hardware?.cpuName ?? "System details",
                    detail: monitor.hardware.map { "\($0.logicalCPUCount) logical cores / \(formatBytes($0.physicalMemoryBytes))" } ?? "CPU, hardware, and uptime")
-            status(.battery, value: batteryValue, detail: monitor.snapshot?.powerSource.rawValue ?? "Power source unavailable")
+            status(.battery, value: batteryValue, detail: monitor.snapshot?.powerSource.rawValue ?? "Collecting power information")
             status(.thermal, value: monitor.snapshot?.thermalState.rawValue ?? "N/A", detail: "macOS thermal pressure")
         }
         .systemHealthSampling(monitor)
@@ -257,7 +261,8 @@ struct SystemStatusStrip: View {
         switch monitor.snapshot?.battery {
         case .available(let reading): return reading.chargePercent.map { "Battery \($0)%" } ?? "Battery charge unavailable"
         case .absent: return "No internal battery"
-        case .unavailable, nil: return "Battery unavailable"
+        case .unavailable: return "Battery unavailable"
+        case nil: return "Collecting battery information"
         }
     }
 }

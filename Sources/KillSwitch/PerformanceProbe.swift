@@ -201,6 +201,7 @@ enum PerformanceProbe {
         healthPollingChecks(check)
         thermalPresentationChecks(check)
         healthObservationChecks(check)
+        processDetailObservationChecks(check)
         queuedInspectionChecks(check)
         filteredProjectWarningChecks(check)
         copyFeedbackChecks(check)
@@ -233,6 +234,7 @@ enum PerformanceProbe {
         cleanupEntryCancellationChecks(preferences: preferences, check)
         cleanupDialogCancellationChecks(preferences: preferences, check)
         queuedScanSettingsChecks(preferences: preferences, check)
+        cleanupVisitResumptionChecks(preferences: preferences, check)
         let firstVisit = UUID()
         let nextVisit = UUID()
         let copiedVisit = CleanupVisitValue(visit: firstVisit, value: Int32(100_995))
@@ -748,7 +750,11 @@ enum PerformanceProbe {
         }
         monitor.start(allowAutomaticTermination: false)
         monitor.performanceDrainWorkQueue()
-        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        let firstReadDeadline = Date().addingTimeInterval(2)
+        while monitor.lastRun == nil && Date() < firstReadDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        check(monitor.lastRun != nil, "The synthetic cleanup dialog must finish its initial read-only pass before testing reset.")
         controls.reset()
         guard let canceledReset = controls.confirmation() else {
             check(false, "A current reset must be able to request explicit confirmation.")
@@ -830,6 +836,79 @@ enum PerformanceProbe {
               "Queued port scans must use the latest saved ports, runtimes, indicators, and exclusions at admission.")
         check(terminations.withLock { $0 } == 0, "A read-only synthetic port scan must never terminate a process.")
         check(!timedOut.withLock { $0 }, "The queued settings scan must not time out.")
+    }
+
+    private static func cleanupVisitResumptionChecks(preferences: DevCleanupPreferences, _ check: (Bool, String) -> Void) {
+        let savedAutoKill = preferences.load().autoKillEnabled
+        defer { preferences.setAutoKillEnabled(savedAutoKill) }
+        preferences.setAutoKillEnabled(false)
+        let reads = OSAllocatedUnfairLock(initialState: 0)
+        let terminations = OSAllocatedUnfairLock(initialState: 0)
+        let service = DevCleanupService(
+            username: "synthetic-owner",
+            processProvider: {
+                reads.withLock { $0 += 1 }
+                return [DevCleanupProcess(
+                    pid: 100_995, user: "synthetic-owner", elapsedSeconds: 1_000_000,
+                    command: "/synthetic/node /synthetic/vite/bin/vite.js"
+                )]
+            },
+            listeningPortsProvider: { [100_995: [3_000]] },
+            terminator: { _ in terminations.withLock { $0 += 1 }; return false }
+        )
+        let monitor = DevCleanupMonitor(preferences: preferences, service: service)
+        defer { monitor.stop() }
+        var visit = UUID()
+        var observedMonitor: DevCleanupMonitor?
+        var search: Binding<String>?
+        let controller = NSHostingController(rootView: AnyView(EmptyView()))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        defer { window.contentViewController = nil; window.close() }
+        func render() {
+            var page = DevCleanupTab(
+                allowAutomaticTermination: .constant(false),
+                visitID: Binding(get: { visit }, set: { visit = $0 }),
+                entryPending: false, requestConfirmation: {}, showDevServers: {},
+                preferences: preferences, monitor: monitor
+            )
+            page.performanceObserveState = { model, query, _ in observedMonitor = model; search = query }
+            controller.rootView = AnyView(page.environment(\.allowsLiveOperations, true))
+            controller.view.layoutSubtreeIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            monitor.performanceDrainWorkQueue()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        render()
+        guard let search else {
+            check(false, "The synthetic read-only page must expose its retained search state.")
+            return
+        }
+        check(reads.withLock { $0 > 0 }, "The first read-only cleanup visit must start its mock session.")
+        search.wrappedValue = "synthetic retained query"
+        for transition in ["coalesced hide/show", "coalesced away/back"] {
+            let before = reads.withLock { $0 }
+            monitor.stop()
+            visit = UUID()
+            if transition == "coalesced away/back" { visit = UUID() }
+            render()
+            check(reads.withLock { $0 > before },
+                  "Read-only cleanup must restart after \(transition) even when its content never disappears.")
+            check(observedMonitor === monitor && search.wrappedValue == "synthetic retained query",
+                  "A new cleanup visit must retain its model and filters without retaining its canceled session.")
+            check(!monitor.cleanupConfiguration().autoKillEnabled,
+                  "Read-only resumption must not grant automatic termination.")
+        }
+        let beforeManualRefresh = reads.withLock { $0 }
+        monitor.refreshPorts()
+        monitor.runCleanup()
+        monitor.performanceDrainWorkQueue()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        check(reads.withLock { $0 } >= beforeManualRefresh + 2,
+              "A resumed read-only session must admit its manual scan and cleanup requests.")
+        check(terminations.withLock { $0 } == 0, "Read-only resumption must never invoke the synthetic terminator.")
     }
 
     private static func copyFeedbackChecks(_ check: (Bool, String) -> Void) {
@@ -945,6 +1024,9 @@ enum PerformanceProbe {
 
     private static func thermalPresentationChecks(_ check: (Bool, String) -> Void) {
         let health = SystemHealthMonitor()
+        let status = SystemStatusStrip(monitor: health, navigate: { _ in })
+        check(status.performanceBatteryValue == "Collecting battery information",
+              "The dashboard battery shortcut must report collection, not unavailability, before its first snapshot.")
         var observed = false
         var state: SystemThermalState? = .unavailable
         var page = SystemHealthTab(monitor: health, resources: ResourceMonitor(), page: .thermal)
@@ -961,6 +1043,10 @@ enum PerformanceProbe {
         health.publishPerformanceFixture()
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         check(state == .nominal, "Thermal UI must show the measured state after a successful synthetic read.")
+        if case .available(let battery) = health.snapshot?.battery, let percent = battery.chargePercent {
+            check(status.performanceBatteryValue == "Battery \(percent)%",
+                  "The dashboard battery shortcut must replace pending text with the measured charge.")
+        } else { check(false, "The synthetic battery shortcut fixture must have readable charge data.") }
         health.publishPerformanceFixture(thermalState: .unavailable)
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         check(state == .unavailable, "A completed unavailable thermal reading must remain distinct from pending data.")
@@ -1028,6 +1114,39 @@ enum PerformanceProbe {
         monitor.focusedProcess = nil
         showDashboard()
         check(selection.wrappedValue == nil, "Returning after coalesced process changes must not restore a stale scrubbed date.")
+    }
+
+    private static func processDetailObservationChecks(_ check: (Bool, String) -> Void) {
+        let resources = ResourceMonitor()
+        resources.showAllUsers = true
+        let date = Date()
+        resources.publishPerformanceSample(fixture(date: date, count: 1_000, step: 0))
+        guard let process = resources.liveActivity?.processes.first?.process else {
+            check(false, "The synthetic inspector must have a process lifetime.")
+            return
+        }
+        var renderCount = 0
+        var currentUpdates = 0
+        var current: ResourceProcess?
+        var page = ProcessDetailSheet(process: process, resourceMonitor: resources)
+        page.performanceObserveBody = { renderCount += 1 }
+        page.performanceObserveCurrent = { currentUpdates += 1; current = $0 }
+        let controller = NSHostingController(rootView: AnyView(page.environment(\.allowsLiveOperations, false)))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        defer { window.contentViewController = nil; window.close() }
+        controller.view.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        let initialRenders = renderCount
+        let initialUpdates = currentUpdates
+        resources.publishPerformanceSample(fixture(date: date.addingTimeInterval(6), count: 1_000, step: 1))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(initialRenders > 0 && renderCount == initialRenders,
+              "A resource tick must not rebuild the inspector's unrelated file/connection queries and tables.")
+        check(currentUpdates > initialUpdates && current?.identity == process.identity,
+              "The inspector's resource header must still receive current readings for the selected lifetime.")
     }
 
     private static func healthObservationChecks(_ check: (Bool, String) -> Void) {

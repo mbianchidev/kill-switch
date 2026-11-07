@@ -490,10 +490,9 @@ struct DevCleanupTab: View {
                 .padding(16)
             }
         }
-        .onAppear {
-            if allowsOperations && displayedVisit == visitID {
-                monitor.start(allowAutomaticTermination: allowAutomaticTermination)
-            }
+        .task(id: displayedVisit) {
+            guard allowsOperations, displayedVisit == visitID, !Task.isCancelled else { return }
+            monitor.start(allowAutomaticTermination: allowAutomaticTermination)
         }
         .onDisappear { if displayedVisit == visitID { monitor.stop() } }
     }
