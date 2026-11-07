@@ -174,6 +174,9 @@ Metric leases and window visibility are updated synchronously in one locked
 selection, rather than waiting behind already-queued samples. The native reader
 rechecks that selection before starting Energy or memory-pressure phases;
 continuous history sampling is not paused by hiding or minimizing.
+Energy rechecks that admission between its blocking power read, sleep-assertion
+read, and battery read. Revocation clears optional measurements and resets its
+refresh deadline without interrupting the continuous base sample.
 Application visibility also gates queued health and inspection work at the
 window delegate, before SwiftUI updates its view leases. Health retains its
 automatic deadline across hide/show; inspection and project discovery recheck

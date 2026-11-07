@@ -202,6 +202,7 @@ enum PerformanceProbe {
         monitor.setMetric(nil, owner: second)
         check(monitor.performanceEffectiveMetric == nil, "The active page must release its sampling lease.")
         queuedMetricVisibilityChecks(check)
+        energyPhaseAdmissionChecks(check)
         let energyDate = Date()
         for index in 0..<61 {
             monitor.publishPerformanceSample(fixture(
@@ -1026,6 +1027,50 @@ enum PerformanceProbe {
                   "Queued \(metric.rawValue) collection must see hidden-window state before sampling begins.")
             check(!timedOut.withLock { $0 }, "The controlled metric queue must not time out.")
         }
+    }
+
+    private static func energyPhaseAdmissionChecks(_ check: (Bool, String) -> Void) {
+        let battery = BatteryResourceSummary(source: "Synthetic power", chargePercent: 80, status: "Synthetic", timeRemaining: nil)
+        for revokedAfter in ["power", "sleep assertions"] {
+            let sampler = ResourceSampler()
+            var allowed = true
+            var phases: [String] = []
+            let sampled = sampler.performanceCollectEnergy(
+                allowsCollection: { allowed },
+                readPower: {
+                    phases.append("power")
+                    if revokedAfter == "power" { allowed = false }
+                    return [100_000: 1]
+                },
+                readSleepAssertions: {
+                    phases.append("sleep assertions")
+                    if revokedAfter == "sleep assertions" { allowed = false }
+                    return []
+                },
+                readBattery: { phases.append("battery"); return battery }
+            )
+            let expected = revokedAfter == "power" ? ["power"] : ["power", "sleep assertions"]
+            check(phases == expected, "Revoking Energy during \(revokedAfter) must not admit later collectors.")
+            check(!sampled, "Revoked Energy must not publish a completed optional sample.")
+        }
+        let sampler = ResourceSampler()
+        var phases: [String] = []
+        let sampled = sampler.performanceCollectEnergy(
+            allowsCollection: { true },
+            readPower: { phases.append("power"); return [100_000: 1] },
+            readSleepAssertions: { phases.append("sleep assertions"); return [] },
+            readBattery: { phases.append("battery"); return battery }
+        )
+        check(sampled && phases == ["power", "sleep assertions", "battery"],
+              "An admitted Energy sample must retain all three collector phases.")
+        phases = []
+        let canceled = sampler.performanceCollectEnergy(
+            allowsCollection: { false },
+            readPower: { phases.append("power"); return [:] },
+            readSleepAssertions: { phases.append("sleep assertions"); return [] },
+            readBattery: { phases.append("battery"); return battery }
+        )
+        check(!canceled && phases.isEmpty, "Already-revoked Energy must not invoke any collector.")
     }
 
     private static func resetAuthorizationChecks(preferences: DevCleanupPreferences, _ check: (Bool, String) -> Void) {

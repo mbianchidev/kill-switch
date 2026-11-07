@@ -104,24 +104,10 @@ final class ResourceSampler {
         let collectsEnergy = policy.usesTop && allowsOptionalMetric(.energy)
         if collectsEnergy && (lastEnergyDate.map { now.timeIntervalSince($0) >= Double(policy.intervalSeconds) } ?? true) {
             lastEnergyDate = now
-            do {
-                energy.updatePower(try samplePower(), identities: identities)
-                sampledEnergy = true
-            } catch {
-                energy.failPower(error.localizedDescription)
-            }
-            do {
-                energy.updateSleepAssertions(try samplePreventingSleepPIDs(), identities: identities)
-            } catch {
-                energy.failSleepAssertions(error.localizedDescription)
-            }
-            do {
-                cachedBattery = try sampleBattery()
-                batteryWarning = nil
-            } catch {
-                cachedBattery = .unavailable
-                batteryWarning = "Power source: \(error.localizedDescription) Open Energy and refresh to retry."
-            }
+            sampledEnergy = collectEnergy(
+                allowsCollection: { allowsOptionalMetric(.energy) },
+                readPower: samplePower, readSleepAssertions: samplePreventingSleepPIDs, readBattery: sampleBattery
+            )
         } else if !collectsEnergy {
             energy.clearMeasurements()
             lastEnergyDate = nil
@@ -260,6 +246,53 @@ final class ResourceSampler {
             warnings: warnings
         )
     }
+
+    private func collectEnergy(
+        allowsCollection: () -> Bool, readPower: () throws -> [Int32: Double],
+        readSleepAssertions: () throws -> Set<Int32>, readBattery: () throws -> BatteryResourceSummary
+    ) -> Bool {
+        defer {
+            if !allowsCollection() {
+                energy.clearMeasurements()
+                lastEnergyDate = nil
+            }
+        }
+        guard allowsCollection() else { return false }
+        var sampled = false
+        do {
+            energy.updatePower(try readPower(), identities: identities)
+            sampled = true
+        } catch {
+            energy.failPower(error.localizedDescription)
+        }
+        guard allowsCollection() else { return false }
+        do {
+            energy.updateSleepAssertions(try readSleepAssertions(), identities: identities)
+        } catch {
+            energy.failSleepAssertions(error.localizedDescription)
+        }
+        guard allowsCollection() else { return false }
+        do {
+            cachedBattery = try readBattery()
+            batteryWarning = nil
+        } catch {
+            cachedBattery = .unavailable
+            batteryWarning = "Power source: \(error.localizedDescription) Open Energy and refresh to retry."
+        }
+        return sampled && allowsCollection()
+    }
+
+#if KILLSWITCH_PERFORMANCE_PROBE
+    func performanceCollectEnergy(
+        allowsCollection: () -> Bool, readPower: () throws -> [Int32: Double],
+        readSleepAssertions: () throws -> Set<Int32>, readBattery: () throws -> BatteryResourceSummary
+    ) -> Bool {
+        collectEnergy(
+            allowsCollection: allowsCollection, readPower: readPower,
+            readSleepAssertions: readSleepAssertions, readBattery: readBattery
+        )
+    }
+#endif
 
     private func samplePSProcesses() throws -> [ParsedPSProcess] {
         let result = try CommandRunner.run(
