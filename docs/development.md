@@ -415,6 +415,13 @@ dist/KillSwitch.sha256
 dist/KillSwitch.tar.gz
 ```
 
+`scripts/make-app-icon.swift` draws the letter-free split-bolt/open-circuit mark
+with built-in Core Graphics. Packaging includes all ten native PNG variants
+(16-1024 pixels) in `AppIcon.icns`, with transparent margins and no font or
+third-party asset dependency. Package checks decode and verify every size. The
+menu-bar icon remains a monochrome system-symbol template; icon artwork adds no
+recurring sampling or drawing work to the app.
+
 CI and releases use `bash scripts/package-macos.sh --universal-build` to build
 both architectures together in one SwiftPM build graph per product, with the
 worker count set to the logical CPU count. This mode explicitly selects the

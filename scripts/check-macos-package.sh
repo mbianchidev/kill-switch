@@ -40,6 +40,8 @@ plutil -lint "$PLIST"
   || die "Incorrect app bundle identifier."
 [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$PLIST")" = "KillSwitch" ] \
   || die "Incorrect app executable."
+[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$PLIST")" = "AppIcon" ] \
+  || die "Incorrect app icon resource."
 [ "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$PLIST")" = "13.0" ] \
   || die "Incorrect minimum macOS version."
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :KillSwitchVersion' "$PLIST")"
@@ -57,6 +59,19 @@ fi
 grep -Fq 'xattr -dr com.apple.quarantine /Applications/KillSwitch.app' "$MOUNT/Install.txt" \
   || die "Missing quarantine removal instructions."
 iconutil --convert iconset --output "$STAGE/AppIcon.iconset" "$APP/Contents/Resources/AppIcon.icns"
+for POINTS in 16 32 128 256 512; do
+  for SCALE in 1 2; do
+    ICON="$STAGE/AppIcon.iconset/icon_${POINTS}x${POINTS}.png"
+    [ "$SCALE" -eq 1 ] || ICON="$STAGE/AppIcon.iconset/icon_${POINTS}x${POINTS}@2x.png"
+    [ -f "$ICON" ] || die "Missing app icon size: $ICON."
+    PIXELS=$((POINTS * SCALE))
+    DIMENSIONS="$(sips -g pixelWidth -g pixelHeight "$ICON" | awk '/pixelWidth|pixelHeight/ {print $2}')"
+    [ "$DIMENSIONS" = "$(printf '%s\n%s' "$PIXELS" "$PIXELS")" ] \
+      || die "Incorrect app icon dimensions: $ICON."
+    [ "$(sips -g hasAlpha "$ICON" | awk '/hasAlpha/ {print $2}')" = "yes" ] \
+      || die "App icon requires an alpha channel: $ICON."
+  done
+done
 codesign --verify --deep --strict "$APP"
 codesign --verify --strict "$DIST/KillSwitch"
 HELPER="$APP/Contents/Helpers/KillSwitchUpdateHelper"
