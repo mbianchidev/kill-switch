@@ -12,13 +12,14 @@ complete setup, configuration, and development instructions.
 | [Usage and configuration](usage.md) | Menu-bar behavior, every tab, editable defaults, persistence, and cleanup safety |
 | [Sorting and filtering](table-controls.md) | Two-way column sorting, resettable filters, predefined values, and search comparisons |
 | [Headless CLI and Porto integration](cli.md) | CLI setup, commands, JSON examples, port syncing, and exit codes |
-| [Resources and system diagnostics](system-diagnostics.md) | Resource counters, sampling, macOS restrictions, spindump, and sysdiagnose |
+| [Resources and system diagnostics](system-diagnostics.md) | Resource/system-health counters, process inspection, sampling, macOS restrictions, spindump, and sysdiagnose |
 | [Startup management](startup.md) | Login apps, background items, launch services, cron jobs, authorization, and backups |
 | [Updates](auto-update.md#using-updates) | Update controls, app/standalone behavior, validation, and recovery |
 | [Troubleshooting](troubleshooting.md) | Opening an unnotarized app, permissions, duplicate installs, CLI issues, and SDK errors |
 
 **Before using Dev cleanup:** automatic termination starts enabled for qualifying
-servers older than 12 hours. Opening the tab runs a cleanup immediately. Review
+servers older than 12 hours. Confirming entry to the page runs a cleanup immediately.
+The separate Dev servers page is read-only. Review
 the [safety notes](usage.md#safety-and-limitations); process age is not inactivity.
 
 ## For developers

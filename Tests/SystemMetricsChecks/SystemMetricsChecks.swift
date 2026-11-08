@@ -21,9 +21,11 @@ struct SystemMetricsChecks {
             checkCPUCalculations()
             checkDiskCapacityCalculations()
             checkSamplingPolicies()
+            checkSystemHealth()
             checkResourceChartScales()
             checkActivityHistory()
             checkProcessInspection()
+            checkDeveloperListeners()
         }
 
         if failures.isEmpty {
@@ -355,7 +357,7 @@ struct SystemMetricsChecks {
         }
     }
 
-    private static func approximately(_ lhs: Double, _ rhs: Double, tolerance: Double = 0.001) -> Bool {
+    static func approximately(_ lhs: Double, _ rhs: Double, tolerance: Double = 0.001) -> Bool {
         abs(lhs - rhs) < tolerance
     }
 }

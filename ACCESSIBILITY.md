@@ -52,13 +52,16 @@ user data just to test an interface.
 
 ## Known limitations
 
-- The window has a minimum size of **1000 x 650**, which can constrain smaller
+- The window has a minimum size of **900 x 650**, which can constrain smaller
   usable desktops and enlarged content.
 - The custom dark/translucent theme, graphs, dense tables, and icon-only process
   controls require manual contrast, keyboard, and VoiceOver review.
-- Some views expose explicit accessibility labels and reduced-motion behavior,
-  but there is no automated accessibility UI suite or repository-wide audit
-  establishing complete coverage.
+- Native sidebar navigation, process-inspection buttons, textual thermal
+  states, responsive charts, and visible card focus indicators improve the
+  relevant workflows. Offscreen synthetic checks cover lazy page creation,
+  retained state, and sampling visibility, not the complete accessibility tree
+  or keyboard/VoiceOver interaction. No repository-wide audit establishes
+  complete coverage.
 
 No manual VoiceOver, contrast, or keyboard audit is implied by adding this guide.
 

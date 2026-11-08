@@ -6,7 +6,7 @@ KillSwitch runs three GitHub Actions workflows:
 
 | Workflow | File | Trigger | Purpose |
 | --- | --- | --- | --- |
-| CI | [`ci.yml`](../.github/workflows/ci.yml) | push / PR to `main` | Five core-check executables, universal app/DMG packaging, package verification, and DMG artifact upload |
+| CI | [`ci.yml`](../.github/workflows/ci.yml) | push / PR to `main` | Six core-check executables, isolated native UI-state checks, universal app/DMG packaging, package verification, and DMG artifact upload |
 | Release | [`release.yml`](../.github/workflows/release.yml) | push to `main` | Auto-semver release with universal DMG, standalone binary, tarball, and checksums (see [auto-update.md](auto-update.md)) |
 | CodeQL | [`codeql.yml`](../.github/workflows/codeql.yml) | push / PR to `main`, weekly | Static analysis for `swift` and `actions` |
 
@@ -17,9 +17,18 @@ universal packaging. Different PRs and individual pushes to `main` use separate
 concurrency groups, so they do not cancel one another. The release workflow
 retains its separate, non-canceling publication group.
 
-CI still runs all five core checks and package verification for draft and ready
+CI still runs all six core checks and package verification for draft and ready
 PRs and pushes to `main`. The DMG artifact disables upload compression because
 the packaging script already creates a compressed UDZO disk image.
+
+System-metric checks use an optimized release executable and include two
+simulated hours of 5,000 processes under the existing 256 MiB peak-RSS budget.
+The isolated interface probe checks lazy page creation, retained SwiftUI state,
+cleanup-entry confirmation, metric leases, and hidden-window behavior without
+ordering a desktop window or running real cleanup. Its separate build directory
+and compile-time entry point cannot replace the production app or package.
+These deterministic checks do not claim to benchmark hosted-runner GUI CPU
+usage or satisfy the full recurring live-collector baseline in issue #37.
 
 ## CodeQL
 

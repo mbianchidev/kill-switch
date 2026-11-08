@@ -27,8 +27,26 @@ The watchdog, screen-time monitor, and CPU/memory/disk/network sampling continue
 with the window hidden and while using other tabs. Quitting flushes the current
 history bucket. Energy details run only while their resource view is selected;
 connection/open-file inspection runs only while its panel is visible.
-The Dev cleanup tab starts its timers on appearance and stops them on
-disappearance; opening it runs an immediate cleanup.
+Confirmed Dev cleanup runs immediately and keeps its cleanup timer active while
+that page is selected, including hidden or minimized windows. Leaving the page
+stops future passes. Its safe entry preview never starts cleanup or its timers.
+
+## Navigation
+
+The grouped native sidebar keeps monitoring, investigation, management, and
+personal utilities separate. CPU, Memory, Disk activity, Network traffic, and
+Energy have individual pages. Visited pages retain their filters and sorting;
+unvisited pages are not instantiated. The dashboard's resource headings and
+system, battery, and thermal cards also open their corresponding pages.
+
+KillSwitch intentionally has one main window, matching its single menu-bar
+utility and shared resource selection. It does not expose a second independent
+window with conflicting collection visibility.
+
+The window supports a 900 x 650 minimum. Charts become a single column in narrow
+detail areas, history controls wrap, and wide data tables remain horizontally
+scrollable. Closing or fully obscuring the window pauses optional health and
+inspection work, not the continuous resource history or watchdog.
 
 ## Dashboard
 
@@ -41,6 +59,11 @@ Choose **Live · 5m**, **1 hour**, **6 hours**, or **24 hours**. Drag across a c
 or use the keyboard-accessible time slider to inspect the nearest measured
 sample across all four graphs. **Live** returns to current readings. These
 history selections are shared with the individual resource views.
+
+The cards above the graphs show public system, battery, and thermal information.
+**Inspect** beside a live process opens its files and connections without
+terminating it. **Show resource history** in the inspector returns to this page
+with the same process lifetime selected.
 
 Sampling runs every six seconds while KillSwitch is running. One-minute
 averages persist locally for up to 24 hours, across app restarts; gaps during sleep,
@@ -74,8 +97,8 @@ starting separate recordings. Their summary cards remain labelled **Entire Mac**
 Memory history shows bytes used; the current memory-pressure counter remains
 available in the summary.
 
-Within **Network**, switch between **Connections** and **Traffic by process**.
-Connections includes TCP listeners, active connections, bound UDP sockets, and
+**Network traffic** includes an **Inspect connections** shortcut to the dedicated
+**Connections** page. Connections includes TCP listeners, active connections, bound UDP sockets, and
 Unix sockets visible to this account. Search addresses/ports, process, PID,
 or owner; use comparisons such as `protocol = TCP state = LISTEN` for protocol
 and state. Filter listeners/active connections and sort in either direction.
@@ -87,9 +110,9 @@ Manual kill buttons follow the [termination safety rules](#safety-and-limitation
 
 ## Open files
 
-Use the dedicated **Open files** tab beside Resources to inspect accessible file
-descriptors. This is the only open-files entry point; Resources retains resource
-usage and network connections. **My processes** is the default, and the scope
+Use the dedicated **Open files** page under **Investigate** to inspect accessible
+file descriptors. Per-process **Inspect** buttons also expose files and
+connections for one verified process lifetime. **My processes** is the default, and the scope
 picker is shared with Dashboard and Resources.
 
 The table includes path, process, PID, owner, access mode, type, size, and
@@ -100,6 +123,71 @@ field does not prove there is no lock.
 Inspection refreshes every ten seconds while this tab is visible and stops when
 you switch tabs. It does not close files or terminate processes. See the
 [inspection limitations](system-diagnostics.md#connections-and-open-files).
+
+## Process investigation
+
+Use **Inspect** from Dashboard, a resource page, Connections, Open files, or Dev
+servers. The sheet shows current resource readings for the exact selected
+lifetime, with separate searchable/sortable files and connections. Its `lsof`
+query selects that PID and verifies the lifetime before and after the read.
+Reused PIDs, verified exits, and unavailable identity reads are reported
+explicitly; unavailable reads do not claim that a process exited.
+
+The sheet is read-only. Switching between files and connections reuses one
+collection, and hiding it releases inspection snapshots and stops its timer.
+**Done** or Escape closes it. **Show resource history** selects that lifetime
+on the dashboard when its history remains available.
+
+## Dev servers
+
+This separate page is safe to open for discovery: it never starts Dev cleanup,
+terminates a process, or changes a service. It shows visible TCP listeners
+grouped by the nearest Git project, a recognized project manifest, or working
+directory. Search listener fields and numeric ports, or independently find
+project names, paths, and branches.
+
+Project-warning banners follow the visible listener and project filters;
+affected visible rows show their specific reason. Errors remain retained for
+filtered-out listeners and reappear when those rows are shown.
+
+**Copy address**, **Reveal folder**, **Open HTTP**, and **Inspect** are explicit
+actions. Not every TCP listener is an HTTP server. Wildcard listeners use a
+loopback HTTP address; malformed or non-IP endpoints do not become browser
+URLs. Project discovery reads native working-directory information and bounded
+Git metadata, including worktree `gitdir` pointers, without invoking git,
+Docker, or a shell. Only Git's CR/LF line terminators are discarded; whitespace
+in directory paths and valid branch names is preserved. Missing metadata is
+explained; a verified working directory can still be shown when branch discovery
+fails.
+
+Listeners refresh every ten seconds only while visible. Project context is
+cached by process lifetime for at most thirty seconds and released when hidden.
+Changing the system clock does not prolong or shorten this cache.
+All-process scope does not grant extra privileges. Project paths and branch
+names are not added to persistent activity history.
+
+## System, Battery, and Thermal
+
+**System** shows the CPU model/architecture, physical/logical core counts,
+physical memory, macOS/kernel version, awake time since restart, load averages, and shared CPU
+usage. Global CPU remains 0-100% across the Mac; a process's 100% represents
+one logical core. Load averages are runnable/waiting work, not percentages.
+Awake time since restart is `ProcessInfo.systemUptime` and excludes sleep; it
+is not presented as total elapsed time since boot.
+
+**Battery** shows charge, charging state, power source, reported condition,
+cycle count, applicable time estimates, and Low Power Mode when macOS exposes
+them. A desktop's verified lack of an internal battery is distinct from a
+failed read or an attached UPS. Missing counters remain N/A.
+
+**Thermal** shows macOS's Normal, Warm, High, or Critical thermal-pressure
+assessment with a textual explanation. These states are not temperatures;
+KillSwitch does not invent sensor readings or fan speeds.
+
+One shared health monitor uses supported public interfaces at most every thirty
+seconds while one of these pages or Dashboard is visible. No privileged helper,
+serial number, hardware UUID, temperature sensor, or additional background
+recording is involved. Health details are live, not persisted.
 
 ## Startup
 
@@ -142,11 +230,44 @@ and recovery.
 
 ## Dev cleanup
 
-**Auto-kill is enabled by default.** Opening the tab immediately runs a cleanup,
+**Auto-kill is enabled by default.** Selecting the sidebar page first shows a
+safe preview while automatic termination is enabled. **Open Dev cleanup**
+explicitly asks for confirmation; confirming immediately runs a cleanup,
 which can terminate qualifying servers older than the saved age. Age is total
 process lifetime, not inactivity; a busy server can qualify.
-If you cannot risk that first cleanup pass, do not open the tab. The CLI
+Use **Dev servers** for read-only discovery. If you cannot risk that first
+cleanup pass, cancel the entry confirmation. The CLI
 [status command](cli.md#read-saved-status) reads settings without running cleanup.
+
+Canceling leaves the safe preview shown; it does not reset sidebar selection or
+reopen the modal when navigating with arrow keys. Other pages remain reachable
+without authorizing cleanup.
+The preview retains cleanup filters and prior session results. After confirming
+entry, automatic cleanup keeps running at the saved interval while **Dev cleanup
+is selected**, including hidden, minimized, or fully covered windows. Showing the
+window again does not require another confirmation or restart the cleanup
+deadline. Foreground port polling pauses while hidden and refreshes on return.
+
+Leaving this page revokes execution authorization and cancels not-yet-started
+passes; returning then requires fresh confirmation while auto-kill is enabled.
+Disabling auto-kill revokes termination permission immediately. Hidden read-only
+cleanup stops its timers and resumes on return, including rapid visibility and
+navigation changes. Sleep and quitting stop execution; this feature does not
+keep the Mac awake.
+An already-started authorized pass can finish; its outcome remains available on
+return. Queued scans and cleanup passes reread saved settings before starting,
+so later saved filters apply and disablement still prevents automatic termination.
+Entry, reset, and enable confirmations belong to both their UI visit and
+individual request. Hiding still invalidates pending dialogs and stale UI
+callbacks without revoking an already-confirmed background session. Canceling
+or replacing a dialog invalidates its old callback without canceling a newer
+request.
+
+Each entry reloads saved settings without writing a retained monitor's stale
+values back to preferences. Automatic cleanup requires both current saved
+enablement and authorization for this visit (confirmation, or an explicit
+Auto-kill switch action). A read-only entry cannot inherit later external
+enablement, and saved disablement blocks the ensuing cleanup pass.
 
 The table shows PID, command, and port for watched listeners and recognized dev
 servers, with manual kill buttons. Automatic cleanup requires current-user
@@ -171,9 +292,13 @@ launches:
 | Protected substrings | Listed below | Editable automatic-cleanup exclusions |
 
 **Run cleanup now** uses the saved auto-kill and age settings and displays
-candidate and termination counts. **Reset to defaults** re-enables auto-kill,
-restores all values, clears synced integration ports, and immediately runs
-cleanup. Integration ports remain cleared until that integration syncs again.
+candidate and termination counts. **Reset to defaults** first asks for explicit
+confirmation. Confirming **Reset and enable auto-kill** restores all values,
+clears synced integration ports, re-enables automatic termination, and
+immediately runs cleanup. Canceling changes nothing. Re-enabling the auto-kill
+switch also requires confirmation; disabling it takes effect immediately.
+Changing settings alone never authorizes a read-only visit to terminate
+processes. Integration ports remain cleared until that integration syncs again.
 
 ### Developer cleanup defaults
 

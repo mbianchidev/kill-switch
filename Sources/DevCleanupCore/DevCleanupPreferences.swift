@@ -62,8 +62,12 @@ public struct DevCleanupSettings: Equatable {
     }
 
     public var configuration: DevCleanupConfiguration {
+        configuration(allowAutomaticTermination: true)
+    }
+
+    public func configuration(allowAutomaticTermination: Bool) -> DevCleanupConfiguration {
         DevCleanupConfiguration(
-            autoKillEnabled: autoKillEnabled,
+            autoKillEnabled: autoKillEnabled && allowAutomaticTermination,
             ageThresholdSeconds: ageThresholdHours * 3600,
             effectivePorts: effectivePorts,
             runtimes: runtimes,

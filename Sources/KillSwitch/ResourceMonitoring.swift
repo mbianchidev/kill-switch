@@ -13,8 +13,6 @@ enum ResourceTableFields {
     static let threads = TableField<ResourceProcess>.number("threads", title: "Threads") { $0.threads.map { Decimal($0) } }
     static let wakeups = TableField<ResourceProcess>.number("wakeups", title: "Idle Wake Ups", aliases: ["idleWakeUps"]) { $0.idleWakeUps.map(Decimal.init) }
     static let kind = TableField<ResourceProcess>.text("kind", title: "Kind", aliases: ["architecture", "type"], values: ["Apple", "Intel"], searchable: false) { $0.kind }
-    static let gpu = TableField<ResourceProcess>.number("gpu", title: "% GPU", aliases: ["GPU%"], unit: .percent) { $0.gpu }
-    static let gpuTime = TableField<ResourceProcess>.number("gpuTime", title: "GPU Time", unit: .seconds) { $0.gpuTimeSeconds }
     static let memory = TableField<ResourceProcess>.number("memory", title: "Memory", aliases: ["mem"], unit: .bytes) { Decimal($0.memoryBytes) }
     static let openFiles = TableField<ResourceProcess>.number("openFiles", title: "Open Files", aliases: ["files"]) { $0.openFileCount.map { Decimal($0) } }
     static let energy = TableField<ResourceProcess>.number("energy", title: "Energy Impact", aliases: ["power"]) { $0.power }
@@ -30,14 +28,14 @@ enum ResourceTableFields {
     static let pid = TableField<ResourceProcess>.number("pid", title: "PID", searchable: true) { Decimal($0.pid) }
     static let user = TableField<ResourceProcess>.text("user", title: "User", aliases: ["owner"]) { $0.user }
     static let all = [
-        name, cpu, cpuTime, threads, wakeups, kind, gpu, gpuTime, memory, openFiles, energy, power12Hour,
+        name, cpu, cpuTime, threads, wakeups, kind, memory, openFiles, energy, power12Hour,
         appNap, preventsSleep, diskWritten, diskRead, networkSent, networkReceived, sentPackets, receivedPackets, pid, user
     ]
 
     static func columns(for metric: ResourceMetric) -> [TableField<ResourceProcess>] {
         let metrics: [TableField<ResourceProcess>]
         switch metric {
-        case .cpu: metrics = [cpu, cpuTime, threads, wakeups, kind, gpu, gpuTime]
+        case .cpu: metrics = [cpu, cpuTime, threads, wakeups, kind]
         case .memory: metrics = [memory, threads, openFiles]
         case .energy: metrics = [energy, power12Hour, appNap, preventsSleep]
         case .disk: metrics = [diskWritten, diskRead]
@@ -67,8 +65,6 @@ struct ResourceProcess: Identifiable {
     let threads: Int?
     let idleWakeUps: UInt64?
     let kind: String?
-    let gpu: Double?
-    let gpuTimeSeconds: Double?
     let memoryBytes: UInt64
     let openFileCount: Int?
     let power: Double?
@@ -221,11 +217,18 @@ final class ResourceMonitor: ObservableObject {
     @Published private(set) var historyProcesses: [ActivityProcessDescriptor] = []
     @Published private(set) var liveActivity: ActivitySnapshot?
     @Published var showAllUsers = false
+    @Published private(set) var historySelectionID = UUID()
     @Published var historyRange: ActivityHistoryRange = .live {
-        didSet { reloadHistory() }
+        didSet {
+            if historyRange != oldValue { historySelectionID = UUID() }
+            reloadHistory()
+        }
     }
     @Published var focusedProcess: ActivityProcessIdentity? {
-        didSet { reloadHistory() }
+        didSet {
+            if focusedProcess != oldValue { historySelectionID = UUID() }
+            reloadHistory()
+        }
     }
 
     let currentUsername = NSUserName()
@@ -241,7 +244,14 @@ final class ResourceMonitor: ObservableObject {
     )
     private let logger = Logger(subsystem: "com.killswitch.app", category: "resources")
     private var timer: DispatchSourceTimer?
-    private var activeMetric: ResourceMetric?
+    private struct MetricSelection: Sendable {
+        var metric: ResourceMetric?
+        var owner: UUID?
+        var windowVisible = true
+        var effectiveMetric: ResourceMetric? { windowVisible ? metric : nil }
+    }
+    private let metricSelection = OSAllocatedUnfairLock(initialState: MetricSelection())
+    private var effectiveMetric: ResourceMetric? { metricSelection.withLock { $0.effectiveMetric } }
     private var energyHistory: [ResourceProcessIdentity: [EnergySample]] = [:]
     private var lastEnergyHistorySample: Date?
     private var running = false
@@ -253,6 +263,41 @@ final class ResourceMonitor: ObservableObject {
     private var processCatalog = ActivityProcessCatalog()
     private var selectedRange: ActivityHistoryRange = .live
     private var selectedProcess: ActivityProcessIdentity?
+
+    private func publishBattery(_ reading: BatteryResourceSummary?) {
+        battery = reading ?? .unavailable
+    }
+
+#if KILLSWITCH_PERFORMANCE_PROBE
+    var performanceEffectiveMetric: ResourceMetric? {
+        samplingQueue.sync { effectiveMetric }
+    }
+
+    func performanceEnqueue(_ work: @escaping @Sendable () -> Void) { samplingQueue.async(execute: work) }
+    func performanceReadQueuedMetric(_ read: @escaping @Sendable (ResourceMetric?) -> Void) {
+        samplingQueue.async { read(self.effectiveMetric) }
+    }
+
+    func publishPerformanceSample(_ snapshot: ResourceSnapshot) {
+        let activity = activitySnapshot(snapshot)
+        liveHistory.append(activity)
+        processes = snapshot.processes
+        cpu = snapshot.cpu
+        memory = snapshot.memory
+        disk = snapshot.disk
+        network = snapshot.network ?? .unavailable
+        publishBattery(snapshot.battery)
+        liveActivity = activity
+        timeline = liveHistory.snapshots.map { $0.point(for: focusedProcess) }
+        historyProcesses = activity.processes.map(\.process)
+        if snapshot.sampledEnergy, let power = ProcessEnergyCache.totalPower(snapshot.processes.map(\.power)) {
+            history[.energy, default: []].append(ResourceHistoryPoint(date: snapshot.date, primary: power, secondary: nil))
+            history[.energy]?.removeAll { snapshot.date.timeIntervalSince($0.date) > 300 }
+        }
+        lastUpdated = snapshot.date
+        errorMessage = snapshot.warnings.isEmpty ? nil : snapshot.warnings.joined(separator: "\n")
+    }
+#endif
 
     func start() {
         samplingQueue.async { [weak self] in
@@ -285,11 +330,16 @@ final class ResourceMonitor: ObservableObject {
         }
     }
 
-    func setMetric(_ metric: ResourceMetric?) {
-        samplingQueue.async { [weak self] in
-            guard let self, self.activeMetric != metric else { return }
-            self.activeMetric = metric
+    func setMetric(_ metric: ResourceMetric?, owner: UUID) {
+        metricSelection.withLock { state in
+            if metric == nil, state.owner != owner { return }
+            state.metric = metric
+            state.owner = metric == nil ? nil : owner
         }
+    }
+
+    func setWindowVisible(_ visible: Bool) {
+        metricSelection.withLock { $0.windowVisible = visible }
     }
 
     func clearHistory() {
@@ -344,13 +394,19 @@ final class ResourceMonitor: ObservableObject {
 
     private func sampleNow() {
         guard running else { return }
-        let metric = activeMetric
+        let metric = effectiveMetric
+        let metricSelection = metricSelection
 
         do {
             let trackedPIDs = Set(
                 processCatalog.records.values.filter { $0.terminatedAt == nil }.map { $0.process.id.pid }
             )
-            let snapshot = try sampler.sample(metric: metric, trackedPIDs: trackedPIDs)
+            let snapshot = try sampler.sample(
+                metric: metric, trackedPIDs: trackedPIDs,
+                allowsOptionalMetric: { requested in
+                    metricSelection.withLock { $0.effectiveMetric == requested }
+                }
+            )
             var sampledProcesses = snapshot.processes
             if snapshot.sampledEnergy {
                 updateEnergyHistory(processes: sampledProcesses, now: snapshot.date)
@@ -384,9 +440,7 @@ final class ResourceMonitor: ObservableObject {
                 self.memory = snapshot.memory
                 self.disk = snapshot.disk
                 self.network = snapshot.network ?? .unavailable
-                if let battery = snapshot.battery {
-                    self.battery = battery
-                }
+                self.publishBattery(snapshot.battery)
                 if snapshot.sampledEnergy, let total = ProcessEnergyCache.totalPower(sampledProcesses.map(\.power)) {
                     self.history[.energy, default: []].append(ResourceHistoryPoint(
                         date: snapshot.date,

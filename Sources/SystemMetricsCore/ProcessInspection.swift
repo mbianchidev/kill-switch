@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import TableQueryCore
 
@@ -58,6 +59,30 @@ public struct NetworkConnectionRecord: Identifiable, Equatable, Sendable {
     public var localPort: UInt16? { port(in: local) }
     public var remotePort: UInt16? { port(in: remote) }
 
+    public var browserURL: URL? {
+        guard isListening, protocolName == "TCP", let port = localPort, port > 0,
+              let separator = local.lastIndex(of: ":") else { return nil }
+        var host = String(local[..<separator])
+        if host.hasPrefix("[") && host.hasSuffix("]") { host = String(host.dropFirst().dropLast()) }
+        switch family {
+        case "IPv4":
+            if host == "*" || host == "0.0.0.0" { host = "127.0.0.1" }
+            var address = in_addr()
+            guard host.withCString({ inet_pton(AF_INET, $0, &address) }) == 1 else { return nil }
+        case "IPv6":
+            if host == "*" || host == "::" { host = "::1" }
+            var address = in6_addr()
+            guard host.withCString({ inet_pton(AF_INET6, $0, &address) }) == 1 else { return nil }
+            host = "[\(host)]"
+        default: return nil
+        }
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = host
+        components.port = Int(port)
+        return components.url
+    }
+
     private func port(in endpoint: String?) -> UInt16? {
         guard family != "unix", let last = endpoint?.split(separator: ":").last else { return nil }
         return UInt16(last)
@@ -67,15 +92,42 @@ public struct NetworkConnectionRecord: Identifiable, Equatable, Sendable {
 public struct ProcessInspectionSnapshot: Sendable {
     public let files: [OpenFileRecord]
     public let connections: [NetworkConnectionRecord]
+    public let diagnostics: [Int32: [String]]
+}
+
+public struct ProcessInspectionError: LocalizedError {
+    public let message: String
+    public init(message: String) { self.message = message }
+    public var errorDescription: String? { message }
 }
 
 public enum ProcessInspectionParser {
     public static let lsofFields = "-F0pcuLfaltDinsPT"
     public static let lsofArguments = ["-nP", "-S", "2", "+c", "0", lsofFields]
 
+    public static func arguments(
+        pid: Int32? = nil, connectionsOnly: Bool = false, listenersOnly: Bool = false
+    ) throws -> [String] {
+        if let pid {
+            guard pid > 0 else { throw ProcessInspectionError(message: "A positive process ID is required.") }
+            return lsofArguments + ["-a", "-p", String(pid)]
+        }
+        if listenersOnly { return lsofArguments + ["-iTCP", "-sTCP:LISTEN"] }
+        return lsofArguments + (connectionsOnly ? ["-i", "-U"] : [])
+    }
+
+    public static func validateTarget(_ snapshot: ProcessInspectionSnapshot, pid: Int32) throws {
+        guard snapshot.files.contains(where: { $0.pid == pid }) || snapshot.connections.contains(where: { $0.pid == pid }) else {
+            let detail = snapshot.diagnostics[pid]?.joined(separator: "\n")
+            throw ProcessInspectionError(message: "macOS did not expose files or connections for this process. Inspection data is unavailable; its lifetime is still present."
+                + (detail.map { "\n\($0)" } ?? ""))
+        }
+    }
+
     public static func parseLsof(_ data: Data) -> ProcessInspectionSnapshot {
         var files: [OpenFileRecord] = []
         var connections: [NetworkConnectionRecord] = []
+        var diagnostics: [Int32: [String]] = [:]
         var pid: Int32?
         var process = ""
         var userID: UInt32?
@@ -86,6 +138,11 @@ public enum ProcessInspectionParser {
         func finishFile() {
             guard let pid, let userID, let descriptor = fields["f"], let path = fields["n"] else { return }
             let kind = fields["t"] ?? "Unknown"
+            if descriptor == "NOFD" || (kind.lowercased() == "unknown"
+                && (path.hasPrefix("FD info error:") || path.hasPrefix("cwd|rtd info error:"))) {
+                diagnostics[pid, default: []].append(path)
+                return
+            }
             if ["IPv4", "IPv6", "unix"].contains(kind) {
                 let endpoints = path.components(separatedBy: "->")
                 let remote = endpoints.count > 1 ? endpoints.dropFirst().joined(separator: "->") : nil
@@ -135,7 +192,7 @@ public enum ProcessInspectionParser {
             }
         }
         finishFile()
-        return ProcessInspectionSnapshot(files: files, connections: connections)
+        return ProcessInspectionSnapshot(files: files, connections: connections, diagnostics: diagnostics)
     }
 }
 
