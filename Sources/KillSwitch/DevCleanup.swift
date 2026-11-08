@@ -26,7 +26,7 @@ final class DevCleanupMonitor: ObservableObject {
             preferences.setAutoKillEnabled(autoKillEnabled)
             if !autoKillEnabled {
                 setTerminationAuthorization(false)
-                if !foregroundVisible.withLock({ $0 }) { stop() }
+                if !foregroundIsVisible { stop() }
             }
         }
     }
@@ -113,7 +113,16 @@ final class DevCleanupMonitor: ObservableObject {
         var revision = UUID()
     }
     private let automaticTerminationAuthorized = OSAllocatedUnfairLock(initialState: TerminationAuthorization())
-    private let foregroundVisible = OSAllocatedUnfairLock(initialState: true)
+    private struct ForegroundState {
+        var visible = true
+        var generation = UUID()
+    }
+    private let foreground = OSAllocatedUnfairLock(initialState: ForegroundState())
+    private var foregroundIsVisible: Bool { foreground.withLock { $0.visible } }
+
+    private func foregroundIsCurrent(_ generation: UUID) -> Bool {
+        foreground.withLock { $0.visible && $0.generation == generation }
+    }
 
     var keepsRunningInBackground: Bool {
         activeSession.withLock { $0 != nil } && cleanupConfiguration().autoKillEnabled
@@ -221,7 +230,7 @@ final class DevCleanupMonitor: ObservableObject {
         let previousCleanupInterval = cleanupIntervalSeconds
         let previousPortInterval = portScanIntervalSeconds
         prepareForEntry(allowAutomaticTermination: allowAutomaticTermination, renewAuthorization: false)
-        if !foregroundVisible.withLock({ $0 }) && !keepsRunningInBackground {
+        if !foregroundIsVisible && !keepsRunningInBackground {
             stop()
         } else if previousCleanupInterval != cleanupIntervalSeconds {
             reschedule()
@@ -233,10 +242,11 @@ final class DevCleanupMonitor: ObservableObject {
 
     func setWindowVisible(_ visible: Bool) {
         dispatchPrecondition(condition: .onQueue(.main))
-        let wasVisible = foregroundVisible.withLock { previous in
-            let value = previous
-            previous = visible
-            return value
+        let wasVisible = foreground.withLock { state in
+            let previous = state.visible
+            if previous != visible || !visible { state.generation = UUID() }
+            state.visible = visible
+            return previous
         }
         if !visible {
             portTimer?.invalidate()
@@ -251,6 +261,7 @@ final class DevCleanupMonitor: ObservableObject {
 
     func stop() {
         activeSession.withLock { $0 = nil }
+        foreground.withLock { $0.generation = UUID() }
         setTerminationAuthorization(false)
         cancelTimers()
         isRefreshing = false
@@ -271,6 +282,7 @@ final class DevCleanupMonitor: ObservableObject {
     }
     var performanceCleanupTimer: Timer? { cleanupTimer }
     var performanceHasPortTimer: Bool { portTimer != nil }
+    var performanceIsRefreshing: Bool { isRefreshing }
 #endif
 
     /// (Re)create the port-scan and cleanup timers from the current intervals.
@@ -278,7 +290,7 @@ final class DevCleanupMonitor: ObservableObject {
         cancelTimers()
         guard let session = activeSession.withLock({ $0 }) else { return }
         schedulePortTimer(session: session)
-        guard foregroundVisible.withLock({ $0 }) || keepsRunningInBackground else { return }
+        guard foregroundIsVisible || keepsRunningInBackground else { return }
         let cleanupInterval = TimeInterval(max(5, cleanupIntervalSeconds))
         cleanupTimer = Timer.scheduledTimer(withTimeInterval: cleanupInterval, repeats: true) { [weak self] _ in
             guard let self, self.activeSession.withLock({ $0 }) == session else { return }
@@ -290,10 +302,11 @@ final class DevCleanupMonitor: ObservableObject {
     private func schedulePortTimer(session: UUID) {
         portTimer?.invalidate()
         portTimer = nil
-        guard foregroundVisible.withLock({ $0 }) else { return }
+        guard let generation = foreground.withLock({ $0.visible ? $0.generation : nil }) else { return }
         let portInterval = TimeInterval(max(1, portScanIntervalSeconds))
         portTimer = Timer.scheduledTimer(withTimeInterval: portInterval, repeats: true) { [weak self] _ in
-            guard let self, self.activeSession.withLock({ $0 }) == session else { return }
+            guard let self, self.activeSession.withLock({ $0 }) == session,
+                  self.foregroundIsCurrent(generation) else { return }
             self.refreshPorts()
         }
         portTimer?.tolerance = min(2, portInterval / 5)
@@ -310,24 +323,26 @@ final class DevCleanupMonitor: ObservableObject {
 
     /// Refresh only the listening-ports list (no killing).
     func refreshPorts() {
-        guard let session = activeSession.withLock({ $0 }), foregroundVisible.withLock({ $0 }), !isRefreshing else { return }
+        guard let session = activeSession.withLock({ $0 }),
+              let generation = foreground.withLock({ $0.visible ? $0.generation : nil }), !isRefreshing else { return }
         isRefreshing = true
         workQueue.async { [weak self] in
             guard let self, self.activeSession.withLock({ $0 }) == session,
-                  self.foregroundVisible.withLock({ $0 }) else { return }
+                  self.foregroundIsCurrent(generation) else { return }
             do {
                 let configuration = self.preferences.load().configuration(allowAutomaticTermination: false)
                 let result = try self.service.scan(configuration: configuration)
                 DispatchQueue.main.async {
                     guard self.activeSession.withLock({ $0 }) == session,
-                          self.foregroundVisible.withLock({ $0 }) else { return }
+                          self.foregroundIsCurrent(generation) else { return }
                     self.portProcesses = result.portProcesses
                     self.isRefreshing = false
                 }
             } catch {
                 fputs("KillSwitch dev-cleanup scan failed: \(error.localizedDescription)\n", stderr)
                 DispatchQueue.main.async {
-                    guard self.activeSession.withLock({ $0 }) == session else { return }
+                    guard self.activeSession.withLock({ $0 }) == session,
+                          self.foregroundIsCurrent(generation) else { return }
                     self.isRefreshing = false
                 }
             }
@@ -338,7 +353,7 @@ final class DevCleanupMonitor: ObservableObject {
     func runCleanup() {
         guard let session = activeSession.withLock({ $0 }), !isCleaning else { return }
         let configuration = cleanupConfiguration()
-        guard foregroundVisible.withLock({ $0 }) || configuration.autoKillEnabled else {
+        guard foregroundIsVisible || configuration.autoKillEnabled else {
             stop()
             return
         }
@@ -372,13 +387,13 @@ final class DevCleanupMonitor: ObservableObject {
                             self.applyingSettings = true
                             self.autoKillEnabled = false
                             self.applyingSettings = false
-                            if !self.foregroundVisible.withLock({ $0 }) { self.stop() }
+                            if !self.foregroundIsVisible { self.stop() }
                         }
                     }
-                    if !self.foregroundVisible.withLock({ $0 }) {
+                    if !self.foregroundIsVisible {
                         DispatchQueue.main.async {
                             guard self.activeSession.withLock({ $0 }) == session else { return }
-                            if !self.foregroundVisible.withLock({ $0 }) && !self.cleanupConfiguration().autoKillEnabled {
+                            if !self.foregroundIsVisible && !self.cleanupConfiguration().autoKillEnabled {
                                 self.stop()
                             } else { self.isCleaning = false }
                         }

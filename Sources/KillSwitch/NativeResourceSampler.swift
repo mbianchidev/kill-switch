@@ -109,8 +109,7 @@ final class ResourceSampler {
                 readPower: samplePower, readSleepAssertions: samplePreventingSleepPIDs, readBattery: sampleBattery
             )
         } else if !collectsEnergy {
-            energy.clearMeasurements()
-            lastEnergyDate = nil
+            clearEnergyMeasurements()
         }
         warnings += energy.warnings
         warnings += [batteryWarning].compactMap { $0 }
@@ -249,14 +248,19 @@ final class ResourceSampler {
         )
     }
 
+    private func clearEnergyMeasurements() {
+        energy.clearMeasurements()
+        cachedBattery = nil
+        lastEnergyDate = nil
+    }
+
     private func collectEnergy(
         allowsCollection: () -> Bool, readPower: () throws -> [Int32: Double],
         readSleepAssertions: () throws -> Set<Int32>, readBattery: () throws -> BatteryResourceSummary
     ) -> Bool {
         defer {
             if !allowsCollection() {
-                energy.clearMeasurements()
-                lastEnergyDate = nil
+                clearEnergyMeasurements()
             }
         }
         guard allowsCollection() else { return false }
@@ -285,6 +289,8 @@ final class ResourceSampler {
     }
 
 #if KILLSWITCH_PERFORMANCE_PROBE
+    var performanceCachedBattery: BatteryResourceSummary? { cachedBattery }
+    var performanceBatteryWarning: String? { batteryWarning }
     func performanceCollectEnergy(
         allowsCollection: () -> Bool, readPower: () throws -> [Int32: Double],
         readSleepAssertions: () throws -> Set<Int32>, readBattery: () throws -> BatteryResourceSummary

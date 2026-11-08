@@ -117,7 +117,9 @@ public enum DevelopmentProjectResolver {
             throw ProcessInspectionError(message: "Git metadata must be a small regular file, not a symlink.")
         }
         var bytes = [UInt8](repeating: 0, count: 4_097)
-        let count = Darwin.read(descriptor, &bytes, bytes.count)
+        let count = bytes.withUnsafeMutableBytes { buffer in
+            Darwin.read(descriptor, buffer.baseAddress, buffer.count)
+        }
         guard count >= 0, count <= 4_096, var value = String(bytes: bytes.prefix(max(0, count)), encoding: .utf8) else {
             throw ProcessInspectionError(message: "Git metadata is unavailable or is not readable UTF-8 text.")
         }

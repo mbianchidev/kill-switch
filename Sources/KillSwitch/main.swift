@@ -11,6 +11,10 @@ guard arguments.first == "--performance-probe" else {
     fputs("The isolated probe requires --performance-probe before its command.\n", stderr)
     exit(2)
 }
+guard Thread.isMainThread else {
+    fputs("The AppKit performance probe must start on the main thread.\n", stderr)
+    exit(2)
+}
 MainActor.assumeIsolated {
     exit(PerformanceProbe.run(arguments: Array(arguments.dropFirst())))
 }

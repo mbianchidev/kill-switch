@@ -33,8 +33,9 @@ not-yet-observed process lifetimes remain unavailable rather than becoming
 zero power or No. Each collector retains its error until its own retry succeeds,
 including on six-second ticks that skip Energy collection. Sampling another mode
 clears current power/assertion readings and starts a fresh read on returning to
-Energy. The energy summary totals reported values and shows N/A
-when none are readable. Memory-pressure
+Energy. Optional cached battery values are also cleared on suspension; unresolved
+battery-reader errors remain until that reader succeeds. The energy summary
+totals reported values and shows N/A when none are readable. Memory-pressure
 queries run only while Memory is selected.
 
 Graphs connect measured samples without smoothing. CPU shows separate stacked

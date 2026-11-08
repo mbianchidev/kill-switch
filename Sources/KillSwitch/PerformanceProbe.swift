@@ -283,6 +283,7 @@ enum PerformanceProbe {
         cleanupEntryCancellationChecks(preferences: preferences, check)
         backgroundCleanupChecks(preferences: preferences, check)
         cleanupAuthorizationRevisionChecks(preferences: preferences, check)
+        foregroundScanGenerationChecks(preferences: preferences, check)
         cleanupDialogCancellationChecks(preferences: preferences, check)
         queuedScanSettingsChecks(preferences: preferences, check)
         cleanupVisitResumptionChecks(preferences: preferences, check)
@@ -1013,6 +1014,87 @@ enum PerformanceProbe {
         check(!timedOut.withLock { $0 }, "The controlled authorization-revision queue must not time out.")
     }
 
+    private static func foregroundScanGenerationChecks(preferences: DevCleanupPreferences, _ check: (Bool, String) -> Void) {
+        let savedAutoKill = preferences.load().autoKillEnabled
+        preferences.setAutoKillEnabled(true)
+        defer { preferences.setAutoKillEnabled(savedAutoKill) }
+        let reads = OSAllocatedUnfairLock(initialState: 0)
+        let queuedService = DevCleanupService(
+            username: "synthetic-owner",
+            processProvider: {
+                reads.withLock { $0 += 1 }
+                return [DevCleanupProcess(pid: 100_980, user: "synthetic-owner", elapsedSeconds: 1,
+                                          command: "/synthetic/worker")]
+            },
+            listeningPortsProvider: { [100_980: [3_000]] }, terminator: { _ in false }
+        )
+        let queued = DevCleanupMonitor(preferences: preferences, service: queuedService)
+        defer { queued.stop() }
+        queued.start(allowAutomaticTermination: true)
+        queued.performanceDrainWorkQueue()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        let initialReads = reads.withLock { $0 }
+        let releaseQueue = DispatchSemaphore(value: 0)
+        let timedOut = OSAllocatedUnfairLock(initialState: false)
+        queued.performanceEnqueue {
+            if releaseQueue.wait(timeout: .now() + 5) != .success { timedOut.withLock { $0 = true } }
+        }
+        queued.refreshPorts()
+        queued.setWindowVisible(false)
+        queued.setWindowVisible(true)
+        releaseQueue.signal()
+        queued.performanceDrainWorkQueue()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(reads.withLock({ $0 }) == initialReads + 1,
+              "Coalesced hide/show must admit only the new foreground scan, not resurrect its pre-hide queued predecessor.")
+        check(queued.keepsRunningInBackground, "Foreground generation invalidation must preserve confirmed background cleanup.")
+
+        for fails in [false, true] {
+            let sampleCount = OSAllocatedUnfairLock(initialState: 0)
+            let oldStarted = DispatchSemaphore(value: 0)
+            let releaseOld = DispatchSemaphore(value: 0)
+            let freshStarted = DispatchSemaphore(value: 0)
+            let releaseFresh = DispatchSemaphore(value: 0)
+            let service = DevCleanupService(
+                username: "synthetic-owner",
+                processProvider: {
+                    let sample = sampleCount.withLock { value in value += 1; return value }
+                    if sample == 2 {
+                        oldStarted.signal()
+                        if releaseOld.wait(timeout: .now() + 5) != .success { timedOut.withLock { $0 = true } }
+                        if fails { throw ProcessInspectionError(message: "Synthetic stale foreground failure.") }
+                    } else if sample == 3 {
+                        freshStarted.signal()
+                        if releaseFresh.wait(timeout: .now() + 5) != .success { timedOut.withLock { $0 = true } }
+                    }
+                    return [DevCleanupProcess(pid: 100_981, user: "synthetic-owner", elapsedSeconds: 1,
+                                              command: "/synthetic/worker-sample-\(sample)")]
+                },
+                listeningPortsProvider: { [100_981: [3_000]] }, terminator: { _ in false }
+            )
+            let monitor = DevCleanupMonitor(preferences: preferences, service: service)
+            defer { releaseOld.signal(); releaseFresh.signal(); monitor.stop() }
+            monitor.start(allowAutomaticTermination: true)
+            monitor.performanceDrainWorkQueue()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            monitor.refreshPorts()
+            check(oldStarted.wait(timeout: .now() + 2) == .success, "The controlled old foreground scan must start.")
+            monitor.setWindowVisible(false)
+            monitor.setWindowVisible(true)
+            releaseOld.signal()
+            check(freshStarted.wait(timeout: .now() + 2) == .success, "A fresh foreground scan must start on return.")
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            check(monitor.performanceIsRefreshing && monitor.portProcesses.first?.command == "/synthetic/worker-sample-1",
+                  "An expired foreground \(fails ? "error" : "success") must not overwrite current rows or clear its successor's busy state.")
+            releaseFresh.signal()
+            monitor.performanceDrainWorkQueue()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            check(!monitor.performanceIsRefreshing && monitor.portProcesses.first?.command == "/synthetic/worker-sample-3",
+                  "The current foreground generation must publish its own successful result.")
+        }
+        check(!timedOut.withLock { $0 }, "Controlled foreground scan generations must not time out.")
+    }
+
     private static func cleanupDialogCancellationChecks(preferences: DevCleanupPreferences, _ check: (Bool, String) -> Void) {
         let savedAutoKill = preferences.load().autoKillEnabled
         defer { preferences.setAutoKillEnabled(savedAutoKill) }
@@ -1319,6 +1401,25 @@ enum PerformanceProbe {
             readBattery: { phases.append("battery"); return battery }
         )
         check(!canceled && phases.isEmpty, "Already-revoked Energy must not invoke any collector.")
+        let cached = ResourceSampler()
+        _ = cached.performanceCollectEnergy(
+            allowsCollection: { true }, readPower: { [:] }, readSleepAssertions: { [] }, readBattery: { battery }
+        )
+        check(cached.performanceCachedBattery?.chargePercent == 80, "An admitted Energy reading must cache its synthetic battery.")
+        _ = cached.performanceCollectEnergy(
+            allowsCollection: { false }, readPower: { [:] }, readSleepAssertions: { [] }, readBattery: { battery }
+        )
+        check(cached.performanceCachedBattery == nil, "Revoked Energy must clear optional cached battery measurements.")
+        _ = cached.performanceCollectEnergy(
+            allowsCollection: { true }, readPower: { [:] }, readSleepAssertions: { [] },
+            readBattery: { throw ProcessInspectionError(message: "Synthetic battery unavailable.") }
+        )
+        let warning = cached.performanceBatteryWarning
+        _ = cached.performanceCollectEnergy(
+            allowsCollection: { false }, readPower: { [:] }, readSleepAssertions: { [] }, readBattery: { battery }
+        )
+        check(cached.performanceCachedBattery == nil && warning != nil && cached.performanceBatteryWarning == warning,
+              "Revocation clears cached battery values without silently discarding an unresolved reader warning.")
     }
 
     private static func resetAuthorizationChecks(preferences: DevCleanupPreferences, _ check: (Bool, String) -> Void) {

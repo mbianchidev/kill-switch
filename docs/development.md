@@ -219,6 +219,9 @@ The port-polling lease is separate: hiding cancels its timer and queued scans,
 but preserves the cleanup timer and its deadline. Showing refreshes ports and
 resumes the existing session instead of restarting cleanup. Leaving the page
 restores the safe preview on return. Read-only hidden sessions stop their timers.
+Foreground scans also carry a generation checked at admission and in both
+success/error callbacks, so a coalesced hide/show cannot revive pre-hide work
+or let its completion overwrite a new scan's rows or busy state.
 Read-only cleanup keys its startup task by the visit token, so a coalesced
 hide/show or away/back still starts a fresh session without losing outer filters.
 Transient copy feedback and authorization requests carry a cleanup-visit token.
