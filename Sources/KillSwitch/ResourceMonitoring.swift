@@ -264,6 +264,10 @@ final class ResourceMonitor: ObservableObject {
     private var selectedRange: ActivityHistoryRange = .live
     private var selectedProcess: ActivityProcessIdentity?
 
+    private func publishBattery(_ reading: BatteryResourceSummary?) {
+        battery = reading ?? .unavailable
+    }
+
 #if KILLSWITCH_PERFORMANCE_PROBE
     var performanceEffectiveMetric: ResourceMetric? {
         samplingQueue.sync { effectiveMetric }
@@ -282,7 +286,7 @@ final class ResourceMonitor: ObservableObject {
         memory = snapshot.memory
         disk = snapshot.disk
         network = snapshot.network ?? .unavailable
-        battery = snapshot.battery ?? .unavailable
+        publishBattery(snapshot.battery)
         liveActivity = activity
         timeline = liveHistory.snapshots.map { $0.point(for: focusedProcess) }
         historyProcesses = activity.processes.map(\.process)
@@ -436,9 +440,7 @@ final class ResourceMonitor: ObservableObject {
                 self.memory = snapshot.memory
                 self.disk = snapshot.disk
                 self.network = snapshot.network ?? .unavailable
-                if let battery = snapshot.battery {
-                    self.battery = battery
-                }
+                self.publishBattery(snapshot.battery)
                 if snapshot.sampledEnergy, let total = ProcessEnergyCache.totalPower(sampledProcesses.map(\.power)) {
                     self.history[.energy, default: []].append(ResourceHistoryPoint(
                         date: snapshot.date,

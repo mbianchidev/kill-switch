@@ -34,7 +34,9 @@ zero power or No. Each collector retains its error until its own retry succeeds,
 including on six-second ticks that skip Energy collection. Sampling another mode
 clears current power/assertion readings and starts a fresh read on returning to
 Energy. Optional cached battery values are also cleared on suspension; unresolved
-battery-reader errors remain until that reader succeeds. The energy summary
+battery-reader errors remain until that reader succeeds. Publication marks an
+absent battery reading unavailable rather than retaining an older value under a
+new update date. The energy summary
 totals reported values and shows N/A when none are readable. Memory-pressure
 queries run only while Memory is selected.
 

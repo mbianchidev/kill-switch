@@ -238,6 +238,7 @@ enum PerformanceProbe {
         check(monitor.performanceEffectiveMetric == nil, "The active page must release its sampling lease.")
         queuedMetricVisibilityChecks(check)
         energyPhaseAdmissionChecks(check)
+        batteryPublicationChecks(check)
         let energyDate = Date()
         for index in 0..<61 {
             monitor.publishPerformanceSample(fixture(
@@ -1422,6 +1423,18 @@ enum PerformanceProbe {
               "Revocation clears cached battery values without silently discarding an unresolved reader warning.")
     }
 
+    private static func batteryPublicationChecks(_ check: (Bool, String) -> Void) {
+        let monitor = ResourceMonitor()
+        let firstDate = Date(timeIntervalSince1970: 1_000_000)
+        monitor.publishPerformanceSample(fixture(date: firstDate, count: 1, step: 1))
+        check(monitor.battery.chargePercent == 80, "A readable snapshot must publish its synthetic battery measurement.")
+        let nextDate = firstDate.addingTimeInterval(6)
+        monitor.publishPerformanceSample(fixture(date: nextDate, count: 1, step: 2, battery: nil))
+        check(monitor.battery.chargePercent == nil && monitor.battery.status == "Unavailable"
+              && monitor.battery.timeRemaining == nil && monitor.lastUpdated == nextDate,
+              "An absent battery snapshot must not keep old measurements displayed beneath a newer update date.")
+    }
+
     private static func resetAuthorizationChecks(preferences: DevCleanupPreferences, _ check: (Bool, String) -> Void) {
         let savedAutoKill = preferences.load().autoKillEnabled
         defer { preferences.setAutoKillEnabled(savedAutoKill) }
@@ -1634,7 +1647,12 @@ enum PerformanceProbe {
         }
     }
 
-    private static func fixture(date: Date, count: Int, step: Int) -> ResourceSnapshot {
+    private static func fixture(
+        date: Date, count: Int, step: Int,
+        battery: BatteryResourceSummary? = BatteryResourceSummary(
+            source: "AC Power", chargePercent: 80, status: "charging", timeRemaining: nil
+        )
+    ) -> ResourceSnapshot {
         let processes = (0..<count).map { index in
             ResourceProcess(
                 identity: ActivityProcessIdentity(
@@ -1675,8 +1693,8 @@ enum PerformanceProbe {
                 receivedPacketsPerSecond: 10, receivedBytesPerSecond: 10_240, sentPacketsPerSecond: 5,
                 sentBytesPerSecond: 5_120
             ),
-            battery: BatteryResourceSummary(source: "AC Power", chargePercent: 80, status: "charging", timeRemaining: nil),
-            sampledEnergy: true, warnings: []
+            battery: battery,
+            sampledEnergy: battery != nil, warnings: []
         )
     }
 }
