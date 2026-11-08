@@ -171,7 +171,8 @@ Metric requests carry page-specific leases, so an outgoing page cannot clear a
 newer selection. Actual window visibility gates heavier collection while
 continuous CPU, memory, disk, and traffic sampling remains unchanged.
 Native window visibility includes occlusion: minimizing or fully covering the
-window pauses optional work and revokes cleanup authorization, just like hiding.
+window pauses optional health/inspection work, just like hiding. Confirmed Dev
+cleanup follows its selected-page execution lease instead of window visibility.
 Metric leases and window visibility are updated synchronously in one locked
 selection, rather than waiting behind already-queued samples. The native reader
 rechecks that selection before starting Energy or memory-pressure phases;
@@ -203,14 +204,21 @@ active content. Session leases reject canceled queued passes and old timer
 callbacks. Cleanup rereads saved settings at queue admission; outcomes from
 already-started authorized passes remain retained after hiding. Interface
 checks use an injected synthetic cleanup service, never the live terminator.
-Visit authorization is separate from the editable auto-kill setting and is
+Page-session authorization is separate from the editable auto-kill setting and is
 revoked on stop. Resetting preferences cannot grant it. The view requires
 explicit confirmation for resetting defaults or re-enabling auto-kill; queue
 admission rechecks authorization as well as current saved settings.
-`ContentView` owns the retained cleanup monitor without observing its updates,
-so navigation and window hiding revoke the monitor's lease synchronously rather
-than waiting for SwiftUI lifecycle callbacks. Hidden cleanup content is removed;
-returning to enabled cleanup restores the safe entry preview.
+Permission revisions fence delayed revocation: an older disabled pass cannot
+revoke a newer explicit confirmation. Passive window resumption does not renew
+that permission revision.
+`ContentView` owns the retained cleanup monitor without observing its updates.
+Confirmation starts its execution immediately, without depending on visible
+content tasks. Navigation revokes its lease synchronously; hiding preserves a
+confirmed selected-page session while removing the heavy UI subtree.
+The port-polling lease is separate: hiding cancels its timer and queued scans,
+but preserves the cleanup timer and its deadline. Showing refreshes ports and
+resumes the existing session instead of restarting cleanup. Leaving the page
+restores the safe preview on return. Read-only hidden sessions stop their timers.
 Read-only cleanup keys its startup task by the visit token, so a coalesced
 hide/show or away/back still starts a fresh session without losing outer filters.
 Transient copy feedback and authorization requests carry a cleanup-visit token.
@@ -357,9 +365,14 @@ Run the deterministic native-state checks directly:
 ```bash
 "$PROBE" --performance-probe --interface-checks
 "$PROBE" --performance-probe dashboard 3 1000 .build/dashboard.png 900x650
+"$PROBE" --performance-probe cleanup-settings 3 3 .build/cleanup-settings.png 1280x1400
 ```
 
 The optional PNG is the probe's own unshown window, never a desktop capture.
+`cleanup-settings` renders the real cleanup page with isolated defaults and
+explicit synthetic providers/termination results. It is a GUI fixture, not a
+live-cleanup measurement; synthetic cleanup startup rejects a missing injected
+service. The other navigation scenarios still exclude cleanup.
 `--performance-probe --native-health-check` separately verifies public native health interfaces
 without identifiers, UI interaction, or privileged diagnostics; it is not a
 synthetic measurement scenario.

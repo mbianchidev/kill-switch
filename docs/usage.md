@@ -27,9 +27,9 @@ The watchdog, screen-time monitor, and CPU/memory/disk/network sampling continue
 with the window hidden and while using other tabs. Quitting flushes the current
 history bucket. Energy details run only while their resource view is selected;
 connection/open-file inspection runs only while its panel is visible.
-The opened Dev cleanup view starts its timers on appearance and stops them on
-disappearance; entering it runs an immediate pass. Its safe entry preview does
-not start cleanup or its timers.
+Confirmed Dev cleanup runs immediately and keeps its cleanup timer active while
+that page is selected, including hidden or minimized windows. Leaving the page
+stops future passes. Its safe entry preview never starts cleanup or its timers.
 
 ## Navigation
 
@@ -242,19 +242,26 @@ cleanup pass, cancel the entry confirmation. The CLI
 Canceling leaves the safe preview shown; it does not reset sidebar selection or
 reopen the modal when navigating with arrow keys. Other pages remain reachable
 without authorizing cleanup.
-The preview retains cleanup filters and prior session results. Navigating away,
-hiding or minimizing the window, fully covering it with other windows, or
-reopening the preview revokes visit authorization and immediately cancels
-not-yet-started scans and cleanup passes. Uncovering or showing the window again
-requires fresh confirmation while automatic termination remains enabled.
-Read-only cleanup restarts its session automatically, including rapid visibility
-and navigation changes. An already-started authorized pass can finish; its
-outcome remains available on
+The preview retains cleanup filters and prior session results. After confirming
+entry, automatic cleanup keeps running at the saved interval while **Dev cleanup
+is selected**, including hidden, minimized, or fully covered windows. Showing the
+window again does not require another confirmation or restart the cleanup
+deadline. Foreground port polling pauses while hidden and refreshes on return.
+
+Leaving this page revokes execution authorization and cancels not-yet-started
+passes; returning then requires fresh confirmation while auto-kill is enabled.
+Disabling auto-kill revokes termination permission immediately. Hidden read-only
+cleanup stops its timers and resumes on return, including rapid visibility and
+navigation changes. Sleep and quitting stop execution; this feature does not
+keep the Mac awake.
+An already-started authorized pass can finish; its outcome remains available on
 return. Queued scans and cleanup passes reread saved settings before starting,
 so later saved filters apply and disablement still prevents automatic termination.
-Entry, reset, and enable confirmations belong to both their visit and individual
-request. Canceling or replacing a dialog invalidates its old callback without
-canceling a newer request.
+Entry, reset, and enable confirmations belong to both their UI visit and
+individual request. Hiding still invalidates pending dialogs and stale UI
+callbacks without revoking an already-confirmed background session. Canceling
+or replacing a dialog invalidates its old callback without canceling a newer
+request.
 
 Each entry reloads saved settings without writing a retained monitor's stale
 values back to preferences. Automatic cleanup requires both current saved

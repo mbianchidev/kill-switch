@@ -37,6 +37,7 @@ struct ContentView: View {
         let visibility: (Bool) -> Void
     }
     var performanceObserveCleanupEntry: ((CleanupEntryProbeControls) -> Void)?
+    var performanceStartsCleanupTasks = false
 #endif
 
     init(
@@ -54,6 +55,25 @@ struct ContentView: View {
         _cleanupEntryPending = State(initialValue: initialTab.requiresCleanupConfirmation(
             autoKillEnabled: cleanupPreferences.load().autoKillEnabled
         ))
+    }
+
+    private var cleanupPage: some View {
+        let visit = cleanupVisitID
+        let page = DevCleanupTab(
+            allowAutomaticTermination: cleanupAuthorization(for: visit),
+            visitID: $cleanupVisitID,
+            entryPending: cleanupEntryPending,
+            requestConfirmation: { requestCleanupEntry(visit: visit) },
+            showDevServers: { navigationSelection.wrappedValue = .devServers },
+            preferences: cleanupPreferences, monitor: cleanupMonitor
+        )
+#if KILLSWITCH_PERFORMANCE_PROBE
+        var probePage = page
+        probePage.performanceStartsTasks = performanceStartsCleanupTasks
+        return probePage
+#else
+        return page
+#endif
     }
 
     var body: some View {
@@ -89,7 +109,7 @@ struct ContentView: View {
             Button("Cancel", role: .cancel) { cancelCleanupEntry(request) }
             Button("Open Dev cleanup", role: .destructive) { authorizeCleanupEntry(request) }
         } message: { _ in
-            Text("Automatic termination is enabled. Opening this page can terminate qualifying development servers older than your saved age threshold. Age is not inactivity. Protected processes remain protected.")
+            Text("Automatic termination is enabled. Opening this page can terminate qualifying development servers older than your saved age threshold. It continues while Dev cleanup is selected, including hidden or minimized windows. Leaving the page stops future passes. Age is not inactivity. Protected processes remain protected.")
         }
         .sheet(item: $inspectedProcess) { process in
             ProcessDetailSheet(process: process, resourceMonitor: resourceMonitor)
@@ -139,7 +159,7 @@ struct ContentView: View {
 
     private func cleanupAuthorization(for visit: UUID) -> Binding<Bool> {
         Binding(
-            get: { cleanupAuthorized && cleanupVisitIsCurrent(visit) },
+            get: { cleanupAuthorized && selectedTab == .cleanup && cleanupVisitID == visit },
             set: { authorized in
                 guard cleanupVisitIsCurrent(visit) else {
                     fputs("KillSwitch ignored an expired cleanup permission update; authorization was unchanged.\n", stderr)
@@ -169,7 +189,7 @@ struct ContentView: View {
         cleanupConfirmationRequest = nil
         confirmCleanup = false
         cleanupAuthorized = true
-        cleanupMonitor.prepareForEntry(allowAutomaticTermination: true)
+        cleanupMonitor.start(allowAutomaticTermination: true)
         cleanupEntryPending = false
     }
 
@@ -181,13 +201,23 @@ struct ContentView: View {
 
     private func setWindowVisibility(_ visible: Bool) {
         windowVisible = visible
-        if !visible {
-            cleanupMonitor.stop()
-            cleanupVisitID = UUID()
+        if cleanupAuthorized && !cleanupMonitor.cleanupConfiguration().autoKillEnabled {
             cleanupAuthorized = false
             cleanupEntryPending = selectedTab.requiresCleanupConfirmation(
                 autoKillEnabled: cleanupPreferences.load().autoKillEnabled
             )
+        }
+        cleanupMonitor.setWindowVisible(visible)
+        if !visible {
+            // Suspend stale UI callbacks without revoking the selected page's confirmed execution.
+            cleanupVisitID = UUID()
+            if selectedTab != .cleanup || !cleanupAuthorized {
+                cleanupMonitor.stop()
+                cleanupAuthorized = false
+                cleanupEntryPending = selectedTab.requiresCleanupConfirmation(
+                    autoKillEnabled: cleanupPreferences.load().autoKillEnabled
+                )
+            }
             confirmCleanup = false
             cleanupConfirmationRequest = nil
         }
@@ -239,15 +269,7 @@ struct ContentView: View {
         case .diskCleanup:
             DiskCleanupTab(monitor: diskCleanupMonitor)
         case .cleanup:
-            let visit = cleanupVisitID
-            DevCleanupTab(
-                allowAutomaticTermination: cleanupAuthorization(for: visit),
-                visitID: $cleanupVisitID,
-                entryPending: cleanupEntryPending,
-                requestConfirmation: { requestCleanupEntry(visit: visit) },
-                showDevServers: { navigationSelection.wrappedValue = .devServers },
-                preferences: cleanupPreferences, monitor: cleanupMonitor
-            )
+            cleanupPage
         case .watchdog:
             CPUWatchdogTab(monitor: watchdog)
         case .screenTime:
