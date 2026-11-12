@@ -51,6 +51,23 @@ macOS restricts some counters for protected or other-user processes.
 counter is unavailable; per-process GPU and App Nap data are not fabricated.
 See [resource sources and limitations](system-diagnostics.md#resources).
 
+## A localhost page loads but Dev servers has no listener
+
+Dev servers is a live operating-system listener list, not a saved list of browser
+pages. A browser service worker can serve a page without a running HTTP server;
+ordinary cache clearing and hard reloads do not necessarily remove that worker.
+
+Try the exact URL in a new private window and check a direct loopback HTTP
+request. If both refuse connections while the normal browser profile still
+loads the page, inspect that origin's service worker and site storage in the
+browser's developer tools. Unregister the worker and clear only that origin's
+site data if appropriate; clearing storage can remove saved app data.
+A browser-served page alone is not evidence of a listener process to terminate.
+
+If a private window or direct request succeeds, inspect the actual listener,
+ownership scope, and any container port forwarding instead of assuming a cache.
+**All processes** does not bypass macOS permissions.
+
 ## Two copies start or closing the window does not exit
 
 Closing the window intentionally leaves KillSwitch in the menu bar. Use

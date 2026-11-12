@@ -32,6 +32,7 @@ final class ProcessInspectionMonitor: ObservableObject {
     private var timer: DispatchSourceTimer?
     private var mode: Mode = .files
     private let target: ActivityProcessIdentity?
+    private var activationOwner: UUID?
     private let activation = OSAllocatedUnfairLock<UUID?>(initialState: nil)
     private var activationID: UUID? {
         get { activation.withLock { $0 } }
@@ -92,9 +93,11 @@ final class ProcessInspectionMonitor: ObservableObject {
     }
 #endif
 
-    func start(_ mode: Mode) {
+    func start(_ mode: Mode, owner: UUID = UUID()) {
         dispatchPrecondition(condition: .onQueue(.main))
+        guard activationID == nil || activationOwner != owner || self.mode != mode else { return }
         let id = UUID()
+        activationOwner = owner
         activationID = id
         self.mode = mode
         isRefreshing = true
@@ -109,8 +112,10 @@ final class ProcessInspectionMonitor: ObservableObject {
         }
     }
 
-    func stop() {
+    func stop(owner: UUID? = nil) {
         dispatchPrecondition(condition: .onQueue(.main))
+        guard owner == nil || activationOwner == owner else { return }
+        activationOwner = nil
         activationID = nil
         isRefreshing = false
         files = []
