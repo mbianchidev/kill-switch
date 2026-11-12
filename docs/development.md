@@ -170,6 +170,12 @@ restoration through this suspension.
 Metric requests carry page-specific leases, so an outgoing page cannot clear a
 newer selection. Actual window visibility gates heavier collection while
 continuous CPU, memory, disk, and traffic sampling remains unchanged.
+Sampling callbacks consume SwiftUI's new visibility/permission selection,
+not captured environment values from the preceding render. Inspection mounts
+also have distinct lease owners: repeated appearances reuse their active
+session, and an outgoing mount cannot stop a newer owner's collection.
+Synthetic native-host checks cover inspection handoffs and hide/show recovery,
+plus health visibility, operation permissions, and continued automatic polling.
 Native window visibility includes occlusion: minimizing or fully covering the
 window pauses optional health/inspection work, just like hiding. Confirmed Dev
 cleanup follows its selected-page execution lease instead of window visibility.

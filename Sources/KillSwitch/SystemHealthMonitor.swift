@@ -170,15 +170,14 @@ private struct SystemHealthSampling: ViewModifier {
     @Environment(\.isKillSwitchWindowVisible) private var visible
     @Environment(\.allowsLiveOperations) private var allowsOperations
 
+    private var active: Bool { visible && allowsOperations }
+
     func body(content: Content) -> some View {
         content
-            .onAppear { update() }
-            .onChange(of: visible) { _ in update() }
-            .onChange(of: allowsOperations) { _ in update() }
+            .onAppear { monitor.setActive(active, client: client) }
+            .onChange(of: active) { active in monitor.setActive(active, client: client) }
             .onDisappear { monitor.setActive(false, client: client) }
     }
-
-    private func update() { monitor.setActive(visible && allowsOperations, client: client) }
 }
 
 extension View {

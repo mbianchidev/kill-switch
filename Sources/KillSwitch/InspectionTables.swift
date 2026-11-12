@@ -191,27 +191,42 @@ struct InspectionRefreshButton: View {
 }
 
 private struct InspectionSampling: ViewModifier {
+    private struct Selection: Equatable {
+        let mode: ProcessInspectionMonitor.Mode
+        let visible: Bool
+        let allowsOperations: Bool
+    }
+
     let monitor: ProcessInspectionMonitor
     let mode: ProcessInspectionMonitor.Mode
+    @State private var owner = UUID()
     @Environment(\.isKillSwitchWindowVisible) private var visible
     @Environment(\.allowsLiveOperations) private var allowsOperations
 
-    func body(content: Content) -> some View {
-        content
-            .onAppear { update() }
-            .onChange(of: visible) { _ in update() }
-            .onChange(of: allowsOperations) { _ in update() }
-            .onDisappear { monitor.stop() }
+    private var selection: Selection {
+        Selection(mode: mode, visible: visible, allowsOperations: allowsOperations)
     }
 
-    private func update() {
+    func body(content: Content) -> some View {
+        content
+            .onAppear { update(selection) }
+            .onChange(of: selection, perform: update)
+            .onDisappear { monitor.stop(owner: owner) }
+    }
+
+    private func update(_ selection: Selection) {
 #if KILLSWITCH_PERFORMANCE_PROBE
-        if !allowsOperations {
+        if !selection.allowsOperations {
+            monitor.stop(owner: owner)
             monitor.restorePerformanceFixture()
             return
         }
 #endif
-        if visible && allowsOperations { monitor.start(mode) } else { monitor.stop() }
+        if selection.visible && selection.allowsOperations {
+            monitor.start(selection.mode, owner: owner)
+        } else {
+            monitor.stop(owner: owner)
+        }
     }
 }
 

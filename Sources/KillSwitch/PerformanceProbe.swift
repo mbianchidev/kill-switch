@@ -248,10 +248,12 @@ enum PerformanceProbe {
         check(monitor.history[.energy]?.count == 51, "Energy probes must populate and prune the full five-minute chart.")
         check(monitor.history[.energy]?.last?.primary == 2_000, "Energy chart fixtures must contain measured power totals.")
         healthPollingChecks(check)
+        healthPresentationChecks(check)
         thermalPresentationChecks(check)
         healthObservationChecks(check)
         processDetailObservationChecks(check)
         queuedInspectionChecks(check)
+        inspectionPresentationChecks(check)
         projectCacheTimingChecks(check)
         filteredProjectWarningChecks(check)
         copyFeedbackChecks(check)
@@ -501,6 +503,68 @@ enum PerformanceProbe {
         check(!timedOut.withLock { $0 }, "Controlled synthetic health reads must not time out.")
     }
 
+    private static func healthPresentationChecks(_ check: (Bool, String) -> Void) {
+        let fixture = SystemHealthMonitor()
+        fixture.publishPerformanceFixture()
+        guard let hardware = fixture.hardware, let snapshot = fixture.snapshot else {
+            check(false, "Synthetic health presentation fixtures must be available.")
+            return
+        }
+        let reads = OSAllocatedUnfairLock(initialState: 0)
+        var now = ContinuousClock.now
+        let health = SystemHealthMonitor(
+            now: { now }, readHardware: { hardware },
+            readSnapshot: { reads.withLock { $0 += 1 }; return snapshot }
+        )
+        defer { health.shutdown() }
+        func content(visible: Bool = true, allowsOperations: Bool = true) -> AnyView {
+            AnyView(Text("Synthetic health").systemHealthSampling(health)
+                .environment(\.isKillSwitchWindowVisible, visible)
+                .environment(\.allowsLiveOperations, allowsOperations))
+        }
+        let controller = NSHostingController(rootView: content())
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = controller
+        defer { window.contentViewController = nil; window.close() }
+        func finishRead(expected: Int) {
+            controller.view.layoutSubtreeIfNeeded()
+            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+            repeat {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            } while (reads.withLock { $0 } < expected || health.isRefreshing) && ContinuousClock.now < deadline
+            check(reads.withLock { $0 } == expected && !health.isRefreshing && health.performanceHasScheduledRefresh,
+                  "A visible health presentation must complete read \(expected) and keep automatic polling scheduled.")
+        }
+        finishRead(expected: 1)
+        health.setWindowVisible(false)
+        controller.rootView = content(visible: false)
+        controller.view.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        now = now.advanced(by: .seconds(31))
+        health.setWindowVisible(true)
+        controller.rootView = content()
+        finishRead(expected: 2)
+        now = now.advanced(by: .seconds(31))
+        health.performanceFireAutomaticRefresh()
+        finishRead(expected: 3)
+        controller.rootView = content(allowsOperations: false)
+        controller.view.layoutSubtreeIfNeeded()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        repeat {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        } while health.performanceHasScheduledRefresh && ContinuousClock.now < deadline
+        check(!health.performanceHasScheduledRefresh,
+              "Disabling operations on a visible health presentation must stop its automatic polling.")
+        now = now.advanced(by: .seconds(31))
+        health.performanceFireAutomaticRefresh()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(reads.withLock { $0 } == 3, "A disabled health presentation must not collect another reading.")
+        controller.rootView = content()
+        finishRead(expected: 4)
+    }
+
     private static func queuedInspectionChecks(_ check: (Bool, String) -> Void) {
         let timedOut = OSAllocatedUnfairLock(initialState: false)
         let released = DispatchSemaphore(value: 0)
@@ -585,6 +649,70 @@ enum PerformanceProbe {
         check(windowInspection.performanceSampleModes == [.connections],
               "A shown inspection window must collect only its current resumed activation.")
         check(!timedOut.withLock { $0 }, "Controlled synthetic inspection queues must not time out.")
+    }
+
+    private static func inspectionPresentationChecks(_ check: (Bool, String) -> Void) {
+        let previousVisibility = AppWindowVisibility.isVisible
+        AppWindowVisibility.setVisible(true)
+        defer { AppWindowVisibility.setVisible(previousVisibility) }
+        for mode: ProcessInspectionMonitor.Mode in [.files, .connections, .listeners] {
+            let inspection = ProcessInspectionMonitor()
+            inspection.stop()
+            defer { inspection.stop() }
+            func content(visible: Bool = true) -> AnyView {
+                AnyView(Text("Synthetic inspection").inspectionSampling(inspection, mode: mode)
+                    .environment(\.isKillSwitchWindowVisible, visible))
+            }
+            func finishRead() {
+                let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+                repeat {
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+                } while (inspection.lastUpdated == nil || inspection.isRefreshing) && ContinuousClock.now < deadline
+                check(inspection.lastUpdated != nil && !inspection.isRefreshing && !inspection.connections.isEmpty,
+                      "The synthetic \(mode) presentation must finish collecting its visible rows.")
+            }
+            var outgoingDisappeared = false
+            let outgoing = NSHostingController(rootView: AnyView(
+                content().onDisappear { outgoingDisappeared = true }
+            ))
+            let incoming = NSHostingController(rootView: content())
+            let windows = [outgoing, incoming].map { hosting in
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650),
+                                      styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.contentViewController = hosting
+                hosting.view.layoutSubtreeIfNeeded()
+                finishRead()
+                return window
+            }
+            defer {
+                for window in windows { window.contentViewController = nil; window.close() }
+            }
+            AppWindowVisibility.setVisible(false)
+            incoming.rootView = content(visible: false)
+            incoming.view.layoutSubtreeIfNeeded()
+            let hiddenDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+            repeat {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            } while (!inspection.connections.isEmpty || inspection.lastUpdated != nil || inspection.isRefreshing)
+                && ContinuousClock.now < hiddenDeadline
+            check(inspection.connections.isEmpty && inspection.lastUpdated == nil && !inspection.isRefreshing,
+                  "Actually hiding the active \(mode) presentation must release its snapshot and busy state.")
+            AppWindowVisibility.setVisible(true)
+            incoming.rootView = content()
+            incoming.view.layoutSubtreeIfNeeded()
+            finishRead()
+            let updated = inspection.lastUpdated
+            windows[0].contentViewController = nil
+            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+            repeat {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            } while !outgoingDisappeared && ContinuousClock.now < deadline
+            check(outgoingDisappeared && inspection.lastUpdated == updated && !inspection.connections.isEmpty,
+                  "An outgoing \(mode) presentation must not clear a newer visible inspection session.")
+            inspection.refresh()
+            finishRead()
+        }
     }
 
     private static func projectCacheTimingChecks(_ check: (Bool, String) -> Void) {
