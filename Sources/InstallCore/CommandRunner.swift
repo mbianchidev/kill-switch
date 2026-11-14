@@ -85,10 +85,12 @@ public enum CommandRunner {
         task.waitUntilExit()
         readers.wait()
 
+        // Tools run with LC_ALL=C can emit legacy bytes for non-ASCII text, such as MacRoman
+        // dashes in pmset assertion names. Replace only those bytes instead of dropping all output.
         return CommandResult(
             status: task.terminationStatus,
-            standardOutput: String(data: outputBox.load(), encoding: .utf8) ?? "",
-            standardError: String(data: errorBox.load(), encoding: .utf8) ?? ""
+            standardOutput: String(decoding: outputBox.load(), as: UTF8.self),
+            standardError: String(decoding: errorBox.load(), as: UTF8.self)
         )
     }
 

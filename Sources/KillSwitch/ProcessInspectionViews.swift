@@ -1,5 +1,6 @@
 import Combine
 import Darwin
+import DevCleanupCore
 import Foundation
 import InstallCore
 import SwiftUI
@@ -25,6 +26,16 @@ final class ProcessInspectionMonitor: ObservableObject {
     @Published private(set) var identities: [Int32: ActivityProcessIdentity] = [:]
     @Published private(set) var projects: [ActivityProcessIdentity: DevelopmentProjectContext] = [:]
     @Published private(set) var projectErrors: [ActivityProcessIdentity: String] = [:]
+    struct DevServerDetection: Equatable {
+        /// Listeners matching Dev cleanup rules.
+        var listenerIDs: Set<NetworkConnectionRecord.ID> = []
+        /// Listeners without a lifetime-verified command line; they can only match watched ports.
+        var unclassifiedListenerIDs: Set<NetworkConnectionRecord.ID> = []
+        var error: String?
+    }
+    /// Populated in listeners mode only.
+    @Published private(set) var devServerDetection = DevServerDetection()
+    private lazy var devCleanupPreferences = DevCleanupPreferences()
     private let queue = DispatchQueue(
         label: "killswitch.process-inspection", qos: .utility, autoreleaseFrequency: .workItem
     )
@@ -89,6 +100,10 @@ final class ProcessInspectionMonitor: ObservableObject {
                 branch: "synthetic-feature"
             ))
         })
+        devServerDetection = Self.classifyListeners(
+            connections, commands: Self.performanceCommands, verified: identities,
+            configuration: Self.performanceDevCleanupConfiguration
+        )
         lastUpdated = Date()
     }
 #endif
@@ -123,6 +138,7 @@ final class ProcessInspectionMonitor: ObservableObject {
         identities = [:]
         projects = [:]
         projectErrors = [:]
+        devServerDetection = DevServerDetection()
         lastUpdated = nil
         queue.async {
             self.timer?.cancel()
@@ -168,6 +184,8 @@ final class ProcessInspectionMonitor: ObservableObject {
             let snapshot = Self.performanceFixture
             let verified = Self.performanceIdentities
             let detail = ""
+            let commands = Self.performanceCommands
+            let commandError: String? = nil
 #else
             let before: [Int32: ActivityProcessIdentity]
             if let target {
@@ -198,6 +216,20 @@ final class ProcessInspectionMonitor: ObservableObject {
                     pid: target.pid, bootSession: target.bootSession
                 ))
                 try ProcessInspectionParser.validateTarget(snapshot, pid: target.pid)
+            }
+            var commands: [Int32: String] = [:]
+            var commandError: String?
+            if mode == .listeners {
+                // Read before lifetime verification so verified PIDs bind these command lines to the same process.
+                do {
+                    commands = try ProcessSampler.commandLines(
+                        pids: Set(snapshot.connections.lazy.filter(\.isListening).map(\.pid))
+                    )
+                } catch {
+                    commandError = error.localizedDescription
+                    logger.error("Dev server detection could not read command lines: \(error.localizedDescription)")
+                }
+                guard continueCollection(activation) else { return }
             }
             let pids = Set(snapshot.files.map(\.pid) + snapshot.connections.map(\.pid))
             var verified: [Int32: ActivityProcessIdentity] = [:]
@@ -263,6 +295,18 @@ final class ProcessInspectionMonitor: ObservableObject {
                     if let error = result.error { projectErrors[identity] = error }
                 }
             }
+            var detection = DevServerDetection()
+            if mode == .listeners {
+#if KILLSWITCH_PERFORMANCE_PROBE
+                let configuration = Self.performanceDevCleanupConfiguration
+#else
+                let configuration = devCleanupPreferences.load().configuration(allowAutomaticTermination: false)
+#endif
+                detection = Self.classifyListeners(
+                    snapshot.connections, commands: commands, verified: verified, configuration: configuration
+                )
+                detection.error = commandError
+            }
 #if KILLSWITCH_PERFORMANCE_PROBE
             let updatedAt = performanceProjectWallDate ?? Date()
 #endif
@@ -274,6 +318,7 @@ final class ProcessInspectionMonitor: ObservableObject {
                 self.identities = verified
                 self.projects = projects
                 self.projectErrors = projectErrors
+                self.devServerDetection = detection
 #if KILLSWITCH_PERFORMANCE_PROBE
                 self.lastUpdated = updatedAt
 #else
@@ -302,7 +347,38 @@ final class ProcessInspectionMonitor: ObservableObject {
         }
     }
 
+    private static func classifyListeners(
+        _ connections: [NetworkConnectionRecord], commands: [Int32: String],
+        verified: [Int32: ActivityProcessIdentity], configuration: DevCleanupConfiguration
+    ) -> DevServerDetection {
+        let classifier = DevServerClassifier(configuration: configuration)
+        var detection = DevServerDetection()
+        for connection in connections where connection.isListening {
+            // Only a lifetime-verified PID proves that the command line belongs to this listener.
+            let command = verified[connection.pid] == nil ? nil : commands[connection.pid]
+            if command == nil { detection.unclassifiedListenerIDs.insert(connection.id) }
+            if let port = connection.localPort, classifier.listsListener(command: command, port: Int(port)) {
+                detection.listenerIDs.insert(connection.id)
+            }
+        }
+        return detection
+    }
+
 #if KILLSWITCH_PERFORMANCE_PROBE
+    static let performanceNonDevServerPID: Int32 = 100_999
+    private static let performanceCommands: [Int32: String] = Dictionary(
+        uniqueKeysWithValues: performanceIdentities.keys.map { pid in
+            (pid, pid == performanceNonDevServerPID
+                ? "/usr/local/bin/synthetic-daemon --listen"
+                : "/usr/local/bin/node /synthetic/project-\((pid - 100_000) / 50)/node_modules/.bin/vite")
+        }
+    )
+    private static let performanceDevCleanupConfiguration = DevCleanupConfiguration(
+        autoKillEnabled: false, ageThresholdSeconds: 0, effectivePorts: DevCleanupDefaults.ports,
+        runtimes: DevCleanupDefaults.runtimes, indicators: DevCleanupDefaults.indicators,
+        exclusions: DevCleanupDefaults.exclusions
+    )
+
     private static let performanceFixture: ProcessInspectionSnapshot = {
         let fields = (0..<1_000).flatMap { index in
             [

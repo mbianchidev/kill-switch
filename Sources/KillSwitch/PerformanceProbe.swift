@@ -256,6 +256,7 @@ enum PerformanceProbe {
         inspectionPresentationChecks(check)
         projectCacheTimingChecks(check)
         filteredProjectWarningChecks(check)
+        devServerDetectionChecks(check)
         copyFeedbackChecks(check)
         dashboardSelectionChecks(check)
 
@@ -1647,6 +1648,28 @@ enum PerformanceProbe {
         check(state == .unavailable, "A completed unavailable thermal reading must remain distinct from pending data.")
         check(status.performanceThermalValue == SystemThermalState.unavailable.rawValue,
               "A completed unavailable thermal shortcut must not revert to its collecting state.")
+    }
+
+    private static func devServerDetectionChecks(_ check: (Bool, String) -> Void) {
+        let previousVisibility = AppWindowVisibility.isVisible
+        AppWindowVisibility.setVisible(true)
+        defer { AppWindowVisibility.setVisible(previousVisibility) }
+        let inspection = ProcessInspectionMonitor()
+        defer { inspection.stop() }
+        inspection.stop()
+        inspection.start(.listeners)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        repeat {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        } while (inspection.lastUpdated == nil || inspection.isRefreshing) && ContinuousClock.now < deadline
+        let detection = inspection.devServerDetection
+        let listeners = inspection.connections.filter(\.isListening)
+        let other = listeners.filter { $0.pid == ProcessInspectionMonitor.performanceNonDevServerPID }
+        check(!other.isEmpty && !other.contains { detection.listenerIDs.contains($0.id) },
+              "A listener whose command does not match Dev cleanup rules or watched ports must stay out of detected dev servers.")
+        check(detection.listenerIDs.count == listeners.count - other.count
+              && detection.unclassifiedListenerIDs.isEmpty && detection.error == nil,
+              "A listener sample must classify every verified synthetic dev server command.")
     }
 
     private static func filteredProjectWarningChecks(_ check: (Bool, String) -> Void) {

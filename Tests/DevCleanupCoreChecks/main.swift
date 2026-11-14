@@ -13,6 +13,7 @@ struct CheckRunner {
         checkProcessErrors()
         checkProcessTerminationPolicy()
         checkCleanupService()
+        checkDevServerClassifier()
         checkTableQueries()
 
         if failures == 0 {
@@ -332,6 +333,23 @@ struct CheckRunner {
         } catch {
             fail("respects disabled auto-kill: \(error.localizedDescription)")
         }
+    }
+
+    private mutating func checkDevServerClassifier() {
+        let classifier = DevServerClassifier(configuration: DevCleanupConfiguration(
+            autoKillEnabled: false, ageThresholdSeconds: 0, effectivePorts: [41000],
+            runtimes: ["node"], indicators: ["vite"], exclusions: ["copilot"]
+        ))
+        check(classifier.runtime(for: "/usr/local/bin/node vite --port 41500") == "node", "detects configured dev servers")
+        check(classifier.listsListener(command: "/usr/local/bin/node vite", port: 41500), "lists detected dev servers on any port")
+        check(classifier.listsListener(command: "/usr/bin/example-daemon", port: 41000), "lists other listeners on watched ports")
+        check(!classifier.listsListener(command: "/usr/bin/example-daemon", port: 41500), "omits unmatched listeners")
+        check(!classifier.listsListener(command: "/usr/local/bin/node copilot vite", port: 41500), "honors exclusions")
+        check(!classifier.listsListener(command: "/System/Library/example-daemon", port: 41000), "omits system processes on watched ports")
+        check(
+            classifier.listsListener(command: nil, port: 41000) && !classifier.listsListener(command: nil, port: 41500),
+            "matches listeners without command lines by watched port only"
+        )
     }
 
     private mutating func check(_ condition: Bool, _ name: String) {

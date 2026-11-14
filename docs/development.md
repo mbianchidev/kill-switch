@@ -309,7 +309,10 @@ collector queue. The per-process sheet selects only its
 verified PID and shares one files/connections read. Developer listeners cache
 native working-directory/Git context by lifetime for at most thirty seconds,
 walk at most twelve ancestors, and read at most 4 KiB per metadata file without
-following a metadata-file symlink or running git.
+following a metadata-file symlink or running git. In listeners mode, one bounded
+`ps` read fetches command lines between the lifetime snapshot and verification;
+only verified commands reach `DevServerClassifier`, the DevCleanupCore rule
+shared with Dev cleanup scans, so both pages detect the same dev servers.
 
 ### Measure isolated UI footprint
 

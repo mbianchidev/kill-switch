@@ -19,6 +19,7 @@ struct InstallCoreCheckRunner {
             try checkManagedPathProtection(root: root)
             try checkManagedSymlinkRemovalResults(root: root)
             checkAppDistributions()
+            try checkLegacyEncodedCommandOutput()
             var bundleChecks = BundleUpdateChecks()
             for message in try bundleChecks.run(root: root) {
                 fail(message)
@@ -165,6 +166,20 @@ struct InstallCoreCheckRunner {
         check(standalone.assetName == "KillSwitch", "legacy updates still select the raw binary")
         check(standalone.checksumAssetName == "KillSwitch.sha256", "legacy checksum is unchanged")
         check(standalone.usesStandaloneBinary, "legacy binary updates remain available")
+    }
+
+    private mutating func checkLegacyEncodedCommandOutput() throws {
+        // 0xD1 is a MacRoman dash, as pmset writes it under LC_ALL=C; it is not valid UTF-8.
+        let result = try CommandRunner.run(
+            "/bin/sh", arguments: ["-c", #"printf 'pid 42(mock): app \321 named\n'; printf 'err \321 text' >&2"#],
+            environment: ["LC_ALL": "C"]
+        )
+        check(result.succeeded, "legacy-encoded output mock command succeeds")
+        check(
+            result.standardOutput == "pid 42(mock): app \u{FFFD} named\n",
+            "invalid UTF-8 stdout keeps readable text instead of becoming empty"
+        )
+        check(result.standardError == "err \u{FFFD} text", "invalid UTF-8 stderr keeps readable text")
     }
 
     private mutating func check(_ condition: Bool, _ message: String) {
