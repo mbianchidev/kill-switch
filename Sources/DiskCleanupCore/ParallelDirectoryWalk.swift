@@ -1,16 +1,44 @@
 import Foundation
 
+/// Reported when a queued folder is no longer the directory that was discovered,
+/// for example because it was replaced by a symbolic link before it was listed.
+struct DirectoryChangedDuringScanError: LocalizedError {
+    let path: String
+
+    var errorDescription: String? {
+        "The folder changed while it was being scanned: \(path)"
+    }
+}
+
 /// Lists a directory tree on several worker threads. Every discovered subdirectory
 /// becomes shared work, so folders with many subfolders fan out across idle workers.
 /// Each worker owns one `Partial` result; the caller merges them after the walk.
+///
+/// Queued folders remember the device and inode seen when they were discovered.
+/// A folder is listed only through a no-follow descriptor with that identity, and its
+/// path must still resolve to it after its entries are visited; otherwise the folder
+/// is reported to `listingFailed` instead of following a swapped-in link.
 final class ParallelDirectoryWalk<Context, Partial> {
     typealias ListingFailure = (inout Partial, URL, Context, Error) -> Void
     /// Returns the context for descending into the entry, or `nil` to skip its contents.
     typealias Visitor = (inout Partial, URL, Context) -> Context?
 
+    private struct DirectoryIdentity: Equatable {
+        let device: dev_t
+        let inode: ino_t
+
+        init(_ info: stat) {
+            device = info.st_dev
+            inode = info.st_ino
+        }
+    }
+
     private struct WorkItem {
         let url: URL
         let context: Context
+        let identity: DirectoryIdentity
+        /// Only the caller's root may be reached through a final symbolic link.
+        let isRoot: Bool
     }
 
     private static var progressBatchSize: Int { 128 }
@@ -61,7 +89,14 @@ final class ParallelDirectoryWalk<Context, Partial> {
         listingFailed: ListingFailure,
         visit: Visitor
     ) -> (partials: [Partial], scannedEntryCount: Int) {
-        pending = [WorkItem(url: root, context: context)]
+        switch Self.directoryIdentity(atPath: root.path, followingFinalLink: true) {
+        case .success(let identity):
+            pending = [WorkItem(url: root, context: context, identity: identity, isRoot: true)]
+        case .failure(let error):
+            var partial = makePartial()
+            listingFailed(&partial, root, context, error)
+            return ([partial], 0)
+        }
         if workerCount == 1 {
             work(makePartial: makePartial, listingFailed: listingFailed, visit: visit)
         } else {
@@ -133,6 +168,22 @@ final class ParallelDirectoryWalk<Context, Partial> {
             return []
         }
 
+        // Holding the descriptor keeps the inode allocated, so a matching identity
+        // cannot belong to a different folder created after this one was removed.
+        let flags = O_RDONLY | O_DIRECTORY | O_CLOEXEC | (item.isRoot ? 0 : O_NOFOLLOW)
+        let descriptor = open(item.url.path, flags)
+        guard descriptor >= 0 else {
+            listingFailed(&partial, item.url, item.context, Self.posixError(errno, item: item))
+            return []
+        }
+        defer { close(descriptor) }
+        var openedInfo = stat()
+        guard fstat(descriptor, &openedInfo) == 0,
+              DirectoryIdentity(openedInfo) == item.identity else {
+            listingFailed(&partial, item.url, item.context, DirectoryChangedDuringScanError(path: item.url.path))
+            return []
+        }
+
         let entries: [URL]
         do {
             entries = try fileManager.contentsOfDirectory(
@@ -144,6 +195,10 @@ final class ParallelDirectoryWalk<Context, Partial> {
             listingFailed(&partial, item.url, item.context, error)
             return []
         }
+        guard pathStillResolves(to: item) else {
+            listingFailed(&partial, item.url, item.context, DirectoryChangedDuringScanError(path: item.url.path))
+            return []
+        }
 
         var subdirectories: [WorkItem] = []
         var unreportedCount = 0
@@ -153,7 +208,14 @@ final class ParallelDirectoryWalk<Context, Partial> {
                 return []
             }
             if let childContext = visit(&partial, url, item.context) {
-                subdirectories.append(WorkItem(url: url, context: childContext))
+                switch Self.directoryIdentity(atPath: url.path, followingFinalLink: false) {
+                case .success(let identity):
+                    subdirectories.append(
+                        WorkItem(url: url, context: childContext, identity: identity, isRoot: false)
+                    )
+                case .failure(let error):
+                    listingFailed(&partial, url, childContext, error)
+                }
             }
             unreportedCount += 1
             if unreportedCount == Self.progressBatchSize {
@@ -164,7 +226,45 @@ final class ParallelDirectoryWalk<Context, Partial> {
         if unreportedCount > 0 {
             record(unreportedCount, currentURL: entries.last ?? item.url)
         }
+        // A path swapped while entries were visited may have exposed another tree.
+        guard pathStillResolves(to: item) else {
+            listingFailed(&partial, item.url, item.context, DirectoryChangedDuringScanError(path: item.url.path))
+            return []
+        }
         return subdirectories
+    }
+
+    private func pathStillResolves(to item: WorkItem) -> Bool {
+        guard case .success(let identity) = Self.directoryIdentity(
+            atPath: item.url.path,
+            followingFinalLink: item.isRoot
+        ) else {
+            return false
+        }
+        return identity == item.identity
+    }
+
+    private static func directoryIdentity(
+        atPath path: String,
+        followingFinalLink: Bool
+    ) -> Result<DirectoryIdentity, Error> {
+        var info = stat()
+        let status = followingFinalLink ? stat(path, &info) : lstat(path, &info)
+        guard status == 0 else {
+            return .failure(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))
+        }
+        guard info.st_mode & S_IFMT == S_IFDIR else {
+            return .failure(DirectoryChangedDuringScanError(path: path))
+        }
+        return .success(DirectoryIdentity(info))
+    }
+
+    private static func posixError(_ code: Int32, item: WorkItem) -> Error {
+        // O_NOFOLLOW reports a final symbolic link as ELOOP; ENOTDIR means it is no longer a folder.
+        if !item.isRoot, code == ELOOP || code == ENOTDIR {
+            return DirectoryChangedDuringScanError(path: item.url.path)
+        }
+        return POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
     }
 
     private func record(_ count: Int, currentURL: URL) {

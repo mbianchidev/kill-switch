@@ -347,7 +347,7 @@ final class ProcessInspectionMonitor: ObservableObject {
         }
     }
 
-    private static func classifyListeners(
+    static func classifyListeners(
         _ connections: [NetworkConnectionRecord], commands: [Int32: String],
         verified: [Int32: ActivityProcessIdentity], configuration: DevCleanupConfiguration
     ) -> DevServerDetection {
@@ -373,7 +373,7 @@ final class ProcessInspectionMonitor: ObservableObject {
                 : "/usr/local/bin/node /synthetic/project-\((pid - 100_000) / 50)/node_modules/.bin/vite")
         }
     )
-    private static let performanceDevCleanupConfiguration = DevCleanupConfiguration(
+    static let performanceDevCleanupConfiguration = DevCleanupConfiguration(
         autoKillEnabled: false, ageThresholdSeconds: 0, effectivePorts: DevCleanupDefaults.ports,
         runtimes: DevCleanupDefaults.runtimes, indicators: DevCleanupDefaults.indicators,
         exclusions: DevCleanupDefaults.exclusions

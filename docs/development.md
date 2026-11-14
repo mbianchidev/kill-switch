@@ -83,7 +83,12 @@ subfolder becomes work for any idle worker thread, up to the active CPU count
 at a time. Workers keep private size totals, counters, and largest-file heaps
 that are merged after the walk, so results match a single-worker scan. Progress
 counts are serialized and monotonic. An entry whose metadata cannot be read
-marks its top-level folder as incomplete and therefore protected.
+marks its top-level folder as incomplete and therefore protected. A failed root
+listing marks every listed folder incomplete. Each queued folder keeps the
+device and inode seen when it was discovered; it is opened without following a
+final symbolic link, and its path must still resolve to that identity after its
+entries are read. A folder that changed or was swapped for a link is reported
+as incomplete instead of measuring another tree.
 
 The GUI delegates shared classification, persistence, and safety decisions to
 the core targets. CLI dispatch happens in `Sources/KillSwitch/main.swift` before

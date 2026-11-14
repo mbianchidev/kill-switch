@@ -334,7 +334,11 @@ public final class DiskCleanupService {
             context: .root,
             makePartial: { DirectoryScanPartial(accumulatorCount: accumulatorCount) },
             listingFailed: { partial, _, context, error in
-                if case .accumulator(let index) = context {
+                switch context {
+                case .root:
+                    // Without the root listing no folder size is known.
+                    partial.incompleteIndices.formUnion(0..<accumulatorCount)
+                case .accumulator(let index):
                     partial.incompleteIndices.insert(index)
                 }
                 partial.counters.record(error)
