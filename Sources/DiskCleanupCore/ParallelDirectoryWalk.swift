@@ -15,9 +15,11 @@ struct DirectoryChangedDuringScanError: LocalizedError {
 /// Each worker owns one `Partial` result; the caller merges them after the walk.
 ///
 /// Queued folders remember the device and inode seen when they were discovered.
-/// A folder is listed only through a no-follow descriptor with that identity, and its
-/// path must still resolve to it after its entries are visited; otherwise the folder
-/// is reported to `listingFailed` instead of following a swapped-in link.
+/// Before listing, a folder is opened without following a final symbolic link and the
+/// descriptor's identity is compared; the descriptor stays open so the inode cannot be
+/// reused. `contentsOfDirectory` still reads by path, so the path is re-checked after
+/// listing and again after its entries are visited. Any mismatch reports the folder to
+/// `listingFailed`. A swap that is reverted between two checks can escape detection.
 final class ParallelDirectoryWalk<Context, Partial> {
     typealias ListingFailure = (inout Partial, URL, Context, Error) -> Void
     /// Returns the context for descending into the entry, or `nil` to skip its contents.
