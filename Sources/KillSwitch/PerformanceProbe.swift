@@ -256,6 +256,7 @@ enum PerformanceProbe {
         inspectionPresentationChecks(check)
         projectCacheTimingChecks(check)
         filteredProjectWarningChecks(check)
+        devServerDetectionChecks(check)
         copyFeedbackChecks(check)
         dashboardSelectionChecks(check)
 
@@ -1647,6 +1648,55 @@ enum PerformanceProbe {
         check(state == .unavailable, "A completed unavailable thermal reading must remain distinct from pending data.")
         check(status.performanceThermalValue == SystemThermalState.unavailable.rawValue,
               "A completed unavailable thermal shortcut must not revert to its collecting state.")
+    }
+
+    private static func devServerDetectionChecks(_ check: (Bool, String) -> Void) {
+        let previousVisibility = AppWindowVisibility.isVisible
+        AppWindowVisibility.setVisible(true)
+        defer { AppWindowVisibility.setVisible(previousVisibility) }
+        let inspection = ProcessInspectionMonitor()
+        defer { inspection.stop() }
+        inspection.stop()
+        inspection.start(.listeners)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        repeat {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        } while (inspection.lastUpdated == nil || inspection.isRefreshing) && ContinuousClock.now < deadline
+        let detection = inspection.devServerDetection
+        let listeners = inspection.connections.filter(\.isListening)
+        let other = listeners.filter { $0.pid == ProcessInspectionMonitor.performanceNonDevServerPID }
+        check(!other.isEmpty && !other.contains { detection.listenerIDs.contains($0.id) },
+              "A listener whose command does not match Dev cleanup rules or watched ports must stay out of detected dev servers.")
+        check(detection.listenerIDs.count == listeners.count - other.count
+              && detection.unclassifiedListenerIDs.isEmpty && detection.error == nil,
+              "A listener sample must classify every verified synthetic dev server command.")
+
+        let command = "/usr/local/bin/node /synthetic/project/node_modules/.bin/vite"
+        let unverifiedOther: Int32 = 200_001, unverifiedWatched: Int32 = 200_002, verifiedOther: Int32 = 200_003
+        let ports: [(Int32, Int)] = [(unverifiedOther, 47_123), (unverifiedWatched, 5_173), (verifiedOther, 47_124)]
+        let fields = ports.flatMap { pid, port in
+            ["p\(pid)", "cnode", "u501", "Lsynthetic-user",
+             "\nf5", "tIPv4", "PTCP", "n127.0.0.1:\(port)", "TST=LISTEN"]
+        } + [""]
+        let synthetic = ProcessInspectionParser.parseLsof(Data(fields.joined(separator: "\0").utf8)).connections
+        let unverified = ProcessInspectionMonitor.classifyListeners(
+            synthetic,
+            commands: Dictionary(uniqueKeysWithValues: ports.map { ($0.0, command) }),
+            verified: [verifiedOther: ActivityProcessIdentity(bootSession: "synthetic-boot", pid: verifiedOther, startTime: 1)],
+            configuration: ProcessInspectionMonitor.performanceDevCleanupConfiguration
+        )
+        func listener(_ pid: Int32) -> NetworkConnectionRecord.ID? { synthetic.first { $0.pid == pid }?.id }
+        guard synthetic.count == 3, let hidden = listener(unverifiedOther), let watched = listener(unverifiedWatched),
+              let verified = listener(verifiedOther) else {
+            check(false, "Synthetic unverified listeners must parse.")
+            return
+        }
+        check(unverified.unclassifiedListenerIDs == [hidden, watched],
+              "A dev server command must not classify a listener whose PID lifetime is unverified.")
+        check(!unverified.listenerIDs.contains(hidden),
+              "An unverified listener on an unwatched port must stay out of detected dev servers.")
+        check(unverified.listenerIDs.contains(watched) && unverified.listenerIDs.contains(verified),
+              "Watched ports must stay listed without a verified command, and verified dev server commands must be listed.")
     }
 
     private static func filteredProjectWarningChecks(_ check: (Bool, String) -> Void) {

@@ -141,10 +141,21 @@ on the dashboard when its history remains available.
 ## Dev servers
 
 This separate page is safe to open for discovery: it never starts Dev cleanup,
-terminates a process, or changes a service. It shows visible TCP listeners
+terminates a process, or changes a service. By default it shows **Detected dev
+servers**: the same running dev servers and watched ports that Dev cleanup
+lists, using your saved runtimes, indicators, exclusions, and watched ports.
+You do not need to open Dev cleanup or confirm a cleanup pass to see them.
+Choose **All listeners** to show every visible TCP listener instead. Rows are
 grouped by the nearest Git project, a recognized project manifest, or working
 directory. Search listener fields and numeric ports, or independently find
 project names, paths, and branches.
+
+Detection reads listener command lines with `ps` and uses a command only after
+confirming it belongs to the same process lifetime as the sampled listener.
+Commands under `/System/` are never listed. A listener whose command line is
+unavailable can only match a watched port; if such listeners are hidden, a
+warning shows how many and any `ps` error. Protected processes can appear here
+because this page is read-only; Dev cleanup still never terminates them.
 
 Project-warning banners follow the visible listener and project filters;
 affected visible rows show their specific reason. Errors remain retained for
@@ -216,6 +227,8 @@ and recovery.
   select one or more candidates.
 - Sort by item, contents, modification date, or space used; the Sort picker
   also offers path and type. Numeric filters use bytes, not formatted size text.
+- Storage mapping reads folders in parallel across CPU cores, so trees with
+  many subfolders finish much faster than a one-folder-at-a-time scan.
 - Scans continue across tab, category, or folder changes. Completed locations
   are cached; **Rescan** applies added, updated, and removed items without
   clearing visible rows first.
@@ -238,7 +251,8 @@ safe preview while automatic termination is enabled. **Open Dev cleanup**
 explicitly asks for confirmation; confirming immediately runs a cleanup,
 which can terminate qualifying servers older than the saved age. Age is total
 process lifetime, not inactivity; a busy server can qualify.
-Use **Dev servers** for read-only discovery. If you cannot risk that first
+Use **Dev servers** for read-only discovery: it lists the same detected dev
+servers without a confirmation or cleanup pass. If you cannot risk that first
 cleanup pass, cancel the entry confirmation. The CLI
 [status command](cli.md#read-saved-status) reads settings without running cleanup.
 

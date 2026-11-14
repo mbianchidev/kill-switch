@@ -12,6 +12,7 @@ public final class DiskCleanupService {
     private let trashMover: TrashMover
     private let progressStride: Int
     private let progressInterval: TimeInterval
+    private let scanConcurrency: Int
 
     private let resourceKeys: Set<URLResourceKey> = [
         .contentModificationDateKey,
@@ -42,6 +43,7 @@ public final class DiskCleanupService {
         cachesDirectory: URL? = nil,
         progressStride: Int = 512,
         progressInterval: TimeInterval = 0.15,
+        scanConcurrency: Int? = nil,
         trashMover: TrashMover? = nil
     ) {
         self.fileManager = fileManager
@@ -54,9 +56,15 @@ public final class DiskCleanupService {
         ).standardizedFileURL
         self.progressStride = max(1, progressStride)
         self.progressInterval = max(0, progressInterval)
+        self.scanConcurrency = max(1, scanConcurrency ?? Self.defaultScanConcurrency)
         self.trashMover = trashMover ?? { url in
             try fileManager.trashItem(at: url, resultingItemURL: nil)
         }
+    }
+
+    /// Directory reads run in parallel up to the active CPU count; gains flatten beyond 16 workers.
+    private static var defaultScanConcurrency: Int {
+        min(max(1, ProcessInfo.processInfo.activeProcessorCount), 16)
     }
 
     public func rootURL(for category: DiskCleanupCategory) -> URL {
@@ -133,80 +141,54 @@ public final class DiskCleanupService {
         guard fileManager.fileExists(atPath: homeDirectory.path) else {
             throw DiskCleanupError.unavailableRoot(homeDirectory.path)
         }
+        try checkCancellation(cancellationToken)
 
-        var skippedItemCount = 0
-        var permissionDeniedCount = 0
-        var excludedCloudItemCount = 0
-        var scannedEntryCount = 0
-        var reporter = ProgressReporter(
-            stride: progressStride,
-            minimumInterval: progressInterval
+        let walk = ParallelDirectoryWalk<Int, LargestFilesPartial>(
+            fileManager: fileManager,
+            resourceKeys: resourceKeys,
+            options: [.skipsHiddenFiles],
+            workerCount: scanConcurrency,
+            progressStride: progressStride,
+            progressInterval: progressInterval,
+            cancellationToken: cancellationToken,
+            progress: progress
         )
-        var largest = BoundedLargestItems(limit: limit)
-
-        guard let enumerator = fileManager.enumerator(
-            at: homeDirectory,
-            includingPropertiesForKeys: Array(resourceKeys),
-            options: [.skipsHiddenFiles, .skipsPackageDescendants],
-            errorHandler: { _, error in
-                if Self.isPermissionError(error) {
-                    permissionDeniedCount += 1
-                } else {
-                    skippedItemCount += 1
+        let outcome = walk.run(
+            root: homeDirectory,
+            context: 0,
+            makePartial: { LargestFilesPartial(largest: BoundedLargestItems(limit: limit)) },
+            listingFailed: { partial, _, _, error in
+                partial.counters.record(error)
+            },
+            visit: { partial, url, depth in
+                // Library and .Trash are direct children of home, so excluding them there skips their subtrees.
+                if depth == 0, shouldExcludeHomeSubtree(url) {
+                    return nil
                 }
-                return true
-            }
-        ) else {
-            throw DiskCleanupError.unreadableDirectory(
-                homeDirectory.path,
-                "File enumeration could not start."
-            )
-        }
 
-        while let rawURL = enumerator.nextObject() {
-            guard let url = rawURL as? URL else {
-                skippedItemCount += 1
-                continue
-            }
-
-            scannedEntryCount += 1
-            try checkCancellation(cancellationToken)
-            reportProgressIfNeeded(
-                &reporter,
-                scannedEntryCount: scannedEntryCount,
-                url: url,
-                progress: progress
-            )
-            try checkCancellation(cancellationToken)
-
-            do {
-                let values = try url.resourceValues(forKeys: resourceKeys)
-
-                if shouldExcludeHomeSubtree(url) {
-                    if values.isDirectory == true {
-                        enumerator.skipDescendants()
-                    }
-                    continue
+                let values: URLResourceValues
+                do {
+                    values = try url.resourceValues(forKeys: resourceKeys)
+                } catch {
+                    partial.counters.record(error)
+                    return nil
                 }
                 if values.isSymbolicLink == true {
-                    if values.isDirectory == true {
-                        enumerator.skipDescendants()
-                    }
-                    skippedItemCount += 1
-                    continue
+                    partial.counters.skippedItemCount += 1
+                    return nil
                 }
                 if values.isUbiquitousItem == true {
-                    if values.isDirectory == true {
-                        enumerator.skipDescendants()
-                    }
-                    excludedCloudItemCount += 1
-                    continue
+                    partial.counters.excludedCloudItemCount += 1
+                    return nil
                 }
-                guard values.isRegularFile == true else { continue }
+                if values.isDirectory == true {
+                    return values.isPackage == true ? nil : depth + 1
+                }
+                guard values.isRegularFile == true else { return nil }
 
                 let size = Self.diskSize(values)
-                guard size > 0 else { continue }
-                largest.insert(
+                guard size > 0, partial.largest.mightAccept(sizeBytes: size) else { return nil }
+                partial.largest.insert(
                     DiskCleanupItem(
                         url: url.standardizedFileURL,
                         name: url.lastPathComponent,
@@ -223,29 +205,30 @@ public final class DiskCleanupService {
                         )
                     )
                 )
-            } catch {
-                if Self.isPermissionError(error) {
-                    permissionDeniedCount += 1
-                } else {
-                    skippedItemCount += 1
-                }
+                return nil
             }
-        }
+        )
 
         try checkCancellation(cancellationToken)
         progress?(DiskCleanupProgress(
-            scannedEntryCount: scannedEntryCount,
+            scannedEntryCount: outcome.scannedEntryCount,
             currentURL: homeDirectory
         ))
 
+        var largest = BoundedLargestItems(limit: limit)
+        var counters = DiskScanCounters()
+        for partial in outcome.partials {
+            largest.merge(partial.largest)
+            counters.add(partial.counters)
+        }
         return DiskCleanupScanResult(
             category: .largestFiles,
             rootURL: homeDirectory,
             items: largest.sortedItems,
-            scannedEntryCount: scannedEntryCount,
-            skippedItemCount: skippedItemCount,
-            permissionDeniedCount: permissionDeniedCount,
-            excludedCloudItemCount: excludedCloudItemCount
+            scannedEntryCount: outcome.scannedEntryCount,
+            skippedItemCount: counters.skippedItemCount,
+            permissionDeniedCount: counters.permissionDeniedCount,
+            excludedCloudItemCount: counters.excludedCloudItemCount
         )
     }
 
@@ -256,15 +239,8 @@ public final class DiskCleanupService {
         progress: ProgressHandler?
     ) throws -> DiskCleanupScanResult {
         try checkCancellation(cancellationToken)
-        var skippedItemCount = 0
-        var permissionDeniedCount = 0
-        var excludedCloudItemCount = 0
-        var scannedEntryCount = 0
+        var counters = DiskScanCounters()
         var incompleteAccumulatorPaths: Set<String> = []
-        var reporter = ProgressReporter(
-            stride: progressStride,
-            minimumInterval: progressInterval
-        )
 
         var accumulators: [DirectoryAccumulator] = []
         var accumulatorIndexByPath: [String: Int] = [:]
@@ -277,11 +253,7 @@ public final class DiskCleanupService {
                 if let path = self.directChildPath(containing: url, under: root) {
                     incompleteAccumulatorPaths.insert(path)
                 }
-                if Self.isPermissionError(error) {
-                    permissionDeniedCount += 1
-                } else {
-                    skippedItemCount += 1
-                }
+                counters.record(error)
                 return true
             }
         ) else {
@@ -293,7 +265,7 @@ public final class DiskCleanupService {
 
         while let rawURL = directEnumerator.nextObject() {
             guard let url = rawURL as? URL else {
-                skippedItemCount += 1
+                counters.skippedItemCount += 1
                 continue
             }
             try checkCancellation(cancellationToken)
@@ -304,11 +276,11 @@ public final class DiskCleanupService {
             do {
                 let values = try url.resourceValues(forKeys: resourceKeys)
                 if values.isSymbolicLink == true {
-                    skippedItemCount += 1
+                    counters.skippedItemCount += 1
                     continue
                 }
                 if values.isUbiquitousItem == true {
-                    excludedCloudItemCount += 1
+                    counters.excludedCloudItemCount += 1
                     continue
                 }
 
@@ -318,7 +290,7 @@ public final class DiskCleanupService {
                 } else if values.isRegularFile == true {
                     kind = .file
                 } else {
-                    skippedItemCount += 1
+                    counters.skippedItemCount += 1
                     continue
                 }
 
@@ -340,121 +312,107 @@ public final class DiskCleanupService {
                     )
                 )
             } catch {
-                if Self.isPermissionError(error) {
-                    permissionDeniedCount += 1
-                } else {
-                    skippedItemCount += 1
-                }
+                counters.record(error)
             }
         }
 
-        guard let enumerator = fileManager.enumerator(
-            at: root,
-            includingPropertiesForKeys: Array(resourceKeys),
+        let indexByPath = accumulatorIndexByPath
+        let accumulatorCount = accumulators.count
+        let walk = ParallelDirectoryWalk<DirectoryScanContext, DirectoryScanPartial>(
+            fileManager: fileManager,
+            resourceKeys: resourceKeys,
             // Hidden descendants count because moving the visible parent to Trash removes them too.
             options: [],
-            errorHandler: { url, error in
-                if let path = self.directChildPath(containing: url, under: root) {
-                    incompleteAccumulatorPaths.insert(path)
+            workerCount: scanConcurrency,
+            progressStride: progressStride,
+            progressInterval: progressInterval,
+            cancellationToken: cancellationToken,
+            progress: progress
+        )
+        let outcome = walk.run(
+            root: root,
+            context: .root,
+            makePartial: { DirectoryScanPartial(accumulatorCount: accumulatorCount) },
+            listingFailed: { partial, _, context, error in
+                switch context {
+                case .root:
+                    // Without the root listing no folder size is known.
+                    partial.incompleteIndices.formUnion(0..<accumulatorCount)
+                case .accumulator(let index):
+                    partial.incompleteIndices.insert(index)
                 }
-                if Self.isPermissionError(error) {
-                    permissionDeniedCount += 1
-                } else {
-                    skippedItemCount += 1
-                }
-                return true
-            }
-        ) else {
-            throw DiskCleanupError.unreadableDirectory(
-                root.path,
-                "File enumeration could not start."
-            )
-        }
-
-        while let rawURL = enumerator.nextObject() {
-            guard let url = rawURL as? URL else {
-                skippedItemCount += 1
-                continue
-            }
-
-            scannedEntryCount += 1
-            try checkCancellation(cancellationToken)
-            reportProgressIfNeeded(
-                &reporter,
-                scannedEntryCount: scannedEntryCount,
-                url: url,
-                progress: progress
-            )
-            try checkCancellation(cancellationToken)
-
-            guard
-                let relativeComponents = relativeComponents(of: url, from: root),
-                let directChildName = relativeComponents.first
-            else {
-                skippedItemCount += 1
-                continue
-            }
-
-            do {
-                let values = try url.resourceValues(forKeys: resourceKeys)
-                let directChildPath = root
-                    .appendingPathComponent(directChildName)
-                    .standardizedFileURL
-                    .path
-                guard let index = accumulatorIndexByPath[directChildPath] else {
-                    if relativeComponents.count == 1, values.isDirectory == true {
-                        enumerator.skipDescendants()
+                partial.counters.record(error)
+            },
+            visit: { partial, url, context in
+                let index: Int
+                switch context {
+                case .root:
+                    guard let topLevelIndex = indexByPath[url.standardizedFileURL.path] else {
+                        return nil
                     }
-                    continue
+                    index = topLevelIndex
+                case .accumulator(let parentIndex):
+                    index = parentIndex
+                }
+
+                let values: URLResourceValues
+                do {
+                    values = try url.resourceValues(forKeys: resourceKeys)
+                } catch {
+                    partial.counters.record(error)
+                    // An entry of unknown type may be an unmeasured folder.
+                    partial.incompleteIndices.insert(index)
+                    return nil
                 }
                 if values.isSymbolicLink == true {
-                    if values.isDirectory == true {
-                        enumerator.skipDescendants()
-                    }
-                    skippedItemCount += 1
-                    continue
+                    partial.counters.skippedItemCount += 1
+                    return nil
                 }
                 if values.isUbiquitousItem == true {
-                    if values.isDirectory == true {
-                        enumerator.skipDescendants()
-                    }
-                    excludedCloudItemCount += 1
-                    continue
+                    partial.counters.excludedCloudItemCount += 1
+                    return nil
                 }
-                guard values.isRegularFile == true else { continue }
+                if values.isDirectory == true {
+                    return .accumulator(index)
+                }
+                guard values.isRegularFile == true else { return nil }
 
-                accumulators[index].sizeBytes += Self.diskSize(values)
-                accumulators[index].fileCount += 1
-            } catch {
-                if Self.isPermissionError(error) {
-                    permissionDeniedCount += 1
-                } else {
-                    skippedItemCount += 1
-                }
+                partial.sizes[index] += Self.diskSize(values)
+                partial.fileCounts[index] += 1
+                return nil
             }
-        }
+        )
 
         try checkCancellation(cancellationToken)
         progress?(DiskCleanupProgress(
-            scannedEntryCount: scannedEntryCount,
+            scannedEntryCount: outcome.scannedEntryCount,
             currentURL: root
         ))
 
-        let items = accumulators.map { accumulator in
+        var incompleteIndices: Set<Int> = []
+        for partial in outcome.partials {
+            for index in accumulators.indices {
+                accumulators[index].sizeBytes += partial.sizes[index]
+                accumulators[index].fileCount += partial.fileCounts[index]
+            }
+            incompleteIndices.formUnion(partial.incompleteIndices)
+            counters.add(partial.counters)
+        }
+
+        let items = accumulators.enumerated().map { index, accumulator in
             accumulator.item(
-                scanIncomplete: incompleteAccumulatorPaths.contains(
-                    accumulator.url.standardizedFileURL.path
-                )
+                scanIncomplete: incompleteIndices.contains(index)
+                    || incompleteAccumulatorPaths.contains(accumulator.url.standardizedFileURL.path)
             )
         }.sorted(by: Self.sortLargestFirst)
         return DiskCleanupScanResult(
             category: category,
             rootURL: root,
             items: items,
-            scannedEntryCount: scannedEntryCount,
-            skippedItemCount: skippedItemCount,
-            permissionDeniedCount: permissionDeniedCount,
-            excludedCloudItemCount: excludedCloudItemCount
+            scannedEntryCount: outcome.scannedEntryCount,
+            skippedItemCount: counters.skippedItemCount,
+            permissionDeniedCount: counters.permissionDeniedCount,
+            excludedCloudItemCount: counters.excludedCloudItemCount
         )
     }
 
@@ -630,19 +588,6 @@ public final class DiskCleanupService {
         }
     }
 
-    private func reportProgressIfNeeded(
-        _ reporter: inout ProgressReporter,
-        scannedEntryCount: Int,
-        url: URL,
-        progress: ProgressHandler?
-    ) {
-        guard reporter.shouldReport(scannedEntryCount: scannedEntryCount) else { return }
-        progress?(DiskCleanupProgress(
-            scannedEntryCount: scannedEntryCount,
-            currentURL: url
-        ))
-    }
-
     private static func diskSize(_ values: URLResourceValues) -> UInt64 {
         if let allocated = values.totalFileAllocatedSize {
             return UInt64(max(0, allocated))
@@ -669,7 +614,7 @@ public final class DiskCleanupService {
         )
     }
 
-    private static func isPermissionError(_ error: Error) -> Bool {
+    fileprivate static func isPermissionError(_ error: Error) -> Bool {
         let nsError = error as NSError
         if nsError.domain == NSCocoaErrorDomain,
            nsError.code == CocoaError.fileReadNoPermission.rawValue {
@@ -707,24 +652,45 @@ private struct DirectoryAccumulator {
     }
 }
 
-private struct ProgressReporter {
-    let stride: Int
-    let minimumInterval: TimeInterval
-    private var lastReportCount = 0
-    private var lastReportTime = Date.distantPast
+private enum DirectoryScanContext {
+    case root
+    case accumulator(Int)
+}
 
-    init(stride: Int, minimumInterval: TimeInterval) {
-        self.stride = stride
-        self.minimumInterval = minimumInterval
+private struct DiskScanCounters {
+    var skippedItemCount = 0
+    var permissionDeniedCount = 0
+    var excludedCloudItemCount = 0
+
+    mutating func record(_ error: Error) {
+        if DiskCleanupService.isPermissionError(error) {
+            permissionDeniedCount += 1
+        } else {
+            skippedItemCount += 1
+        }
     }
 
-    mutating func shouldReport(scannedEntryCount: Int) -> Bool {
-        guard scannedEntryCount - lastReportCount >= stride else { return false }
-        let now = Date()
-        guard now.timeIntervalSince(lastReportTime) >= minimumInterval else { return false }
-        lastReportCount = scannedEntryCount
-        lastReportTime = now
-        return true
+    mutating func add(_ other: DiskScanCounters) {
+        skippedItemCount += other.skippedItemCount
+        permissionDeniedCount += other.permissionDeniedCount
+        excludedCloudItemCount += other.excludedCloudItemCount
+    }
+}
+
+private struct LargestFilesPartial {
+    var largest: BoundedLargestItems
+    var counters = DiskScanCounters()
+}
+
+private struct DirectoryScanPartial {
+    var sizes: [UInt64]
+    var fileCounts: [Int]
+    var incompleteIndices: Set<Int> = []
+    var counters = DiskScanCounters()
+
+    init(accumulatorCount: Int) {
+        sizes = Array(repeating: 0, count: accumulatorCount)
+        fileCounts = Array(repeating: 0, count: accumulatorCount)
     }
 }
 
@@ -748,6 +714,18 @@ private struct BoundedLargestItems {
         }
         heap[0] = item
         siftDown(from: 0)
+    }
+
+    /// Cheap pre-check so files that cannot enter a full heap skip building an item.
+    func mightAccept(sizeBytes: UInt64) -> Bool {
+        guard heap.count >= limit, let smallest = heap.first else { return true }
+        return sizeBytes >= smallest.sizeBytes
+    }
+
+    mutating func merge(_ other: BoundedLargestItems) {
+        for item in other.heap {
+            insert(item)
+        }
     }
 
     var sortedItems: [DiskCleanupItem] {

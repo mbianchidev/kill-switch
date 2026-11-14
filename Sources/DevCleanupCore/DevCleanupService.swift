@@ -69,6 +69,45 @@ public struct DevCleanupConfiguration: Equatable {
     }
 }
 
+/// Shared Dev cleanup detection rules, used by cleanup and the read-only Dev servers page.
+public struct DevServerClassifier {
+    private let notablePorts: Set<Int>
+    private let runtimes: [String]
+    private let indicators: [String]
+    private let exclusions: [String]
+
+    public init(configuration: DevCleanupConfiguration) {
+        notablePorts = Set(configuration.effectivePorts)
+        runtimes = configuration.runtimes
+        indicators = configuration.indicators
+        exclusions = configuration.exclusions
+    }
+
+    /// Returns the matched runtime when `command` is a non-system, non-excluded development server.
+    public func runtime(for command: String) -> String? {
+        guard !Self.isSystemProcess(command) else { return nil }
+        let lower = command.lowercased()
+        guard indicators.contains(where: { lower.contains($0) }),
+              !exclusions.contains(where: { lower.contains($0) }),
+              let firstToken = command.split(whereSeparator: { $0.isWhitespace }).first else {
+            return nil
+        }
+        let executable = firstToken.split(separator: "/").last.map(String.init)?.lowercased() ?? ""
+        return runtimes.first { executable == $0 || executable.hasPrefix($0) }
+    }
+
+    /// Matches Dev cleanup's running dev servers and watched ports. A missing command matches by port only.
+    public func listsListener(command: String?, port: Int) -> Bool {
+        guard let command else { return notablePorts.contains(port) }
+        guard !Self.isSystemProcess(command) else { return false }
+        return notablePorts.contains(port) || runtime(for: command) != nil
+    }
+
+    private static func isSystemProcess(_ command: String) -> Bool {
+        command.trimmingCharacters(in: .whitespaces).hasPrefix("/System/")
+    }
+}
+
 public enum DevPortTableFields {
     public static let port = TableField<PortProcess>.number("port", title: "Port", searchable: true) { Decimal($0.port) }
     public static let command = TableField<PortProcess>.text("command", title: "Command", aliases: ["name", "process"]) { $0.command }
@@ -135,12 +174,7 @@ public final class DevCleanupService {
         let ports = try listeningPortsProvider()
         return DevCleanupScanResult(
             portProcesses: Self.portRows(
-                processes: processes,
-                ports: ports,
-                notablePorts: Set(configuration.effectivePorts),
-                runtimes: configuration.runtimes,
-                indicators: configuration.indicators,
-                exclusions: configuration.exclusions
+                processes: processes, ports: ports, classifier: DevServerClassifier(configuration: configuration)
             )
         )
     }
@@ -148,24 +182,15 @@ public final class DevCleanupService {
     public func cleanup(configuration: DevCleanupConfiguration) throws -> DevCleanupResult {
         let processes = try processProvider()
         let ports = try listeningPortsProvider()
-        let portProcesses = Self.portRows(
-            processes: processes,
-            ports: ports,
-            notablePorts: Set(configuration.effectivePorts),
-            runtimes: configuration.runtimes,
-            indicators: configuration.indicators,
-            exclusions: configuration.exclusions
-        )
+        let classifier = DevServerClassifier(configuration: configuration)
+        let portProcesses = Self.portRows(processes: processes, ports: ports, classifier: classifier)
 
         var candidateCount = 0
         var killed: [CleanedProcess] = []
         for process in processes where process.user == username {
             guard
-                let runtime = Self.devRuntime(process.command, runtimes: configuration.runtimes),
-                Self.isDevServer(process.command, indicators: configuration.indicators),
-                !Self.isSystemProcess(process.command),
-                !ProcessTerminationPolicy.isProtected(command: process.command),
-                !Self.isExcluded(process.command, exclusions: configuration.exclusions)
+                let runtime = classifier.runtime(for: process.command),
+                !ProcessTerminationPolicy.isProtected(command: process.command)
             else {
                 continue
             }
@@ -195,10 +220,7 @@ public final class DevCleanupService {
     private static func portRows(
         processes: [DevCleanupProcess],
         ports: [Int32: Set<Int>],
-        notablePorts: Set<Int>,
-        runtimes: [String],
-        indicators: [String],
-        exclusions: [String]
+        classifier: DevServerClassifier
     ) -> [PortProcess] {
         let commandByPID = Dictionary(
             processes.map { ($0.pid, $0.command) },
@@ -206,40 +228,14 @@ public final class DevCleanupService {
         )
         var rows: [PortProcess] = []
         for (pid, portSet) in ports {
-            let command = commandByPID[pid] ?? "pid \(pid)"
-            if isSystemProcess(command) { continue }
-            let isDev = devRuntime(command, runtimes: runtimes) != nil
-                && isDevServer(command, indicators: indicators)
-                && !isExcluded(command, exclusions: exclusions)
-            for port in portSet where notablePorts.contains(port) || isDev {
+            let command = commandByPID[pid]
+            for port in portSet where classifier.listsListener(command: command, port: port) {
                 rows.append(
-                    PortProcess(id: "\(pid)-\(port)", pid: pid, command: command, port: port)
+                    PortProcess(id: "\(pid)-\(port)", pid: pid, command: command ?? "pid \(pid)", port: port)
                 )
             }
         }
         rows.sort { $0.port == $1.port ? $0.pid < $1.pid : $0.port < $1.port }
         return rows
-    }
-
-    private static func isExcluded(_ command: String, exclusions: [String]) -> Bool {
-        let lower = command.lowercased()
-        return exclusions.contains { lower.contains($0) }
-    }
-
-    private static func isSystemProcess(_ command: String) -> Bool {
-        command.trimmingCharacters(in: .whitespaces).hasPrefix("/System/")
-    }
-
-    private static func isDevServer(_ command: String, indicators: [String]) -> Bool {
-        let lower = command.lowercased()
-        return indicators.contains { lower.contains($0) }
-    }
-
-    private static func devRuntime(_ command: String, runtimes: [String]) -> String? {
-        guard let firstToken = command.split(whereSeparator: { $0.isWhitespace }).first else {
-            return nil
-        }
-        let executable = firstToken.split(separator: "/").last.map(String.init)?.lowercased() ?? ""
-        return runtimes.first { executable == $0 || executable.hasPrefix($0) }
     }
 }

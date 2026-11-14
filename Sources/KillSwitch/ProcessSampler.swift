@@ -73,6 +73,31 @@ enum ProcessSampler {
         return result
     }
 
+    /// Full command lines for `pids`. Processes that already exited are omitted.
+    static func commandLines(pids: Set<Int32>) throws -> [Int32: String] {
+        guard !pids.isEmpty else { return [:] }
+        let output: String
+        do {
+            // Command lines are only matched, never written back, so one non-UTF-8 argument must not hide every listener.
+            output = try runProcessThrowing(
+                "/bin/ps", ["-ww", "-o", "pid=,args=", "-p", pids.sorted().map(String.init).joined(separator: ",")],
+                outputDecoding: .lossyUTF8
+            )
+        } catch let error as ProcessSamplerError {
+            // ps uses status 1 with no stderr when none of the requested processes still exist.
+            if case .commandFailed(_, 1, _) = error, error.cleanedStandardError == nil { return [:] }
+            throw error
+        }
+        var commands: [Int32: String] = [:]
+        for line in output.split(separator: "\n") {
+            let parts = line.split(maxSplits: 1, omittingEmptySubsequences: true) { $0.isWhitespace }
+            guard parts.count == 2, let pid = Int32(parts[0]), pids.contains(pid) else { continue }
+            let command = parts[1].trimmingCharacters(in: .whitespaces)
+            if !command.isEmpty { commands[pid] = command }
+        }
+        return commands
+    }
+
     // MARK: - Listening ports
 
     /// Map of pid -> set of TCP ports the process is listening on.
@@ -278,10 +303,12 @@ enum ProcessSampler {
         return nil
     }
 
-    private static func runProcessThrowing(_ launchPath: String, _ arguments: [String]) throws -> String {
+    private static func runProcessThrowing(
+        _ launchPath: String, _ arguments: [String], outputDecoding: CommandOutputDecoding = .strictUTF8
+    ) throws -> String {
         let result: CommandResult
         do {
-            result = try CommandRunner.run(launchPath, arguments: arguments)
+            result = try CommandRunner.run(launchPath, arguments: arguments, outputDecoding: outputDecoding)
         } catch let runnerError as CommandRunnerError {
             switch runnerError {
             case .launchFailed(_, let underlying):
