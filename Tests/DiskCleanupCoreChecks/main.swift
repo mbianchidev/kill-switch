@@ -26,6 +26,7 @@ struct CheckRunner {
             try checkScanning(in: fixtureRoot)
             checkScanDelta()
             try checkCancellation(in: fixtureRoot)
+            try checkParallelScanning(in: fixtureRoot)
             try checkIncompleteFolderProtection(in: fixtureRoot)
             try checkTrashSafety(in: fixtureRoot)
         } catch {
@@ -213,6 +214,102 @@ struct CheckRunner {
             check(true, "cancels before listing directory contents")
         } catch {
             fail("cancels before listing directory contents: \(error.localizedDescription)")
+        }
+    }
+
+    private mutating func checkParallelScanning(in fixtureRoot: URL) throws {
+        let roots = try makeRoots(in: fixtureRoot.appendingPathComponent("parallel", isDirectory: true))
+        let projects = roots.home.appendingPathComponent("Projects", isDirectory: true)
+        for project in 0..<6 {
+            for module in 0..<4 {
+                for leaf in 0..<3 {
+                    let folder = projects.appendingPathComponent(
+                        "p\(project)/m\(module)/d\(leaf)",
+                        isDirectory: true
+                    )
+                    try writeFile(
+                        folder.appendingPathComponent("data.bin"),
+                        bytes: 1024 * (project * 12 + module * 3 + leaf + 1)
+                    )
+                    try writeFile(folder.appendingPathComponent(".hidden.bin"), bytes: 2048)
+                }
+            }
+        }
+        let package = roots.home.appendingPathComponent("Tool.app", isDirectory: true)
+        try writeFile(package.appendingPathComponent("Contents/payload.bin"), bytes: 900 * 1024)
+        try writeFile(roots.home.appendingPathComponent("Library/ignored.bin"), bytes: 800 * 1024)
+        try fileManager.createSymbolicLink(
+            at: projects.appendingPathComponent("p0/linked", isDirectory: true),
+            withDestinationURL: package
+        )
+        for group in 0..<5 {
+            try writeFile(
+                roots.caches.appendingPathComponent("group\(group)/a/b/c/cache.bin"),
+                bytes: 4096 * (group + 1)
+            )
+            try writeFile(
+                roots.temporary.appendingPathComponent("session\(group)/x/y/temp.bin"),
+                bytes: 2048 * (group + 1)
+            )
+        }
+
+        func makeService(concurrency: Int) -> DiskCleanupService {
+            DiskCleanupService(
+                homeDirectory: roots.home,
+                temporaryDirectory: roots.temporary,
+                cachesDirectory: roots.caches,
+                progressStride: 1,
+                progressInterval: 0,
+                scanConcurrency: concurrency,
+                trashMover: { _ in }
+            )
+        }
+        let serial = makeService(concurrency: 1)
+        let parallel = makeService(concurrency: 8)
+
+        for category in DiskCleanupCategory.allCases {
+            var progressCounts: [Int] = []
+            let serialResult = try serial.scan(category: category, largestFileLimit: 10)
+            let parallelResult = try parallel.scan(
+                category: category,
+                largestFileLimit: 10,
+                progress: { progressCounts.append($0.scannedEntryCount) }
+            )
+            check(
+                parallelResult == serialResult,
+                "parallel \(category) scan matches a single-worker scan"
+            )
+            check(
+                progressCounts == progressCounts.sorted()
+                    && progressCounts.last == parallelResult.scannedEntryCount,
+                "parallel \(category) progress stays monotonic"
+            )
+        }
+
+        let largest = try parallel.scan(category: .largestFiles, largestFileLimit: 3)
+        check(
+            largest.items.map(\.name) == ["data.bin", "data.bin", "data.bin"]
+                && largest.items.first?.sizeBytes ?? 0 >= 72 * 1024,
+            "parallel largest-file scan skips packages, Library, and symbolic links"
+        )
+        let folders = try parallel.scan(category: .largeFolders)
+        check(
+            folders.items.first(where: { $0.name == "Projects" })?.fileCount == 144,
+            "parallel folder scan counts every nested and hidden descendant once"
+        )
+
+        let token = DiskCleanupCancellationToken()
+        do {
+            _ = try parallel.scan(
+                category: .largeFolders,
+                cancellationToken: token,
+                progress: { _ in token.cancel() }
+            )
+            fail("cancels an in-flight parallel scan")
+        } catch DiskCleanupError.cancelled {
+            check(true, "cancels an in-flight parallel scan")
+        } catch {
+            fail("cancels an in-flight parallel scan: \(error.localizedDescription)")
         }
     }
 

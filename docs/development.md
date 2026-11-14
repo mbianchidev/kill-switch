@@ -66,7 +66,7 @@ terminate real processes.
 | --- | --- |
 | [`TableQueryCore`](../Sources/TableQueryCore) | Typed text/numeric/date/boolean filters, unit parsing, quoted search, and bidirectional comparators shared by all data tables |
 | [`DevCleanupCore`](../Sources/DevCleanupCore) | Preferences, integration-port merging, CLI parsing, cleanup classification, and shared termination protection |
-| [`DiskCleanupCore`](../Sources/DiskCleanupCore) | File scanning, cleanup candidates, protected-path checks, and Trash operations |
+| [`DiskCleanupCore`](../Sources/DiskCleanupCore) | Parallel file scanning, cleanup candidates, protected-path checks, and Trash operations |
 | [`KeepAwakeCore`](../Sources/KeepAwakeCore) | IOKit power assertions, timed sessions, and resource cleanup |
 | [`InstallCore`](../Sources/InstallCore) | Binary/symlink path safety, native command execution, whole-app validation, staging, startup confirmation, and rollback |
 | [`ScreenTimeCore`](../Sources/ScreenTimeCore) | Active-time tracking, idle breaks, daily rollover, and reminder boundaries |
@@ -76,6 +76,14 @@ terminate real processes.
 [`KillSwitch`](../Sources/KillSwitch) contains the GUI and basename-dispatched
 headless CLI. [`KillSwitchUpdateHelper`](../Sources/KillSwitchUpdateHelper)
 performs supervised app replacement. Test executables live in [`Tests`](../Tests).
+
+Disk cleanup scans use a shared work stack of directories. Every listed
+subfolder becomes work for any idle worker thread, up to the active CPU count
+(at most 16), so deep or wide trees fan out instead of being read one directory
+at a time. Workers keep private size totals, counters, and largest-file heaps
+that are merged after the walk, so results match a single-worker scan. Progress
+counts are serialized and monotonic. An entry whose metadata cannot be read
+marks its top-level folder as incomplete and therefore protected.
 
 The GUI delegates shared classification, persistence, and safety decisions to
 the core targets. CLI dispatch happens in `Sources/KillSwitch/main.swift` before

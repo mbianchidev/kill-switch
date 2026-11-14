@@ -227,6 +227,8 @@ and recovery.
   select one or more candidates.
 - Sort by item, contents, modification date, or space used; the Sort picker
   also offers path and type. Numeric filters use bytes, not formatted size text.
+- Storage mapping reads folders in parallel across CPU cores, so trees with
+  many subfolders finish much faster than a one-folder-at-a-time scan.
 - Scans continue across tab, category, or folder changes. Completed locations
   are cached; **Rescan** applies added, updated, and removed items without
   clearing visible rows first.
