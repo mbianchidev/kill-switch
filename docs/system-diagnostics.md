@@ -66,10 +66,11 @@ statistics, `libproc`, IOKit storage statistics, `nettop`, `netstat`,
 `memory_pressure`, and `pmset` for sleep assertions. Battery/power information
 uses the public IOKit power-source interface, without a `pmset -g batt`
 subprocess.
-Subprocess output is decoded as lenient UTF-8. Under the C locale, `pmset`
-prints non-ASCII characters in assertion names in a legacy 8-bit encoding;
-those bytes become replacement characters instead of making the whole
-sleep-assertion response unreadable.
+Under the C locale, `pmset` prints non-ASCII characters in assertion names in a
+legacy 8-bit encoding. KillSwitch decodes that read-only output as lenient
+UTF-8, so those bytes become replacement characters instead of making the whole
+sleep-assertion response unreadable. Output that can be written back, such as a
+crontab, stays strictly decoded.
 
 macOS denies some `libproc` data for protected or other-user processes. Those
 rows remain visible in **All processes**, but restricted disk or architecture

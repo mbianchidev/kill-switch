@@ -170,16 +170,20 @@ struct InstallCoreCheckRunner {
 
     private mutating func checkLegacyEncodedCommandOutput() throws {
         // 0xD1 is a MacRoman dash, as pmset writes it under LC_ALL=C; it is not valid UTF-8.
-        let result = try CommandRunner.run(
-            "/bin/sh", arguments: ["-c", #"printf 'pid 42(mock): app \321 named\n'; printf 'err \321 text' >&2"#],
-            environment: ["LC_ALL": "C"]
-        )
-        check(result.succeeded, "legacy-encoded output mock command succeeds")
+        let arguments = ["-c", #"printf 'pid 42(mock): app \321 named\n'; printf 'err \321 text' >&2"#]
+        let lossy = try CommandRunner.run("/bin/sh", arguments: arguments, outputDecoding: .lossyUTF8)
+        check(lossy.succeeded, "legacy-encoded output mock command succeeds")
         check(
-            result.standardOutput == "pid 42(mock): app \u{FFFD} named\n",
-            "invalid UTF-8 stdout keeps readable text instead of becoming empty"
+            lossy.standardOutput == "pid 42(mock): app \u{FFFD} named\n",
+            "lossy decoding keeps readable stdout instead of becoming empty"
         )
-        check(result.standardError == "err \u{FFFD} text", "invalid UTF-8 stderr keeps readable text")
+        check(lossy.standardError == "err \u{FFFD} text", "lossy decoding keeps readable stderr")
+
+        let strict = try CommandRunner.run("/bin/sh", arguments: arguments)
+        check(
+            strict.standardOutput.isEmpty && strict.standardError.isEmpty,
+            "default decoding never returns byte-altered text to callers that write output back"
+        )
     }
 
     private mutating func check(_ condition: Bool, _ message: String) {

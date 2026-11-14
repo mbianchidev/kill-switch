@@ -480,8 +480,10 @@ final class ResourceSampler {
     }
 
     private func samplePreventingSleepPIDs() throws -> Set<Int32> {
+        // Under LC_ALL=C, pmset writes non-ASCII assertion names in a legacy 8-bit encoding.
         let result = try CommandRunner.run(
-            "/usr/bin/pmset", arguments: ["-g", "assertions"], environment: ["LC_ALL": "C"]
+            "/usr/bin/pmset", arguments: ["-g", "assertions"], environment: ["LC_ALL": "C"],
+            outputDecoding: .lossyUTF8
         )
         guard result.succeeded else { throw commandError(result, name: "sleep assertion sampler") }
         guard let pids = SystemMetricsParser.parsePreventingSleepPIDs(result.standardOutput) else {

@@ -22,6 +22,20 @@ public enum CommandRunnerError: LocalizedError {
     }
 }
 
+public enum CommandOutputDecoding: Sendable {
+    /// Byte-exact UTF-8. Invalid output decodes as empty, so callers that write text back never act on altered bytes.
+    case strictUTF8
+    /// Replaces invalid bytes with U+FFFD. Use only for output that is parsed and never written back.
+    case lossyUTF8
+
+    func decode(_ data: Data) -> String {
+        switch self {
+        case .strictUTF8: return String(data: data, encoding: .utf8) ?? ""
+        case .lossyUTF8: return String(decoding: data, as: UTF8.self)
+        }
+    }
+}
+
 public enum CommandRunner {
     private final class DataBox {
         private let lock = NSLock()
@@ -43,7 +57,8 @@ public enum CommandRunner {
     public static func run(
         _ executable: String,
         arguments: [String] = [],
-        environment: [String: String] = [:]
+        environment: [String: String] = [:],
+        outputDecoding: CommandOutputDecoding = .strictUTF8
     ) throws -> CommandResult {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: executable)
@@ -85,12 +100,10 @@ public enum CommandRunner {
         task.waitUntilExit()
         readers.wait()
 
-        // Tools run with LC_ALL=C can emit legacy bytes for non-ASCII text, such as MacRoman
-        // dashes in pmset assertion names. Replace only those bytes instead of dropping all output.
         return CommandResult(
             status: task.terminationStatus,
-            standardOutput: String(decoding: outputBox.load(), as: UTF8.self),
-            standardError: String(decoding: errorBox.load(), as: UTF8.self)
+            standardOutput: outputDecoding.decode(outputBox.load()),
+            standardError: outputDecoding.decode(errorBox.load())
         )
     }
 

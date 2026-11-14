@@ -78,8 +78,10 @@ enum ProcessSampler {
         guard !pids.isEmpty else { return [:] }
         let output: String
         do {
+            // Command lines are only matched, never written back, so one non-UTF-8 argument must not hide every listener.
             output = try runProcessThrowing(
-                "/bin/ps", ["-ww", "-o", "pid=,args=", "-p", pids.sorted().map(String.init).joined(separator: ",")]
+                "/bin/ps", ["-ww", "-o", "pid=,args=", "-p", pids.sorted().map(String.init).joined(separator: ",")],
+                outputDecoding: .lossyUTF8
             )
         } catch let error as ProcessSamplerError {
             // ps uses status 1 with no stderr when none of the requested processes still exist.
@@ -301,10 +303,12 @@ enum ProcessSampler {
         return nil
     }
 
-    private static func runProcessThrowing(_ launchPath: String, _ arguments: [String]) throws -> String {
+    private static func runProcessThrowing(
+        _ launchPath: String, _ arguments: [String], outputDecoding: CommandOutputDecoding = .strictUTF8
+    ) throws -> String {
         let result: CommandResult
         do {
-            result = try CommandRunner.run(launchPath, arguments: arguments)
+            result = try CommandRunner.run(launchPath, arguments: arguments, outputDecoding: outputDecoding)
         } catch let runnerError as CommandRunnerError {
             switch runnerError {
             case .launchFailed(_, let underlying):
