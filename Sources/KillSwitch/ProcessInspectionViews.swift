@@ -303,8 +303,11 @@ final class ProcessInspectionMonitor: ObservableObject {
                 let configuration = devCleanupPreferences.load().configuration(allowAutomaticTermination: false)
 #endif
                 detection = Self.classifyListeners(
-                    snapshot.connections, commands: commands, verified: verified, configuration: configuration
+                    snapshot.connections, commands: commands, verified: verified, configuration: configuration,
+                    // Argv reads are metadata lookups, so each one rechecks the inspection lease.
+                    readArguments: { continueCollection(activation) ? ProcessArguments.read(pid: $0) : nil }
                 )
+                guard continueCollection(activation) else { return }
                 detection.error = commandError
             }
 #if KILLSWITCH_PERFORMANCE_PROBE
@@ -349,7 +352,8 @@ final class ProcessInspectionMonitor: ObservableObject {
 
     static func classifyListeners(
         _ connections: [NetworkConnectionRecord], commands: [Int32: String],
-        verified: [Int32: ActivityProcessIdentity], configuration: DevCleanupConfiguration
+        verified: [Int32: ActivityProcessIdentity], configuration: DevCleanupConfiguration,
+        readArguments: (Int32) -> [String]? = { _ in nil }
     ) -> DevServerDetection {
         let classifier = DevServerClassifier(configuration: configuration)
         var detection = DevServerDetection()
@@ -358,7 +362,7 @@ final class ProcessInspectionMonitor: ObservableObject {
             let command = verified[connection.pid] == nil ? nil : commands[connection.pid]
             if command == nil { detection.unclassifiedListenerIDs.insert(connection.id) }
             if let port = connection.localPort,
-               classifier.listsListener(command: command, port: Int(port), arguments: { ProcessArguments.read(pid: connection.pid) }) {
+               classifier.listsListener(command: command, port: Int(port), arguments: { readArguments(connection.pid) }) {
                 detection.listenerIDs.insert(connection.id)
             }
         }
