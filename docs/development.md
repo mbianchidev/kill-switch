@@ -74,9 +74,19 @@ SwiftUI formats integers interpolated into a localized `Text` literal with the
 locale's grouping separator, so `Text("PID \(pid)")` can show `65.134`. Render
 PIDs with `pidString(_:)` or `Text(verbatim:)`, never by interpolating the
 integer into a localized string. Apply `.copyProcessName(_:)` and `.copyPID(_:)`
-from `PageComponents.swift` wherever a process name or PID is shown: clicking
-copies the value through a simultaneous gesture, so selection and row actions
-keep working, and no extra control is added.
+from `PageComponents.swift` wherever a process name or PID is shown, and
+`.copyOnClick(_:label:)` for other identifying values such as names, paths,
+commands, endpoints, and versions: clicking copies the value through a
+simultaneous gesture, so selection and row actions keep working, and no extra
+control is added. Copy the full value, not an abbreviated display.
+
+Every table gets search, the Filter builder, sorting by header and picker, and
+resizable columns. Give `TableColumn`s a `min`/`ideal` width rather than a fixed
+width, except checkbox or icon columns. Pages that scroll as a whole embed
+tables with `EmbeddedDataTable` from `TableControls.swift`, which owns its
+search and sort state and shows up to twelve rows before scrolling itself. The
+custom CPU, Memory, Disk, Network, and Energy process table keeps its widths in
+`ResourceColumnWidths`, resized by header drag handles.
 
 ## Shared core targets
 

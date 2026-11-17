@@ -3,11 +3,15 @@
 [Documentation index](README.md) | [Installation](installation.md) |
 [CLI reference](cli.md)
 
-Click any process name or PID to copy it to the clipboard; a brief **Copied**
-badge confirms it, and clicking still selects the row. PIDs are always shown as
-plain identifiers, without thousands separators.
+Click an identifying value to copy it to the clipboard: process names, PIDs,
+package and app names, bundle identifiers, versions, paths, commands, endpoints,
+addresses, hostnames, users, branches, and update labels. A brief **Copied**
+badge confirms it, and clicking still selects the row. Hovering shows what will
+be copied, such as the full path behind an abbreviated one. PIDs are always shown
+as plain identifiers, without thousands separators.
 
-All data tables and record lists support two-way sorting and resettable filters.
+All data tables and record lists support search, filters, and two-way sorting.
+Drag a column header's edge to resize it.
 Search accepts text and comparisons such as `CPU% > 40` or `size >= 1GB`.
 See [sorting and filtering](table-controls.md) for field examples, units, and
 the **Filter**, **Apply**, and **Reset filters** controls.

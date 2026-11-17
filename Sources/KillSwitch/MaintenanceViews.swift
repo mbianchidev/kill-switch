@@ -360,7 +360,7 @@ struct MaintenanceView: View {
                 if !caches.isEmpty {
                     EmbeddedDataTable(
                         caches, fields: CacheFields.all, sortedBy: TableComparator(field: CacheFields.size, order: .reverse),
-                        identity: \.id, prompt: "Search caches, or state = Ready", rowHeight: 34
+                        identity: \.id, prompt: "Search caches, or state = Ready", rowHeight: 40
                     ) {
                         TableColumn("Cache", sortUsing: TableComparator(field: CacheFields.name)) { cache in
                             VStack(alignment: .leading, spacing: 2) {

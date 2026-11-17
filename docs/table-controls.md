@@ -2,11 +2,16 @@
 
 [Documentation index](README.md) | [Usage](usage.md)
 
-Dashboard, Resources, Open files, Connections, Destinations, Startup, Homebrew,
-Disk cleanup, Folder alerts, Dev cleanup, Watchdog, and Applications share
-sorting and filter controls. These controls affect displayed rows only. They do
-not change monitoring, automatic cleanup, startup state, process protection,
-installed packages, or saved history.
+Every table and record list shares search, filter, and sorting controls:
+Dashboard, CPU, Memory, Disk activity, Network traffic, Energy, Open files,
+Connections, Destinations and this Mac's IP addresses, Dev servers, Startup,
+Homebrew, Applications, Security (protections, macOS updates, outdated Homebrew
+packages), System (volumes and displays), Disk cleanup and its Maintenance
+tables (merged-PR artifacts, worktrees, sessions, scan candidates, caches,
+history, and kept, protected, or skipped findings), Folder alerts, Dev cleanup,
+and Watchdog. These controls affect displayed rows only. They do not change
+monitoring, automatic cleanup, startup state, process protection, installed
+packages, or saved history.
 
 ## Sort a table
 
@@ -16,6 +21,15 @@ cleanup-history, offender, watched-folder, and alert lists that do not have
 column headers.
 The direction button shows **A-Z / Z-A**, **Low-high / High-low**,
 **Old-new / New-old**, or **No-yes / Yes-no**, depending on the field.
+
+Drag the edge of a column header to resize the column. On the CPU, Memory,
+Disk activity, Network traffic, and Energy pages, double-click that edge to
+restore the column's default width; VoiceOver can adjust it in 10-point steps.
+Widths last while KillSwitch runs. Homebrew's **Version** column starts wide
+enough for `installed → latest`.
+
+Tables embedded in scrolling pages, such as Security, System, and Maintenance,
+show up to twelve rows and then scroll on their own, with a shown/total count.
 
 Numbers sort by their underlying value, not their formatted text: 2 is smaller
 than 10, and 900 MB is smaller than 1 GB. Text uses natural alphabetical ordering.
@@ -75,6 +89,17 @@ Multiword contains filters accept attached colons, such as
 | `port >= 8000 protected = no` | Running dev servers and ports |
 | `age > 12h runtime:example` | Cleanup records; age is recorded at cleanup |
 | `CPU% > 95 checks >= 3` | Watchdog offenders or alerts |
+| `status = Outdated type = Cask` | Homebrew |
+| `family = IPv6 up = yes` | This Mac's IP addresses |
+| `state = Off recommended = yes` | Security protections |
+| `security = yes restart = no` | macOS updates |
+| `upgrade = Upgradable` | Outdated Homebrew packages on Security |
+| `used > 90% internal = no` | System volumes |
+| `size > 100MB repo:example` | Maintenance artifacts and scan candidates |
+| `mode = Automatic errors > 0` | Maintenance history |
+
+Homebrew's `status` field reports outdated casks whose apps are running as
+`Outdated`; the Status column labels them **Running**.
 | `date >= 2026-01-01` | Watchdog alerts |
 
 Use `=`, `==`, `!=`, `>`, `>=`, `<`, or `<=` for comparisons. Text `=` compares

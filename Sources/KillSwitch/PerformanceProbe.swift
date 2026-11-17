@@ -271,6 +271,20 @@ enum PerformanceProbe {
         }
         check(monitor.history[.energy]?.count == 51, "Energy probes must populate and prune the full five-minute chart.")
         check(monitor.history[.energy]?.last?.primary == 2_000, "Energy chart fixtures must contain measured power totals.")
+        var widths = ResourceColumnWidths()
+        let defaultCPU = widths[ResourceTableFields.cpu]
+        let defaultTable = widths.tableWidth(for: .cpu)
+        widths.set(ResourceTableFields.cpu, to: 1)
+        check(widths[ResourceTableFields.cpu] == ResourceColumnWidths.minimum, "Resized columns must keep a readable minimum width.")
+        widths.set(ResourceTableFields.cpu, to: 10_000)
+        check(widths[ResourceTableFields.cpu] == ResourceColumnWidths.maximum
+              && widths.tableWidth(for: .cpu) == defaultTable + ResourceColumnWidths.maximum - defaultCPU,
+              "Resizing a column must widen the scrollable process table by the same amount.")
+        check(widths.tableWidth(for: .memory) == ResourceColumnWidths().tableWidth(for: .memory),
+              "Resizing a CPU-only column must not change other resource tables.")
+        widths.reset(ResourceTableFields.cpu)
+        check(widths[ResourceTableFields.cpu] == defaultCPU && widths.tableWidth(for: .cpu) == defaultTable,
+              "Double-click reset must restore a column's default width.")
         healthPollingChecks(check)
         healthPresentationChecks(check)
         thermalPresentationChecks(check)

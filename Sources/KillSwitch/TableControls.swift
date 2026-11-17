@@ -244,7 +244,7 @@ where Columns.TableRowValue == Row, Columns.TableColumnSortComparator == TableCo
     init(
         _ rows: [Row], fields: [TableField<Row>], sortedBy initialSorting: TableComparator<Row>,
         identity: @escaping (Row) -> String, prompt: String = "Search text or field > value",
-        rowHeight: CGFloat = 24, maximumRows: Int = 12,
+        rowHeight: CGFloat = 26, maximumRows: Int = 12,
         @TableColumnBuilder<Row, TableComparator<Row>> columns: () -> Columns
     ) {
         self.rows = rows
@@ -269,7 +269,8 @@ where Columns.TableRowValue == Row, Columns.TableColumnSortComparator == TableCo
                     .foregroundColor(.secondary)
             }
             Table(shown, selection: $selection, sortOrder: tableSortOrder($sorting)) { columns }
-                .frame(height: CGFloat(min(max(shown.count, 2), maximumRows)) * rowHeight + 30)
+                // Rows plus the header and the table's top and bottom insets.
+                .frame(height: CGFloat(min(max(shown.count, 1), maximumRows)) * rowHeight + 40)
                 .overlay {
                     if shown.isEmpty && !rows.isEmpty {
                         Text("No matching rows. Change or reset the filters.").foregroundColor(.secondary)
