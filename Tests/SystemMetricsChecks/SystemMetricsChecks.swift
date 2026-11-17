@@ -26,6 +26,8 @@ struct SystemMetricsChecks {
             checkActivityHistory()
             checkProcessInspection()
             checkDeveloperListeners()
+            checkNetworkDestinations()
+            checkSystemDetails()
         }
 
         if failures.isEmpty {

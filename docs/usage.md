@@ -3,6 +3,10 @@
 [Documentation index](README.md) | [Installation](installation.md) |
 [CLI reference](cli.md)
 
+Click any process name or PID to copy it to the clipboard; a brief **Copied**
+badge confirms it, and clicking still selects the row. PIDs are always shown as
+plain identifiers, without thousands separators.
+
 All data tables and record lists support two-way sorting and resettable filters.
 Search accepts text and comparisons such as `CPU% > 40` or `size >= 1GB`.
 See [sorting and filtering](table-controls.md) for field examples, units, and
@@ -14,6 +18,11 @@ KillSwitch uses a dark, translucent, Raycast-inspired interface. Like Caffeine,
 closing the main window leaves the menu-bar utility running rather than
 quitting. Its status item uses a bolt-shaped icon (`bolt.slash`).
 
+- The top of the menu shows the startup disk: its name, the percentage used, a
+  horizontal bar (orange above 90%), and the space used, total, and free. It is
+  read each time you open the menu; like Finder, free space includes purgeable
+  space. If the capacity cannot be read, the menu says so instead of a bar.
+
 - **Keep Mac Awake** offers a duration menu. The active duration is checkmarked;
   **Deactivate** restores normal sleep behavior.
 - **Generate Spindump** and **Run System Diagnostics** start the corresponding
@@ -23,8 +32,8 @@ quitting. Its status item uses a bolt-shaped icon (`bolt.slash`).
 - **Quit KillSwitch** fully exits, saves screen-time state, and releases
   keep-awake resources.
 
-The watchdog, screen-time monitor, and CPU/memory/disk/network sampling continue
-with the window hidden and while using other tabs. Quitting flushes the current
+The watchdog, folder size alerts, screen-time monitor, and CPU/memory/disk/network
+sampling continue with the window hidden and while using other tabs. Quitting flushes the current
 history bucket. Energy details run only while their resource view is selected;
 connection/open-file inspection runs only while its panel is visible.
 Confirmed Dev cleanup runs immediately and keeps its cleanup timer active while
@@ -124,6 +133,31 @@ Inspection refreshes every ten seconds while this tab is visible and stops when
 you switch tabs. It does not close files or terminate processes. See the
 [inspection limitations](system-diagnostics.md#connections-and-open-files).
 
+## Destinations
+
+**Destinations** under **Investigate** groups the active TCP and UDP connections
+visible to your account by remote address. Each row shows the address, its
+reverse DNS hostname when one exists, the scope (Public, Private, Carrier-grade
+NAT, Link-local, Loopback, or Multicast), remote ports, the connection count,
+and every process with a connection to that address. IPv4-mapped IPv6 addresses
+are merged with their IPv4 form. Link-local IPv6 addresses keep their interface
+zone, such as `fe80::1%en0`, because the same address on another interface can
+be a different machine. Loopback connections are hidden unless you
+select **Include loopback**; listeners, bound sockets, and closed connections
+are not destinations.
+
+Below it, **This Mac's IP addresses** lists every IPv4 and IPv6 interface
+address with its prefix length, scope, and up/down status. It does not look up
+a public IP address through an external service.
+
+The page reuses the Connections collection: it refreshes every ten seconds
+while visible, follows the shared **My processes** / **All processes** scope,
+and stops when you leave. Hostnames come from reverse DNS lookups through your
+Mac's configured resolver, four at a time, and are cached until KillSwitch quits.
+A lookup that fails, for example while offline, shows **Lookup failed; retrying**
+and is tried again about once a minute.
+A missing or different name is normal; it need not match the name an app used.
+
 ## Process investigation
 
 Use **Inspect** from Dashboard, a resource page, Connections, Open files, or Dev
@@ -189,6 +223,15 @@ one logical core. Load averages are runnable/waiting work, not percentages.
 Awake time since restart is `ProcessInfo.systemUptime` and excludes sleep; it
 is not presented as total elapsed time since boot.
 
+**System details** on the System page adds the model name and identifier, model
+number, computer name, local hostname, boot time, serial number, hardware UUID,
+every visible storage volume with available and total space, and online
+displays with resolution. They are read with `system_profiler`, IOKit, and
+volume information when the page opens; use its refresh button to read them
+again. The serial number and hardware UUID identify your Mac, so they stay
+masked until you choose **Show**; **Copy** places one on the clipboard. They are
+never stored.
+
 **Battery** shows charge, charging state, power source, reported condition,
 cycle count, applicable time estimates, and Low Power Mode when macOS exposes
 them. A desktop's verified lack of an internal battery is distinct from a
@@ -200,8 +243,8 @@ KillSwitch does not invent sensor readings or fan speeds.
 
 One shared health monitor uses supported public interfaces at most every thirty
 seconds while one of these pages or Dashboard is visible. No privileged helper,
-serial number, hardware UUID, temperature sensor, or additional background
-recording is involved. Health details are live, not persisted.
+temperature sensor, or additional background recording is involved. Health
+details are live, not persisted.
 
 ## Startup
 
@@ -219,10 +262,39 @@ settings**. **Load system cron** explicitly authorizes reading root's crontab.
 See [startup management](startup.md) for supported entries, backups, permissions,
 and recovery.
 
+## Homebrew
+
+**Homebrew** under **Manage** lists installed formulae and casks with their
+versions (`installed → latest` when an upgrade exists), one status badge, and
+actions. KillSwitch looks for `brew`
+in `/opt/homebrew/bin` and `/usr/local/bin`. If neither exists, the page stays
+empty: KillSwitch never installs, repairs, or configures Homebrew.
+
+- **Upgrade** upgrades one outdated formula or cask; **Upgrade all** upgrades
+  every outdated package that KillSwitch may upgrade, after confirmation.
+- Self-updating casks (`auto_updates`) are always skipped, even when Homebrew
+  lists them as outdated; they show **Updates itself**. Unversioned (`latest`)
+  casks and pinned packages are skipped too. KillSwitch names each package it
+  upgrades, so a greedy Homebrew setting cannot include skipped casks.
+- **Uninstall** runs `brew uninstall` after confirmation, without `--force`,
+  `--zap`, or `--ignore-dependencies`. Homebrew refuses to remove a formula that
+  another package needs. A cask uninstall removes its app but keeps its settings.
+- Casks whose apps are running show **Running** and are skipped by **Upgrade**
+  and **Upgrade all**; quit the app, then upgrade. KillSwitch checks again
+  before each cask, and skips every cask if running apps cannot be listed.
+- **Check for updates** runs `brew update`; the refresh button relists packages.
+
+Every action runs `brew` in the background as your user, one at a time, with
+`HOMEBREW_NO_AUTO_UPDATE` set so upgrades act on the versions shown. The last
+command's output appears on the page; failures are shown with Homebrew's error.
+Casks whose installers ask for an administrator password cannot finish from
+KillSwitch; run those in Terminal. Filter by **Outdated**, **Formulae**, or
+**Casks**, or search with fields such as `outdated = yes`.
+
 ## Disk cleanup
 
 - Opens on **Largest files**, sorted by occupied disk space. Switch to
-  **Temporary**, **Caches**, or **Large folders**.
+  **Temporary**, **Caches**, **Large folders**, or [**Maintenance**](#maintenance).
 - Browse with breadcrumbs, filter by name or path, reveal items in Finder, and
   select one or more candidates.
 - Sort by item, contents, modification date, or space used; the Sort picker
@@ -233,7 +305,8 @@ and recovery.
   are cached; **Rescan** applies added, updated, and removed items without
   clearing visible rows first.
 - Every removal requires confirmation and moves items to macOS Trash.
-  KillSwitch never permanently deletes an item.
+  Only **Empty Trash** and **Remove worktree** in Maintenance delete permanently,
+  each after its own confirmation.
 - Standard home folders such as Documents, Downloads, Pictures, and Movies
   must be opened before their contents can be selected. Cleanup roots,
   `~/Library` outside the designated cleanup areas, and hidden home
@@ -243,6 +316,121 @@ and recovery.
 - Partial scans report permission problems and link to **Full Disk Access**.
   Desktop, Documents, Downloads, and other protected locations may need access.
   Updating an ad-hoc-signed app or binary may require granting it again.
+
+### Maintenance
+
+**Maintenance** collects the disk steps of a periodic Mac cleanup. Each card
+shows its actions in the header and a one-line summary; hover the info icon for
+details. Each card scans first, lists what it would move with reasons for
+anything kept, and asks before acting. Everything moves to the Trash unless
+stated otherwise.
+
+- **Merged PR artifacts:** **Preview** finds generated installers (`.dmg`,
+  `.pkg`, app installer `.zip`/`.tar.gz`), staged apps in packaging folders, and
+  ignored `node_modules`, `dist`, `dist-electron`, `target`, CMake `build`,
+  `coverage`, and `test-results` folders in agent sessions and worktrees whose
+  pull request is merged. GitHub is read with your existing `gh` login; a
+  closed-but-unmerged PR is not eligible. A worktree must be clean, idle, and
+  at the merged PR's head commit. Running, recently active, or unreadable
+  sessions, open files, and Git metadata, tracked files, or local
+  configuration are protected. **Move to Trash** rechecks every item first.
+  Read-only installer images that are mounted and unused are ejected normally;
+  busy images stay mounted.
+- **Run automatically** (off by default) repeats the merged-artifact cleanup
+  every 1, 6, 12, or 24 hours while KillSwitch runs, without asking. Turning it
+  off stops an automatic run that is in progress before its next move.
+- **Need your approval** lists whole worktrees and sessions whose PRs are
+  merged. Sessions are never removed. **Remove…** on a worktree runs
+  `git worktree remove` without `--force`, after a fresh check; Git refuses
+  worktrees with changes or untracked files. This deletes the folder, including
+  its ignored files, and keeps the branch.
+- **Archives in agent worktrees:** untracked archives idle for the chosen hours
+  (24 by default) and not open.
+- **Installed disk images:** DMGs at the top level of `~/Downloads` and
+  `~/Desktop` whose apps are already installed at the same or a newer version.
+  Nothing else in those folders is opened or moved.
+- **Idle build output:** ignored `target`, `node_modules`, and `build` folders
+  in clean checkouts under the repository roots, unused for the chosen days
+  (14 by default).
+- **Tool caches:** clears Homebrew, Go, npm, uv, pnpm, Yarn, pip, Playwright,
+  and Cargo caches with each tool's own command. A cache is kept while a
+  program that uses it runs.
+- **Trash:** counts items and empties the Trash through Finder after a separate
+  confirmation. This deletes everything there, including items you moved
+  yourself. Finder may ask for Automation permission.
+- **Empty automatically** (off by default, confirmed when turned on) empties the
+  whole Trash daily, weekly (default), or every 30 days, without asking. The
+  first automatic empty is one interval after you turn it on, and the card shows
+  the next one. If KillSwitch was closed when it was due, it runs within about
+  15 minutes of KillSwitch starting. A failed run, for example without Finder
+  Automation permission, is retried at the next interval. Turning it off stops
+  a pending run. Finder's own settings can instead remove items after 30 days.
+- **Last 24 hours** shows run counts, space moved and freed, and errors. Only
+  counts and sizes are kept, for 24 hours.
+- **Settings** (collapsed, with a one-line summary) holds the roots and idle
+  times. Agent session and worktree roots default to
+  `~/.copilot/session-state` and `~/workspace/copilot-worktrees`; repository
+  roots default to existing `~/Projects`, `~/workspace`, `~/Developer`, `~/src`,
+  and `~/code`. Add or remove roots inside your home folder; `~/Downloads`,
+  `~/Library`, and the Trash are refused. **Reset to defaults** restores them.
+  Roots are checked again at every scan, so a root that later links into a
+  refused location is skipped. Changing roots discards earlier previews and
+  scans.
+
+Every merged-artifact run appends paths, sizes, PRs, protected and skipped
+reasons, and errors to `~/.copilot/logs/merged-artifact-cleanup.jsonl`. The log
+rotates at 5 MB and keeps two older copies. Repository pulls are not part of
+Maintenance.
+
+## Folder size alerts
+
+**Folder alerts** measures folders you choose and alerts you when one reaches
+its own size limit.
+
+- Choose **Add folder…** and select one or more folders. Each starts with a
+  10 GB limit and monitoring on. Links resolve to their target folder, and a
+  folder can be watched only once.
+- Edit **Alert at** with a number and MB, GB, or TB, then press Return or
+  **Save**. Units are 1,024-based, matching the sizes KillSwitch displays.
+  Saving a new limit re-arms the alert and measures the folder again.
+- The switch pauses or resumes one folder. **Reveal in Finder** opens it, and
+  the remove button stops watching it without changing its files.
+- Folders are measured at launch, when added, resumed, or given a new limit,
+  with **Check now**, and at the selected interval.
+
+| Setting | Default | Choices |
+| --- | --- | --- |
+| Alert limit | 10 GB per folder | 1 MB through 1024 TB, entered in MB, GB, or TB with up to two decimals |
+| Check every | 15 minutes | 1/5/10/15/30/60 minutes |
+| Monitoring | On for new folders | Per-folder switch |
+
+When a folder reaches its limit, KillSwitch posts a macOS notification titled
+**Folder size alert**, shows a banner above every page, marks the folder
+**Limit reached**, and adds it to **Recent alerts**. Choose **Review**, dismiss
+the banner, or open Folder alerts to acknowledge it. Recent alerts keep the
+last 50 alerts for the current app session. If macOS does not deliver the
+notification, the page reports it and the in-app alert remains.
+
+A folder alerts once each time it reaches its limit. It alerts again only after
+a complete measurement falls below 95% of the limit, so a folder hovering at
+the limit does not alert on every check. Changing the limit re-arms it.
+
+Sizes add up the allocated space of every file, including hidden files and
+package contents, like `du`. Symbolic links are not followed, and hard-linked
+files count once. When some contents cannot be read, the size is shown as a
+lower bound (`≥`); it can still trigger an alert but never re-arms one, and the
+folder shows **Incomplete** rather than **Below limit**. A folder that cannot be
+read at all is reported as unavailable, not as 0 bytes. When a later check
+fails, the folder shows **Check failed** with the error and keeps its last
+successful size for reference. Changing a limit while a folder is being measured
+discards that measurement and starts a new one.
+Desktop, Documents, Downloads, and other protected locations may need
+**Full Disk Access**; the page links to its settings whenever a watched folder
+or something inside one is denied.
+
+Folders, limits, alert state, and the interval persist across launches.
+Folders are measured one at a time at background priority, so very large
+folders can take a while. Monitoring stops when KillSwitch quits.
 
 ## Dev cleanup
 
@@ -394,6 +582,46 @@ last 500 lines.
 These are sampled observations, not proof of uninterrupted load for an exact
 duration. See the [watchdog model](development.md#watchdog-model).
 
+## Applications
+
+**Applications** under **Your Mac** lists the app bundles in `/Applications` and
+`~/Applications`, including subfolders up to three levels deep, with their name,
+bundle identifier, version, and modification date. Built-in apps in
+`/System/Applications` are not listed.
+
+- **Homebrew** marks apps installed by a Homebrew cask, with the cask name.
+- **Signature** shows Gatekeeper's assessment from `spctl --assess`:
+  **Notarized**, **App Store**, **Apple**, **Local**, or **Unverified**.
+  **Local** means the app is not notarized: Gatekeeper rejected it, or it is
+  signed with a Developer ID but not notarized. Ad-hoc builds, including
+  KillSwitch itself, are local. **Unverified** means Gatekeeper could not assess
+  it, for example because assessments are disabled.
+
+Use **Homebrew**, **Not Homebrew**, or **Local** to filter, or search fields such
+as `local = yes` and `homebrew = no`. Assessments run in small parallel batches
+when the page first opens. The refresh button scans and assesses every app
+again. The page is read-only; **Reveal in Finder** shows an app.
+
+## Security
+
+**Security** under **Your Mac** reads, without administrator access:
+
+- **Protections:** FileVault, the firewall and its stealth mode, Gatekeeper,
+  System Integrity Protection, the active XProtect definitions version (from
+  `xprotect version` on macOS 15 and later, otherwise the XProtect bundle), and whether
+  security responses install automatically. A protection that is off is
+  highlighted; stealth mode is informational. An unrecognized or failed read is
+  shown as Unknown with the raw output, never assumed.
+- **macOS updates:** opening the page lists the updates found by macOS's most
+  recent Software Update scan (`softwareupdate --list --no-scan`). **Scan now**
+  contacts Apple and can take minutes. Security responses, updates within your
+  installed macOS major version, and Safari updates are highlighted as security
+  updates because Apple ships security fixes in them; major upgrades and other
+  software are listed without highlighting. **Open Software Update** opens
+  System Settings to install them; KillSwitch does not install macOS updates.
+- **Homebrew packages:** every outdated package, because Homebrew does not label
+  which upgrades fix vulnerabilities. Upgrade them from the Homebrew page.
+
 ## Screen time
 
 Tracks today's active use and the current continuous stretch. Counting pauses
@@ -463,4 +691,12 @@ These preferences persist. See [update controls](auto-update.md#using-updates),
   selected files and confirmation. iCloud and protected locations are excluded.
 - Releases are ad-hoc signed, not Apple-notarized. Checksums verify integrity
   against the published release, not an Apple-verified publisher identity.
+- Homebrew upgrades and uninstalls run `brew` as your user and cannot be
+  undone by KillSwitch. Review the confirmation; self-updating and running
+  casks are never upgraded.
+- Maintenance moves only verified generated files to the Trash and fails closed
+  when activity, ownership, or PR state cannot be confirmed. Emptying the Trash,
+  including automatic emptying, and removing a worktree are permanent.
+- Applications, Security, Destinations, and System details are read-only.
+  KillSwitch does not change security settings or install macOS updates.
 - Monitoring and keep-awake sessions stop when the app quits.

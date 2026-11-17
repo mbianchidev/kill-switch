@@ -5,6 +5,7 @@ import Foundation
 import SwiftUI
 import SystemMetricsCore
 import DevCleanupCore
+import DiskCleanupCore
 import os
 
 @MainActor
@@ -42,7 +43,8 @@ enum PerformanceProbe {
         }
         guard (3...5).contains(arguments.count),
               ["background", "dashboard", "cpu", "memory", "energy", "system", "battery", "thermal",
-               "connections", "files", "servers", "inspector", "navigation", "cleanup-settings"].contains(arguments[0]),
+               "connections", "files", "servers", "inspector", "navigation", "cleanup-settings",
+               "folder-alerts", "homebrew", "applications", "security", "maintenance", "storage-menu"].contains(arguments[0]),
               let duration = Double(arguments[1]), (3...600).contains(duration),
               let count = Int(arguments[2]), (1...5_000).contains(count) else {
             fputs("Usage: KillSwitch --performance-probe SCENARIO SECONDS(3...600) PROCESSES(1...5000) [OFFSCREEN.png [WIDTHxHEIGHT]]; or --performance-probe --interface-checks\n", stderr)
@@ -94,6 +96,12 @@ enum PerformanceProbe {
                 root = AnyView(ContentView(
                     resourceMonitor: monitor, startsServices: false, cleanupPreferences: cleanupPreferences
                 ))
+            } else if scenario == "storage-menu" {
+                root = AnyView(StorageMenuProbePreview())
+            } else if scenario == "maintenance" {
+                MaintenanceMonitor.shared.publishPerformanceFixture()
+                root = AnyView(DiskCleanupTab(monitor: DiskCleanupMonitor(), maintenance: MaintenanceMonitor.shared, startsInMaintenance: true)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity))
             } else if ["cpu", "memory", "energy"].contains(scenario) {
                 let metric: ResourceMetric = scenario == "memory" ? .memory : scenario == "energy" ? .energy : .cpu
                 root = AnyView(ResourcesTab(monitor: monitor, initialMetric: metric))
@@ -127,12 +135,28 @@ enum PerformanceProbe {
             } else {
                 let page: MainTab
                 switch scenario {
-                case "system": page = .system
+                case "system":
+                    SystemDetailsMonitor.shared.publishPerformanceFixture()
+                    page = .system
                 case "battery": page = .battery
                 case "thermal": page = .thermal
                 case "connections": page = .connections
                 case "files": page = .openFiles
                 case "servers": page = .devServers
+                case "folder-alerts":
+                    FolderSizeMonitor.shared.publishPerformanceFixture()
+                    page = .folderAlerts
+                case "homebrew":
+                    HomebrewMonitor.shared.publishPerformanceFixture()
+                    page = .homebrew
+                case "applications":
+                    HomebrewMonitor.shared.publishPerformanceFixture()
+                    ApplicationsMonitor.shared.publishPerformanceFixture()
+                    page = .applications
+                case "security":
+                    HomebrewMonitor.shared.publishPerformanceFixture()
+                    SecurityMonitor.shared.publishPerformanceFixture()
+                    page = .security
                 default:
                     fputs("The probe scenario could not be represented.\n", stderr)
                     return 2
@@ -259,6 +283,18 @@ enum PerformanceProbe {
         devServerDetectionChecks(check)
         copyFeedbackChecks(check)
         dashboardSelectionChecks(check)
+        folderAlertStateChecks(check)
+        let half = SystemVolume(name: "Synthetic HD", path: "/", format: nil, totalBytes: 1_000, availableBytes: 500,
+                                isInternal: true, isRemovable: false)
+        check(StorageMenuModel.percent(0.625) == 63 && StorageMenuModel.detail(for: half)?.contains("used") == true,
+              "The storage menu row must show the used percentage and space.")
+        check(StorageMenuModel.detail(for: nil) == nil
+              && StorageMenuModel.detail(for: SystemVolume(name: "X", path: "/", format: nil, totalBytes: 0, availableBytes: 0,
+                                                           isInternal: nil, isRemovable: nil)) == nil,
+              "An unreadable capacity must be reported, not estimated.")
+        let storageItem = StorageMenuItem.make(model: StorageMenuModel())
+        check(storageItem.view?.frame.size == StorageMenuView.size && storageItem.action == nil,
+              "The storage menu row must be a fixed-size, non-actionable view item.")
 
         let suite = "KillSwitch.synthetic-entry-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suite) else {
@@ -1715,6 +1751,34 @@ enum PerformanceProbe {
               "No matching listeners must not claim that visible rows explain hidden project errors.")
     }
 
+    private static func folderAlertStateChecks(_ check: (Bool, String) -> Void) {
+        let watch = FolderSizeWatch(path: "/synthetic/watched", thresholdBytes: FolderSizeThreshold.minimumBytes)
+        func measurement(denied: Int) -> FolderSizeMeasurement {
+            FolderSizeMeasurement(path: watch.path, sizeBytes: 1_024, fileCount: 1, permissionDeniedCount: denied,
+                                  unreadableItemCount: 0, measuredAt: Date())
+        }
+        func state(_ status: FolderSizeWatchStatus, watch: FolderSizeWatch = watch) -> FolderSizeWatchRowModel.DisplayState {
+            FolderSizeWatchRowModel(watch: watch, status: status).displayState
+        }
+        check(state(FolderSizeWatchStatus(measurement: measurement(denied: 0))) == .belowLimit,
+              "A complete measurement under the limit is below the limit.")
+        check(state(FolderSizeWatchStatus(measurement: measurement(denied: 2))) == .incomplete,
+              "A partial measurement must not claim the folder is below its limit.")
+        check(state(FolderSizeWatchStatus(measurement: measurement(denied: 0), errorMessage: "synthetic failure")) == .checkFailed,
+              "A failed latest check must not keep a stale below-limit state.")
+        check(state(FolderSizeWatchStatus(errorMessage: "synthetic failure", permissionDenied: true)) == .unavailable,
+              "A folder that was never read is unavailable.")
+        let reached = FolderSizeWatch(id: watch.id, path: watch.path, thresholdBytes: watch.thresholdBytes,
+                                      alertState: .reached(since: Date()))
+        check(state(FolderSizeWatchStatus(measurement: measurement(denied: 0), errorMessage: "synthetic failure"), watch: reached) == .limitReached,
+              "A reached folder keeps its limit state across a failed check.")
+        let paused = FolderSizeWatch(id: watch.id, path: watch.path, thresholdBytes: watch.thresholdBytes, isEnabled: false)
+        check(state(FolderSizeWatchStatus(measurement: measurement(denied: 0)), watch: paused) == .paused, "Paused folders show paused.")
+        check(FolderSizeMonitor.shared.watches.isEmpty, "The probe's folder monitor must not load saved folder watches.")
+        check(MaintenanceMonitor.shared.history.isEmpty && !MaintenanceMonitor.shared.settings.scheduleEnabled,
+              "The probe's maintenance monitor must start from isolated defaults with the schedule off.")
+    }
+
     private static func dashboardSelectionChecks(_ check: (Bool, String) -> Void) {
         let monitor = ResourceMonitor()
         let controller = RetainedPageController()
@@ -1899,5 +1963,40 @@ private struct ProbeStateRecorder: NSViewRepresentable {
     let record: (UUID) -> Void
     func makeNSView(context: Context) -> NSView { record(token); return NSView() }
     func updateNSView(_ view: NSView, context: Context) { record(token) }
+}
+/// The storage menu row at fixed used shares on light and dark menus; no capacity is read.
+private struct StorageMenuProbePreview: View {
+    private let models: [StorageMenuModel] = [
+        Self.model(total: 494_384_795_648, available: 185_000_000_000),
+        Self.model(total: 494_384_795_648, available: 30_000_000_000),
+        Self.model(total: nil, available: nil)
+    ]
+
+    private static func model(total: UInt64?, available: UInt64?) -> StorageMenuModel {
+        let model = StorageMenuModel()
+        model.publishPerformanceFixture(total.map {
+            SystemVolume(name: "Synthetic HD", path: "/", format: "APFS", totalBytes: $0, availableBytes: available,
+                         isInternal: true, isRemovable: false)
+        })
+        return model
+    }
+
+    var body: some View {
+        HStack(spacing: 32) {
+            column(.dark)
+            column(.light)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func column(_ scheme: ColorScheme) -> some View {
+        VStack(spacing: 14) {
+            ForEach(models.indices, id: \.self) { index in
+                StorageMenuView(model: models[index])
+                    .background(RoundedRectangle(cornerRadius: 8).fill(scheme == .dark ? Color(white: 0.2) : Color(white: 0.96)))
+                    .environment(\.colorScheme, scheme)
+            }
+        }
+    }
 }
 #endif

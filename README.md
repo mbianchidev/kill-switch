@@ -87,12 +87,23 @@ See [architecture and development](docs/development.md).
 
 - **Dashboard / Performance:** use the grouped sidebar to compare live data and
   24-hour history. **My processes** is the default.
-- **Investigate:** browse read-only dev listeners, connections, and open files;
-  **Inspect** opens a lifetime-verified, per-process view.
-- **System / Battery / Thermal:** view public macOS counters without a helper or
-  administrator access.
+- **Investigate:** browse read-only dev listeners, connections, remote
+  destinations, and open files; **Inspect** opens a lifetime-verified,
+  per-process view.
+- **System / Battery / Thermal:** view public macOS counters and system details
+  without a helper or administrator access.
+- **Applications / Security:** see which apps came from Homebrew or are local
+  (not notarized), macOS protections, and security updates.
+- **Homebrew:** upgrade or uninstall formulae and casks when Homebrew is
+  installed; self-updating and running casks are always skipped.
 - **Startup:** review apps, services, and cron jobs before disabling future
   launches. System-wide changes require administrator approval.
+- **Disk cleanup > Maintenance:** move merged-PR build artifacts, idle archives,
+  installed DMGs, and idle build output to the Trash, clear tool caches, and
+  review merged worktrees for removal. Always previewed and confirmed; optional
+  automatic cleanup and automatic Empty Trash are off by default.
+- **Folder alerts:** add folders and per-folder size limits; KillSwitch alerts
+  in the app and through macOS notifications when a folder reaches its limit.
 - **Dev cleanup:** understand the age-based safety rules before opening the tab;
   its Settings card controls auto-kill, age, detection, and exclusions.
 - **Screen time / Keep awake:** enable optional reminders or sleep prevention.
@@ -107,11 +118,13 @@ the read-only [status command](docs/cli.md#read-saved-status).
 | Capability | Implemented behavior |
 | --- | --- |
 | Dashboard and resources | Global/per-process CPU, memory, traffic, and disk history for 24 hours, plus live energy and process actions |
-| Process inspection | Dedicated Connections and Open files pages, plus per-process files/connections with search, sorting, and reported advisory locks |
+| Process inspection | Dedicated Connections, Destinations, and Open files pages, plus per-process files/connections with search, sorting, and reported advisory locks |
 | Developer listeners | Read-only TCP listeners grouped by project or working directory, Git branch context, copy/reveal/browser actions, and no automatic cleanup |
-| System health | CPU/hardware details, awake time since restart, load averages, public battery readings, Low Power Mode, and macOS thermal pressure |
+| System health | CPU/hardware details, system details with storage, displays, and masked identifiers, awake time since restart, load averages, public battery readings, Low Power Mode, and macOS thermal pressure |
+| Software and security | Homebrew upgrades/removals, installed apps marked Homebrew or local, macOS protections, and security updates |
 | Startup | Reversible login app, service, and cron controls, with protected macOS entries kept read-only |
-| Disk cleanup | Large files, temporary data, caches, and folders with confirmation and Trash |
+| Disk cleanup | Large files, temporary data, caches, and folders with confirmation and Trash; merged-PR artifact and Mac maintenance steps |
+| Folder size alerts | Background size checks for chosen folders, with per-folder limits, in-app alerts, and macOS notifications |
 | Developer tools | Configurable dev cleanup, protected-process rules, CPU alerts, and JSON port syncing |
 | Screen time | Local active-time totals, continuous stretches, and optional break reminders |
 | Keep awake | Timed or indefinite sessions with optional display sleep and launch activation |

@@ -115,6 +115,16 @@ descriptors are released after a read. Failed fields and verified battery absenc
 distinct presentations. These readings do not expand the persisted history or
 collect identifying serial/UUID values.
 
+System details are separate from the health monitor. When the System page
+opens, a background read runs `system_profiler -json -detailLevel mini
+SPHardwareDataType SPDisplaysDataType` for the model name, model number, and
+online displays; `SystemConfiguration` for the computer and local host names;
+`kern.boottime` for the boot time; IOKit's `IOPlatformExpertDevice` for the
+serial number and hardware UUID; and mounted-volume resource values for
+storage. Available space prefers macOS's capacity for important usage. Any part
+that cannot be read is shown as unavailable with a warning. The identifiers are
+masked in the interface until shown and are never written to history or logs.
+
 Hardware architecture is detected at runtime for the Intel executable slice:
 Rosetta still identifies an Apple Silicon Mac. An absent translation key
 identifies native Intel; other unreadable translation states are reported

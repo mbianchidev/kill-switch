@@ -11,17 +11,18 @@ enum AppWindowVisibility {
 
 enum MainTab: String, CaseIterable, Identifiable {
     case dashboard, resources, memory, disk, network, energy
-    case system, battery, thermal, devServers, connections, openFiles
-    case startup, diskCleanup, cleanup, watchdog, screenTime, diagnostics, keepAwake, updates
+    case system, battery, thermal, devServers, connections, destinations, openFiles
+    case startup, homebrew, diskCleanup, folderAlerts, cleanup, watchdog
+    case applications, security, screenTime, diagnostics, keepAwake, updates
 
     var id: Self { self }
 
     static let sections: [(title: String, pages: [MainTab])] = [
         ("Overview", [.dashboard, .system]),
         ("Performance", [.resources, .memory, .disk, .network, .energy]),
-        ("Investigate", [.devServers, .connections, .openFiles]),
-        ("Manage", [.startup, .diskCleanup, .cleanup, .watchdog]),
-        ("Your Mac", [.battery, .thermal, .screenTime, .keepAwake]),
+        ("Investigate", [.devServers, .connections, .destinations, .openFiles]),
+        ("Manage", [.startup, .homebrew, .diskCleanup, .folderAlerts, .cleanup, .watchdog]),
+        ("Your Mac", [.applications, .security, .battery, .thermal, .screenTime, .keepAwake]),
         ("KillSwitch", [.diagnostics, .updates])
     ]
 
@@ -38,9 +39,14 @@ enum MainTab: String, CaseIterable, Identifiable {
         case .thermal: return "Thermal"
         case .devServers: return "Dev servers"
         case .connections: return "Connections"
+        case .destinations: return "Destinations"
         case .openFiles: return "Open files"
         case .startup: return "Startup"
+        case .homebrew: return "Homebrew"
+        case .applications: return "Applications"
+        case .security: return "Security"
         case .diskCleanup: return "Disk cleanup"
+        case .folderAlerts: return "Folder alerts"
         case .cleanup: return "Dev cleanup"
         case .watchdog: return "CPU watchdog"
         case .screenTime: return "Screen time"
@@ -56,6 +62,7 @@ enum MainTab: String, CaseIterable, Identifiable {
         case .resources: return "cpu"
         case .memory: return "memorychip"
         case .disk, .diskCleanup: return "internaldrive"
+        case .folderAlerts: return "folder.badge.gearshape"
         case .network: return "network"
         case .energy: return "bolt"
         case .system: return "desktopcomputer"
@@ -64,6 +71,10 @@ enum MainTab: String, CaseIterable, Identifiable {
         case .devServers: return "server.rack"
         case .connections: return "point.3.connected.trianglepath.dotted"
         case .openFiles: return "doc.text.magnifyingglass"
+        case .destinations: return "globe"
+        case .homebrew: return "mug.fill"
+        case .applications: return "macwindow"
+        case .security: return "lock.shield"
         case .startup: return "power"
         case .cleanup: return "trash"
         case .watchdog: return "exclamationmark.triangle"
@@ -76,10 +87,11 @@ enum MainTab: String, CaseIterable, Identifiable {
 
     var accent: Color {
         switch self {
-        case .resources, .network, .connections, .devServers: return Theme.cpuUser
+        case .resources, .network, .connections, .devServers, .destinations: return Theme.cpuUser
         case .memory, .battery, .screenTime, .keepAwake: return Theme.memory
-        case .energy, .thermal, .watchdog: return Theme.energy
-        case .disk, .diskCleanup: return Theme.diskOccupied
+        case .energy, .thermal, .watchdog, .homebrew: return Theme.energy
+        case .security: return Theme.screenTime
+        case .disk, .diskCleanup, .folderAlerts: return Theme.diskOccupied
         default: return Theme.accent
         }
     }
@@ -279,6 +291,6 @@ struct InspectProcessButton: View {
         .buttonStyle(.borderless)
         .disabled(process == nil || inspect == nil)
         .help("Inspect process files and connections")
-        .accessibilityLabel(process.map { "Inspect \($0.name), PID \($0.id.pid)" } ?? "Process identity unavailable")
+        .accessibilityLabel(process.map { "Inspect \($0.name), PID \(pidString($0.id.pid))" } ?? "Process identity unavailable")
     }
 }

@@ -467,7 +467,7 @@ struct OpenFilesTab: View {
             }
             if let file = monitor.files.first(where: { $0.id == selected }) {
                 HStack {
-                    Text("\(file.process) (PID \(file.pid)), \(file.descriptor): \(file.path)")
+                    Text(verbatim: "\(file.process) (PID \(pidString(file.pid))), \(file.descriptor): \(file.path)")
                         .font(.system(size: 11, design: .monospaced))
                         .lineLimit(2)
                         .textSelection(.enabled)
@@ -521,7 +521,8 @@ struct NetworkConnectionsPanel: View {
                     ForEach(NetworkConnectionFilter.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 260)
+                .labelsHidden()
+                .fixedSize()
                 TableSortControls(fields: ConnectionTableFields.all, sorting: $sorting)
                 Spacer()
                 InspectionRefreshButton(monitor: monitor)
@@ -535,7 +536,7 @@ struct NetworkConnectionsPanel: View {
                 }
             }
             if let connection = monitor.connections.first(where: { $0.id == selected }) {
-                Text("\(connection.process) (PID \(connection.pid)): \(connection.local) -> \(connection.remote ?? "no remote endpoint") [\(connection.state)]")
+                Text(verbatim: "\(connection.process) (PID \(pidString(connection.pid))): \(connection.local) -> \(connection.remote ?? "no remote endpoint") [\(connection.state)]")
                     .font(.system(size: 11, design: .monospaced))
                     .textSelection(.enabled)
             }

@@ -359,7 +359,7 @@ private struct ResourceProcessRow: View {
             Button(action: onSelect) { processName }
                 .buttonStyle(.borderless)
                 .disabled(process.identity == nil)
-                .accessibilityLabel("Show history for \(process.name), PID \(process.pid)")
+                .accessibilityLabel("Show history for \(process.name), PID \(pidString(process.pid))")
             switch metric {
             case .cpu:
                 value(
@@ -374,7 +374,7 @@ private struct ResourceProcessRow: View {
                 )
                 value(process.idleWakeUps.map(formatNumber) ?? "—", width: 104)
                 value(process.kind ?? "—", width: 72, help: unavailableHelp(process.kind))
-                value("\(process.pid)", width: 72)
+                value(pidString(process.pid), width: 72).copyPID(process.pid)
                 value(process.user, width: 140, alignment: .leading)
             case .memory:
                 value(formatBytes(process.memoryBytes), width: 100, color: Theme.memory)
@@ -388,7 +388,7 @@ private struct ResourceProcessRow: View {
                     width: 86,
                     help: unavailableHelp(process.openFileCount)
                 )
-                value("\(process.pid)", width: 72)
+                value(pidString(process.pid), width: 72).copyPID(process.pid)
                 value(process.user, width: 140, alignment: .leading)
             case .energy:
                 value(process.power.map { String(format: "%.1f", $0) } ?? "N/A", width: 110, color: Theme.energy)
@@ -401,7 +401,7 @@ private struct ResourceProcessRow: View {
                     boolean(process.preventsSleep), width: 120,
                     help: process.preventsSleep == nil ? "Sleep assertion state has not been read successfully for this process." : nil
                 )
-                value("\(process.pid)", width: 72)
+                value(pidString(process.pid), width: 72).copyPID(process.pid)
                 value(process.user, width: 140, alignment: .leading)
             case .disk:
                 value(
@@ -416,14 +416,14 @@ private struct ResourceProcessRow: View {
                     color: Theme.inbound,
                     help: unavailableHelp(process.diskReadBytes)
                 )
-                value("\(process.pid)", width: 72)
+                value(pidString(process.pid), width: 72).copyPID(process.pid)
                 value(process.user, width: 140, alignment: .leading)
             case .network:
                 value(process.sentBytes.map(formatBytes) ?? "N/A", width: 110, color: Theme.outbound)
                 value(process.receivedBytes.map(formatBytes) ?? "N/A", width: 110, color: Theme.inbound)
                 value(process.sentPackets.map(formatNumber) ?? "N/A", width: 110)
                 value(process.receivedPackets.map(formatNumber) ?? "N/A", width: 110)
-                value("\(process.pid)", width: 72)
+                value(pidString(process.pid), width: 72).copyPID(process.pid)
                 value(process.user, width: 140, alignment: .leading)
             }
 
@@ -459,6 +459,7 @@ private struct ResourceProcessRow: View {
                 .foregroundColor(.white.opacity(0.92))
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .copyProcessName(process.name)
 
             Spacer(minLength: 4)
         }

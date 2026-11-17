@@ -2,16 +2,18 @@
 
 [Documentation index](README.md) | [Usage](usage.md)
 
-Dashboard, Resources, Open files, Connections, Startup, Disk cleanup, Dev cleanup,
-and Watchdog share sorting and filter controls. These controls affect displayed
-rows only. They do not change monitoring, automatic cleanup, startup state,
-process protection, or saved history.
+Dashboard, Resources, Open files, Connections, Destinations, Startup, Homebrew,
+Disk cleanup, Folder alerts, Dev cleanup, Watchdog, and Applications share
+sorting and filter controls. These controls affect displayed rows only. They do
+not change monitoring, automatic cleanup, startup state, process protection,
+installed packages, or saved history.
 
 ## Sort a table
 
 Click a data-column header to sort it; click it again to reverse the direction.
 The **Sort** picker provides the same choice, including for the dev-server,
-cleanup-history, offender, and alert lists that do not have column headers.
+cleanup-history, offender, watched-folder, and alert lists that do not have
+column headers.
 The direction button shows **A-Z / Z-A**, **Low-high / High-low**,
 **Old-new / New-old**, or **No-yes / Yes-no**, depending on the field.
 

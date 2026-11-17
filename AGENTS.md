@@ -10,7 +10,8 @@ editing. Keep changes focused and preserve existing user changes.
   package dependencies.
 - `Sources/KillSwitch`: SwiftUI/AppKit GUI and basename-dispatched CLI.
 - `Sources/DevCleanupCore`, `DiskCleanupCore`, `KeepAwakeCore`, `InstallCore`,
-  `ScreenTimeCore`, `StartupCore`, `SystemMetricsCore`: shared behavior and safety rules.
+  `MaintenanceCore`, `ScreenTimeCore`, `SoftwareInventoryCore`, `StartupCore`,
+  `SystemMetricsCore`: shared behavior and safety rules.
 - `Sources/KillSwitchUpdateHelper`: supervised whole-app replacement.
 - `Tests/*Checks`: executable regression checks, not an XCTest suite.
 - `scripts/package-macos.sh` and `scripts/check-macos-package.sh`: local universal
@@ -28,8 +29,10 @@ swift build -c release --product KillSwitch
 swift run DevCleanupCoreChecks
 swift run DiskCleanupCoreChecks
 swift run InstallCoreChecks
+swift run MaintenanceCoreChecks
 swift run SystemMetricsChecks
 swift run ScreenTimeCoreChecks
+swift run SoftwareInventoryCoreChecks
 swift run StartupCoreChecks
 bash scripts/package-macos.sh
 bash scripts/check-macos-package.sh
@@ -47,6 +50,14 @@ workaround are covered in [troubleshooting](docs/troubleshooting.md#source-build
   protected-file rules, or installer symlink/directory safety.
 - Never invoke `killswitchctl dev-cleanup cleanup --json` as a smoke test.
   Opening Dev cleanup can immediately terminate qualifying processes.
+- Software inventory checks use mock command runners. Never run the Homebrew
+  page's upgrade or uninstall actions, `brew upgrade`, or `softwareupdate
+  --install` on a workstation as validation.
+- Maintenance checks use synthetic homes, temporary Git repositories, and
+  scripted `lsof`, `hdiutil`, `gh`, `ps`, and `osascript` runners. Never run
+  Disk cleanup Maintenance actions (Move to Trash, scheduled cleanup, Empty
+  Trash or automatic emptying, cache clearing, worktree removal) on a
+  workstation as validation.
 - `install.sh`, `update.sh`, and `uninstall.sh` change the user's installation
   and login agent. Do not run them on a normal workstation as validation.
 - Prefer package verification: it mounts/ejects its own DMG, uses a disposable

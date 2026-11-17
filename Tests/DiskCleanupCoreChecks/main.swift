@@ -8,6 +8,8 @@ struct CheckRunner {
 
     mutating func run() -> Int32 {
         checkTableQueries()
+        checkFolderSizeThresholds()
+        checkFolderSizeAlertPolicy()
         check(
             DiskCleanupError.invalidScanLocation("/tmp/example").localizedDescription
                 == "Refusing to scan this cleanup location: /tmp/example",
@@ -31,6 +33,9 @@ struct CheckRunner {
             try checkChangedFolderProtection(in: fixtureRoot)
             try checkIncompleteFolderProtection(in: fixtureRoot)
             try checkTrashSafety(in: fixtureRoot)
+            try checkFolderSizeWatchList(in: fixtureRoot)
+            try checkFolderSizeMeasurement(in: fixtureRoot)
+            try checkFolderSizeStore()
         } catch {
             fail("fixture setup: \(error.localizedDescription)")
         }
@@ -41,6 +46,55 @@ struct CheckRunner {
         }
         fputs("\(failures) DiskCleanupCore check(s) failed.\n", stderr)
         return 1
+    }
+
+    private mutating func checkFolderSizeThresholds() {
+        let gigabyte = FolderSizeUnit.gigabytes.bytes
+        check((try? FolderSizeThreshold.bytes(from: " 10 ", unit: .gigabytes)) == 10 * gigabyte, "parses whole thresholds in binary units")
+        check((try? FolderSizeThreshold.bytes(from: "1,5", unit: .gigabytes)) == gigabyte + gigabyte / 2, "accepts a comma decimal separator")
+        check((try? FolderSizeThreshold.bytes(from: "1.25", unit: .gigabytes)) == gigabyte + gigabyte / 4, "accepts two decimals")
+        for invalid in ["", "abc", "-1", "0", "1e3", "1.2.3", "10GB", ".", "1,500", "1.500"] {
+            check((try? FolderSizeThreshold.bytes(from: invalid, unit: .gigabytes)) == nil, "rejects malformed threshold \(invalid)")
+        }
+        check((try? FolderSizeThreshold.bytes(from: "0.5", unit: .megabytes)) == nil, "rejects thresholds below 1 MB")
+        check((try? FolderSizeThreshold.bytes(from: "1025", unit: .terabytes)) == nil, "rejects thresholds above 1,024 TB")
+        let tenGB = FolderSizeThreshold.components(for: 10 * gigabyte)
+        let oneAndHalf = FolderSizeThreshold.components(for: 1_536 * FolderSizeUnit.megabytes.bytes)
+        check(tenGB.value == "10" && tenGB.unit == .gigabytes && oneAndHalf.value == "1.5" && oneAndHalf.unit == .gigabytes,
+              "displays thresholds in the largest whole unit")
+        for (text, unit) in [("2000", FolderSizeUnit.gigabytes), ("1500", .megabytes), ("1.95", .terabytes), ("1023.99", .megabytes)] {
+            guard let bytes = try? FolderSizeThreshold.bytes(from: text, unit: unit) else {
+                fail("parses round-trip threshold \(text) \(unit.rawValue)")
+                continue
+            }
+            let shown = FolderSizeThreshold.components(for: bytes)
+            check((try? FolderSizeThreshold.bytes(from: shown.value, unit: shown.unit)) == bytes,
+                  "redisplayed threshold \(text) \(unit.rawValue) parses back without changing")
+        }
+    }
+
+    private mutating func checkFolderSizeAlertPolicy() {
+        let threshold: UInt64 = 1_000 * FolderSizeUnit.megabytes.bytes
+        func measurement(_ size: UInt64, complete: Bool = true) -> FolderSizeMeasurement {
+            FolderSizeMeasurement(
+                path: "/tmp/synthetic", sizeBytes: size, fileCount: 1,
+                permissionDeniedCount: complete ? 0 : 1, unreadableItemCount: 0,
+                measuredAt: Date(timeIntervalSince1970: 100)
+            )
+        }
+        let reached = FolderSizeAlertState.reached(since: Date(timeIntervalSince1970: 100))
+        let first = FolderSizeAlertPolicy.evaluate(.armed, measurement: measurement(threshold), thresholdBytes: threshold)
+        check(first.shouldAlert && first.state == reached, "alerts when a folder reaches its threshold")
+        check(!FolderSizeAlertPolicy.evaluate(reached, measurement: measurement(threshold * 2), thresholdBytes: threshold).shouldAlert,
+              "does not repeat an alert while the folder stays above its threshold")
+        check(FolderSizeAlertPolicy.evaluate(.armed, measurement: measurement(threshold, complete: false), thresholdBytes: threshold).shouldAlert,
+              "a partial size at the threshold is a valid lower bound for alerting")
+        check(FolderSizeAlertPolicy.evaluate(reached, measurement: measurement(threshold - threshold / 40), thresholdBytes: threshold).state == reached,
+              "stays reached while hovering within 5% below the threshold")
+        check(FolderSizeAlertPolicy.evaluate(reached, measurement: measurement(threshold / 2, complete: false), thresholdBytes: threshold).state == reached,
+              "a partial size never proves a folder shrank")
+        check(FolderSizeAlertPolicy.evaluate(reached, measurement: measurement(threshold / 2), thresholdBytes: threshold).state == .armed,
+              "re-arms after a complete size falls clearly below the threshold")
     }
 
     private mutating func checkTableQueries() {
@@ -588,6 +642,142 @@ struct CheckRunner {
         try createDirectory(temporary)
         try createDirectory(caches)
         return (home, temporary, caches)
+    }
+
+    private mutating func checkFolderSizeWatchList(in fixtureRoot: URL) throws {
+        let base = fixtureRoot.appendingPathComponent("folder-watch-list", isDirectory: true)
+        let folder = base.appendingPathComponent("watched", isDirectory: true)
+        let alias = base.appendingPathComponent("alias", isDirectory: true)
+        let file = base.appendingPathComponent("file.bin")
+        try createDirectory(folder)
+        try writeFile(file, bytes: 1_024)
+        try fileManager.createSymbolicLink(at: alias, withDestinationURL: folder)
+
+        var list = FolderSizeWatchList()
+        let watch = try list.add(folder: folder)
+        check(watch.thresholdBytes == FolderSizeThreshold.defaultBytes && watch.isEnabled && watch.alertState == .armed,
+              "new watches start enabled and armed with the default threshold")
+        func rejects(_ url: URL, threshold: UInt64 = FolderSizeThreshold.defaultBytes, _ name: String) {
+            var copy = list
+            check((try? copy.add(folder: url, thresholdBytes: threshold)) == nil && copy == list, name)
+        }
+        rejects(alias, "rejects a link to an already watched folder")
+        rejects(file, "rejects files")
+        rejects(base.appendingPathComponent("missing", isDirectory: true), "rejects missing folders")
+        rejects(base, threshold: 0, "rejects invalid thresholds")
+
+        let threshold = FolderSizeThreshold.minimumBytes
+        try list.setThreshold(threshold, for: watch.id)
+        let large = FolderSizeMeasurement(
+            path: watch.path, sizeBytes: threshold, fileCount: 1, permissionDeniedCount: 0,
+            unreadableItemCount: 0, measuredAt: Date()
+        )
+        check(list.record(large, for: watch.id)?.thresholdBytes == threshold, "recording a size at the threshold returns an alert")
+        check(list.record(large, for: watch.id) == nil, "a reached folder does not alert again")
+        try list.setThreshold(threshold * 2, for: watch.id)
+        check(list.watch(id: watch.id)?.alertState == .armed, "changing a threshold re-arms its alert")
+        try list.setThreshold(threshold, for: watch.id)
+        try list.setEnabled(false, for: watch.id)
+        check(list.record(large, for: watch.id) == nil && list.watch(id: watch.id)?.alertState == .armed,
+              "paused watches ignore late measurements")
+        try list.setEnabled(true, for: watch.id)
+        let otherFolder = FolderSizeMeasurement(
+            path: base.path, sizeBytes: threshold, fileCount: 1, permissionDeniedCount: 0,
+            unreadableItemCount: 0, measuredAt: Date()
+        )
+        check(list.record(otherFolder, for: watch.id) == nil, "ignores a measurement of a different folder")
+        check(list.remove(id: watch.id)?.id == watch.id && list.record(large, for: watch.id) == nil && list.watches.isEmpty,
+              "removed watches ignore late measurements")
+    }
+
+    private mutating func checkFolderSizeMeasurement(in fixtureRoot: URL) throws {
+        let base = fixtureRoot.appendingPathComponent("folder-size", isDirectory: true)
+        let root = base.appendingPathComponent("watched", isDirectory: true)
+        let outside = base.appendingPathComponent("outside", isDirectory: true)
+        let counted = [
+            root.appendingPathComponent("top.bin"),
+            root.appendingPathComponent("nested/deeper/inner.bin"),
+            root.appendingPathComponent(".hidden/secret.bin"),
+            root.appendingPathComponent("Example.app/Contents/payload.bin"),
+            root.appendingPathComponent("hard-original.bin")
+        ]
+        for (index, url) in counted.enumerated() {
+            try writeFile(url, bytes: 4_096 * (index + 1))
+        }
+        try fileManager.linkItem(at: counted[4], to: root.appendingPathComponent("nested/hard-copy.bin"))
+        try writeFile(outside.appendingPathComponent("large.bin"), bytes: 1_048_576)
+        try fileManager.createSymbolicLink(at: root.appendingPathComponent("file-link.bin"), withDestinationURL: outside.appendingPathComponent("large.bin"))
+        try fileManager.createSymbolicLink(at: root.appendingPathComponent("folder-link"), withDestinationURL: outside)
+        let expected = try counted.reduce(UInt64(0)) { total, url in
+            total + UInt64(try url.resourceValues(forKeys: [.totalFileAllocatedSizeKey]).totalFileAllocatedSize ?? 0)
+        }
+
+        let measurer = FolderSizeMeasurer(workerCount: 4)
+        let measurement = try measurer.measure(root)
+        check(measurement.sizeBytes == expected && measurement.fileCount == counted.count && measurement.isComplete,
+              "measures hidden and package files once per hard link without following links")
+
+        let restricted = root.appendingPathComponent("restricted", isDirectory: true)
+        try writeFile(restricted.appendingPathComponent("blocked.bin"), bytes: 8_192)
+        try fileManager.setAttributes([.posixPermissions: 0o000], ofItemAtPath: restricted.path)
+        defer { try? fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: restricted.path) }
+        let partial = try measurer.measure(root)
+        check(!partial.isComplete && partial.permissionDeniedCount > 0 && partial.sizeBytes == expected,
+              "reports unreadable subfolders as an incomplete lower bound")
+
+        func error(measuring url: URL, token: DiskCleanupCancellationToken = DiskCleanupCancellationToken()) -> FolderSizeWatchError? {
+            do {
+                _ = try measurer.measure(url, cancellationToken: token)
+                return nil
+            } catch {
+                return error as? FolderSizeWatchError
+            }
+        }
+        check(error(measuring: restricted) == .permissionDenied(restricted.path), "an unreadable watched folder is an error, not zero bytes")
+        let missing = base.appendingPathComponent("missing", isDirectory: true)
+        check(error(measuring: missing) == .folderUnavailable(missing.path), "reports missing watched folders")
+        check(error(measuring: counted[0]) == .notAFolder(counted[0].path), "refuses to measure files")
+        let token = DiskCleanupCancellationToken()
+        token.cancel()
+        check(error(measuring: root, token: token) == .cancelled, "honors folder measurement cancellation")
+    }
+
+    private mutating func checkFolderSizeStore() throws {
+        let suite = "DiskCleanupCoreChecks.folder-size-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            fail("creates isolated folder alert preferences")
+            return
+        }
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = FolderSizeWatchStore(defaults: defaults)
+        let allowed = [60, 300, FolderSizeWatchStore.defaultIntervalSeconds]
+        check(try store.loadWatches().watches.isEmpty && store.intervalSeconds(allowed: allowed) == FolderSizeWatchStore.defaultIntervalSeconds,
+              "starts with no watches and the default interval")
+        store.setIntervalSeconds(300)
+        check(store.intervalSeconds(allowed: allowed) == 300, "persists a supported check interval")
+        store.setIntervalSeconds(42)
+        check(store.intervalSeconds(allowed: allowed) == FolderSizeWatchStore.defaultIntervalSeconds, "ignores unsupported saved intervals")
+
+        let list = FolderSizeWatchList([
+            FolderSizeWatch(path: "/tmp/synthetic-a", thresholdBytes: FolderSizeThreshold.defaultBytes),
+            FolderSizeWatch(path: "/tmp/synthetic-b", thresholdBytes: FolderSizeThreshold.minimumBytes, isEnabled: false,
+                            alertState: .reached(since: Date(timeIntervalSince1970: 1_000)))
+        ])
+        try store.save(list)
+        check(try store.loadWatches() == list, "round-trips watched folders and alert state")
+
+        let corrupt = Data("not json".utf8)
+        defaults.set(corrupt, forKey: "foldersize.watches")
+        do {
+            _ = try store.loadWatches()
+            fail("reports unreadable saved watches")
+        } catch {
+            check(defaults.data(forKey: "foldersize.watches.unreadable") == corrupt && (try? store.loadWatches()) == FolderSizeWatchList(),
+                  "backs up unreadable saved watches before resetting them")
+        }
+        let invalid = try JSONEncoder().encode([FolderSizeWatch(path: "/tmp/synthetic-invalid", thresholdBytes: 0)])
+        defaults.set(invalid, forKey: "foldersize.watches")
+        check((try? store.loadWatches()) == nil, "rejects saved watches with invalid thresholds")
     }
 
     private func createDirectory(_ url: URL) throws {

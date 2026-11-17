@@ -950,9 +950,10 @@ struct DevCleanupTab: View {
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                                 .textSelection(.enabled)
-                            Text("PID: \(String(proc.pid))")
+                            Text(verbatim: "PID: \(pidString(proc.pid))")
                                 .font(.system(size: 11))
                                 .foregroundColor(.white.opacity(0.4))
+                                .copyPID(proc.pid)
                         }
                         Spacer()
                         Button {
@@ -1026,9 +1027,10 @@ struct DevCleanupTab: View {
                             Text(String(format: "%.1fh", proc.ageHours))
                                 .font(.system(size: 11))
                                 .foregroundColor(.white.opacity(0.5))
-                            Text("PID \(String(proc.pid))")
+                            Text(verbatim: "PID \(pidString(proc.pid))")
                                 .font(.system(size: 11))
                                 .foregroundColor(.white.opacity(0.4))
+                                .copyPID(proc.pid)
                         }
                         Text(proc.command)
                             .font(.system(size: 12, design: .monospaced))

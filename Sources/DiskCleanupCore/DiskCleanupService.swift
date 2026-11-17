@@ -588,7 +588,7 @@ public final class DiskCleanupService {
         }
     }
 
-    private static func diskSize(_ values: URLResourceValues) -> UInt64 {
+    static func diskSize(_ values: URLResourceValues) -> UInt64 {
         if let allocated = values.totalFileAllocatedSize {
             return UInt64(max(0, allocated))
         }
@@ -614,7 +614,7 @@ public final class DiskCleanupService {
         )
     }
 
-    fileprivate static func isPermissionError(_ error: Error) -> Bool {
+    static func isPermissionError(_ error: Error) -> Bool {
         let nsError = error as NSError
         if nsError.domain == NSCocoaErrorDomain,
            nsError.code == CocoaError.fileReadNoPermission.rawValue {
@@ -657,7 +657,7 @@ private enum DirectoryScanContext {
     case accumulator(Int)
 }
 
-private struct DiskScanCounters {
+struct DiskScanCounters {
     var skippedItemCount = 0
     var permissionDeniedCount = 0
     var excludedCloudItemCount = 0

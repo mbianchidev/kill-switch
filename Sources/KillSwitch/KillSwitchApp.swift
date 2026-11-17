@@ -23,18 +23,22 @@ struct KillSwitchApp: App {
 /// lives only in the menu bar (like Caffeine). Re-showing restores the window
 /// and the `.regular` (Dock) policy. The app only fully quits via the menu.
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private weak var mainWindow: NSWindow?
     private var lastWindowVisibility: Bool?
     private let keepAwakeManager = KeepAwakeManager.shared
     private let screenTimeMonitor = ScreenTimeMonitor.shared
+    private let storage = StorageMenuModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        AppIconSetup.apply()
         NSApp.activate(ignoringOtherApps: true)
         screenTimeMonitor.start()
         ResourceMonitor.shared.start()
+        FolderSizeMonitor.shared.start()
+        MaintenanceMonitor.shared.start()
         keepAwakeManager.onStateChange = { [weak self] _ in
             self?.updateStatusItem()
         }
@@ -57,6 +61,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updateStatusItem()
     }
 
+    /// Startup disk usage is read only when the menu opens, never in the background.
+    func menuWillOpen(_ menu: NSMenu) {
+        storage.refresh()
+    }
+
     private func updateStatusItem() {
         guard let statusItem else { return }
 
@@ -68,6 +77,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         let menu = NSMenu()
+        menu.delegate = self
+        menu.addItem(StorageMenuItem.make(model: storage))
+        menu.addItem(.separator())
         let keepAwakeItem = NSMenuItem(title: "Keep Mac Awake", action: nil, keyEquivalent: "")
         keepAwakeItem.submenu = makeKeepAwakeMenu()
         menu.addItem(keepAwakeItem)
@@ -192,6 +204,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         screenTimeMonitor.stop()
+        FolderSizeMonitor.shared.stop()
+        MaintenanceMonitor.shared.stop()
         SystemHealthMonitor.shared.shutdown()
         ResourceMonitor.shared.shutdown()
         keepAwakeManager.deactivate()

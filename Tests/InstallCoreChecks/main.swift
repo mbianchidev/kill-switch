@@ -19,6 +19,7 @@ struct InstallCoreCheckRunner {
             try checkManagedPathProtection(root: root)
             try checkManagedSymlinkRemovalResults(root: root)
             checkAppDistributions()
+            try checkAppIconRefresh(root: root)
             try checkLegacyEncodedCommandOutput()
             var bundleChecks = BundleUpdateChecks()
             for message in try bundleChecks.run(root: root) {
@@ -184,6 +185,43 @@ struct InstallCoreCheckRunner {
             strict.standardOutput.isEmpty && strict.standardError.isEmpty,
             "default decoding never returns byte-altered text to callers that write output back"
         )
+    }
+
+    private mutating func checkAppIconRefresh(root: URL) throws {
+        let fileManager = FileManager.default
+        let bundle = root.appendingPathComponent("IconRefresh/KillSwitch.app", isDirectory: true)
+        let resources = bundle.appendingPathComponent("Contents/Resources", isDirectory: true)
+        try fileManager.createDirectory(at: resources, withIntermediateDirectories: true)
+        let old = Date(timeIntervalSince1970: 1_700_000_000)
+        try fileManager.setAttributes([.modificationDate: old], ofItemAtPath: bundle.path)
+        var registered: [URL] = []
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let refresher = AppIconRefresh(bundleURL: bundle, register: { registered.append($0); return noErr }, now: { now })
+
+        check(refresher.fingerprint(version: "v1.0.0") == nil, "a bundle without an icon is not refreshed")
+        try Data("synthetic-icon".utf8).write(to: resources.appendingPathComponent("AppIcon.icns"))
+        let first = refresher.fingerprint(version: "v1.0.0")
+        check(AppIconRefresh.needsRefresh(fingerprint: first, refreshed: nil), "an icon not refreshed before needs a refresh")
+        check(!AppIconRefresh.needsRefresh(fingerprint: first, refreshed: first), "the same icon and version refresh only once")
+        check(AppIconRefresh.needsRefresh(fingerprint: refresher.fingerprint(version: "v1.0.1"), refreshed: first),
+              "a new version refreshes again")
+        check(AppIconRefresh(bundleURL: root.appendingPathComponent("KillSwitch")).fingerprint(version: "v1.0.0") == nil,
+              "a standalone binary never refreshes app icons")
+
+        let warning = try refresher.refresh()
+        let modified = try fileManager.attributesOfItem(atPath: bundle.path)[.modificationDate] as? Date
+        check(warning == nil && modified == now && registered == [bundle], "refreshing marks the bundle changed and registers it with Launch Services")
+        let missing = AppIconRefresh(bundleURL: root.appendingPathComponent("IconRefresh/Missing.app"), register: { _ in noErr })
+        if case .touchFailed = try missing.refresh() {} else {
+            fail("a bundle that cannot be marked changed is still registered, with a warning")
+        }
+        let failing = AppIconRefresh(bundleURL: bundle, register: { _ in OSStatus(-10_814) })
+        do {
+            try failing.refresh()
+            fail("a Launch Services failure is reported")
+        } catch {
+            check(error as? AppIconRefreshError == .registrationFailed(-10_814), "reports the Launch Services status")
+        }
     }
 
     private mutating func check(_ condition: Bool, _ message: String) {

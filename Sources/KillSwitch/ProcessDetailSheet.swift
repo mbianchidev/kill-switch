@@ -98,10 +98,13 @@ private struct ProcessDetailResourceHeader: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Label(process.name, systemImage: "terminal")
                         .font(.system(size: 20, weight: .semibold, design: .rounded))
-                    Text("PID \(process.id.pid) / \(process.user)")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(.secondary)
-                        .textSelection(.enabled)
+                        .copyProcessName(process.name)
+                    HStack(spacing: 4) {
+                        Text(verbatim: "PID \(pidString(process.id.pid))").copyPID(process.id.pid)
+                        Text(verbatim: "/ \(process.user)").textSelection(.enabled)
+                    }
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
                 }
                 Spacer()
                 Button("Show resource history") {

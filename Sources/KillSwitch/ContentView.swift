@@ -15,6 +15,9 @@ struct ContentView: View {
     private let updater = UpdateChecker.shared
     private let startsServices: Bool
     private let systemHealth = SystemHealthMonitor.shared
+    private let folderSizes = FolderSizeMonitor.shared
+    private let homebrew = HomebrewMonitor.shared
+    private let maintenance = MaintenanceMonitor.shared
     @State private var windowVisible = true
     @State private var confirmCleanup = false
     @State private var cleanupAuthorized = false
@@ -85,23 +88,27 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 170, ideal: 195, max: 245)
 #endif
         } detail: {
-            RetainedPageHost(
-                selection: selectedTab,
-                content: AnyView(pageContent
-                    .preferredColorScheme(.dark)
-                    .tint(Theme.accent)
-                    .environment(\.isKillSwitchWindowVisible, windowVisible)
-                    .environment(\.allowsLiveOperations, startsServices)
-                    .environment(\.navigatePage, { navigationSelection.wrappedValue = $0 })
-                    .environment(\.inspectProcess, { inspectedProcess = $0 }))
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Banners sit above the native page host; split-view safe-area insets do not reach AppKit-hosted pages.
+            VStack(spacing: 0) {
+                UpdateBanner(updater: updater)
+                FolderSizeAlertBanner(monitor: folderSizes) { navigationSelection.wrappedValue = .folderAlerts }
+                RetainedPageHost(
+                    selection: selectedTab,
+                    content: AnyView(pageContent
+                        .preferredColorScheme(.dark)
+                        .tint(Theme.accent)
+                        .environment(\.isKillSwitchWindowVisible, windowVisible)
+                        .environment(\.allowsLiveOperations, startsServices)
+                        .environment(\.navigatePage, { navigationSelection.wrappedValue = $0 })
+                        .environment(\.inspectProcess, { inspectedProcess = $0 }))
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .navigationSplitViewStyle(.balanced)
         .preferredColorScheme(.dark)
         .tint(Theme.accent)
         .background(Theme.background)
-        .safeAreaInset(edge: .top) { UpdateBanner(updater: updater) }
         .alert("Open Dev cleanup?", isPresented: Binding(
             get: { startsServices && confirmCleanup && currentCleanupConfirmation != nil },
             set: { confirmCleanup = $0 }
@@ -262,12 +269,22 @@ struct ContentView: View {
             DevServersTab(resourceMonitor: resourceMonitor)
         case .connections:
             ConnectionsTab(resourceMonitor: resourceMonitor)
+        case .destinations:
+            DestinationsTab(resourceMonitor: resourceMonitor)
         case .openFiles:
             OpenFilesTab(resourceMonitor: resourceMonitor)
         case .startup:
             StartupTab()
+        case .homebrew:
+            HomebrewTab(monitor: homebrew)
+        case .applications:
+            ApplicationsTab(monitor: ApplicationsMonitor.shared, homebrew: homebrew)
+        case .security:
+            SecurityTab(monitor: SecurityMonitor.shared, homebrew: homebrew)
         case .diskCleanup:
-            DiskCleanupTab(monitor: diskCleanupMonitor)
+            DiskCleanupTab(monitor: diskCleanupMonitor, maintenance: maintenance)
+        case .folderAlerts:
+            FolderSizeAlertsTab(monitor: folderSizes)
         case .cleanup:
             cleanupPage
         case .watchdog:
