@@ -184,9 +184,13 @@ struct DevServersTab: View {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(connection.process).font(.system(size: 12, weight: .medium))
-                    Text("PID \(connection.pid) / \(connection.user) / \(connection.protocolDescription)")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(.secondary)
+                        .copyProcessName(connection.process)
+                    HStack(spacing: 4) {
+                        Text(verbatim: "PID \(pidString(connection.pid))").copyPID(connection.pid)
+                        Text(verbatim: "/ \(connection.user) / \(connection.protocolDescription)")
+                    }
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.secondary)
                 }
                 Spacer()
                 Text(connection.local).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)

@@ -112,3 +112,69 @@ func revealPathInFinder(_ path: String) -> Bool {
     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
     return true
 }
+
+/// Process IDs are identifiers, so they are never grouped like quantities: 65134, not 65.134.
+/// SwiftUI formats integers interpolated into a localized `Text` literal, so pass this string instead.
+func pidString(_ pid: Int32) -> String { String(pid) }
+
+/// Copies an identifying value, such as a process name or PID, when its text is clicked.
+/// A simultaneous gesture keeps row selection and enclosing actions working, and a brief
+/// "Copied" badge confirms the copy without adding a separate control.
+private struct CopyOnClick: ViewModifier {
+    let value: String
+    let label: String
+    @State private var feedback: String?
+    @State private var revision = 0
+    @Environment(\.allowsLiveOperations) private var allowsOperations
+
+    func body(content: Content) -> some View {
+        content
+            .contentShape(Rectangle())
+            .simultaneousGesture(TapGesture().onEnded { copy() })
+            .overlay(alignment: .leading) {
+                if let feedback {
+                    Text(verbatim: feedback)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(feedback == "Copied" ? Theme.accent.opacity(0.9) : Color.red.opacity(0.9)))
+                        .fixedSize()
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+            }
+            .help(Text(verbatim: "Click to copy the \(label): \(value)"))
+            .accessibilityAction(named: Text(verbatim: "Copy \(label)")) { copy() }
+            .task(id: revision) {
+                guard feedback != nil else { return }
+                do { try await Task.sleep(nanoseconds: 1_200_000_000) } catch { return }
+                withAnimation(.easeOut(duration: 0.2)) { feedback = nil }
+            }
+    }
+
+    private func copy() {
+        guard allowsOperations, !value.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        let copied = NSPasteboard.general.setString(value, forType: .string)
+        if !copied {
+            fputs("KillSwitch could not copy the \(label) to the clipboard.\n", stderr)
+        }
+        withAnimation(.easeIn(duration: 0.1)) { feedback = copied ? "Copied" : "Copy failed" }
+        revision += 1
+    }
+}
+
+extension View {
+    func copyOnClick(_ value: String, label: String) -> some View {
+        modifier(CopyOnClick(value: value, label: label))
+    }
+
+    func copyProcessName(_ name: String) -> some View {
+        copyOnClick(name, label: "process name")
+    }
+
+    func copyPID(_ pid: Int32) -> some View {
+        copyOnClick(pidString(pid), label: "PID")
+    }
+}

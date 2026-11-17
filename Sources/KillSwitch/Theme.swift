@@ -54,8 +54,8 @@ struct KillButton: View {
         }
         .buttonStyle(.plain)
         .frame(width: 24, height: 24)
-        .help("Kill process \(pid)")
-        .accessibilityLabel("Kill process \(pid)")
+        .help("Kill process \(pidString(pid))")
+        .accessibilityLabel("Kill process \(pidString(pid))")
         .accessibilityHint("Terminate this process, subject to KillSwitch's safety protections.")
     }
 }

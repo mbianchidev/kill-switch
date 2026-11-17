@@ -64,6 +64,16 @@ terminate real processes.
   [release automation](auto-update.md#release-automation) and
   [CI and security scanning](ci-security.md).
 
+## Process identifiers in the UI
+
+SwiftUI formats integers interpolated into a localized `Text` literal with the
+locale's grouping separator, so `Text("PID \(pid)")` can show `65.134`. Render
+PIDs with `pidString(_:)` or `Text(verbatim:)`, never by interpolating the
+integer into a localized string. Apply `.copyProcessName(_:)` and `.copyPID(_:)`
+from `PageComponents.swift` wherever a process name or PID is shown: clicking
+copies the value through a simultaneous gesture, so selection and row actions
+keep working, and no extra control is added.
+
 ## Shared core targets
 
 | Target | Responsibility |

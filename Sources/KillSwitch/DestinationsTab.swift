@@ -51,7 +51,7 @@ struct DestinationRow: Identifiable {
     let destination: NetworkDestination
     let hostname: String?
     var id: String { destination.id }
-    var processNames: String { destination.processes.map { "\($0.name) (\($0.pid))" }.joined(separator: ", ") }
+    var processNames: String { destination.processes.map { "\($0.name) (\(pidString($0.pid)))" }.joined(separator: ", ") }
 }
 
 private enum DestinationTableFields {
@@ -141,7 +141,7 @@ struct DestinationsTab: View {
                 }
                 .width(80)
                 TableColumn("Processes", sortUsing: TableComparator(field: DestinationTableFields.processes)) { row in
-                    Text(row.processNames).lineLimit(1).help(row.processNames)
+                    Text(row.processNames).lineLimit(1).copyOnClick(row.processNames, label: "process names and PIDs")
                 }
                 .width(min: 160, ideal: 260)
             }

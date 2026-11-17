@@ -20,9 +20,9 @@ struct OpenFilesTable: View {
             } else {
                 Table(rows, selection: $selection, sortOrder: tableSortOrder($sorting)) {
                     pathColumn
-                    TableColumn("Process", sortUsing: TableComparator(field: OpenFileTableFields.process)) { Text($0.process) }
+                    TableColumn("Process", sortUsing: TableComparator(field: OpenFileTableFields.process)) { Text($0.process).copyProcessName($0.process) }
                         .width(min: 110, ideal: 150)
-                    TableColumn("PID", sortUsing: TableComparator(field: OpenFileTableFields.pid)) { Text(String($0.pid)) }.width(55)
+                    TableColumn("PID", sortUsing: TableComparator(field: OpenFileTableFields.pid)) { Text(pidString($0.pid)).copyPID($0.pid) }.width(55)
                     TableColumn("User", sortUsing: TableComparator(field: OpenFileTableFields.user)) { Text($0.user) }.width(95)
                     detailColumns
                     TableColumn("Inspect") { file in
@@ -66,8 +66,8 @@ struct ConnectionsTable: View {
                 Table(rows, selection: $selection, sortOrder: tableSortOrder($sorting)) { connectionColumns }
             } else {
                 Table(rows, selection: $selection, sortOrder: tableSortOrder($sorting)) {
-                    TableColumn("Process", sortUsing: TableComparator(field: ConnectionTableFields.process)) { Text($0.process) }.width(min: 110, ideal: 140)
-                    TableColumn("PID", sortUsing: TableComparator(field: ConnectionTableFields.pid)) { Text(String($0.pid)) }.width(55)
+                    TableColumn("Process", sortUsing: TableComparator(field: ConnectionTableFields.process)) { Text($0.process).copyProcessName($0.process) }.width(min: 110, ideal: 140)
+                    TableColumn("PID", sortUsing: TableComparator(field: ConnectionTableFields.pid)) { Text(pidString($0.pid)).copyPID($0.pid) }.width(55)
                     TableColumn("User", sortUsing: TableComparator(field: ConnectionTableFields.user)) { Text($0.user) }.width(90)
                     connectionColumns
                     TableColumn("Inspect") { connection in

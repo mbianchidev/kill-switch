@@ -3,6 +3,10 @@
 [Documentation index](README.md) | [Installation](installation.md) |
 [CLI reference](cli.md)
 
+Click any process name or PID to copy it to the clipboard; a brief **Copied**
+badge confirms it, and clicking still selects the row. PIDs are always shown as
+plain identifiers, without thousands separators.
+
 All data tables and record lists support two-way sorting and resettable filters.
 Search accepts text and comparisons such as `CPU% > 40` or `size >= 1GB`.
 See [sorting and filtering](table-controls.md) for field examples, units, and

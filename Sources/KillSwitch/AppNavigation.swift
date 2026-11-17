@@ -291,6 +291,6 @@ struct InspectProcessButton: View {
         .buttonStyle(.borderless)
         .disabled(process == nil || inspect == nil)
         .help("Inspect process files and connections")
-        .accessibilityLabel(process.map { "Inspect \($0.name), PID \($0.id.pid)" } ?? "Process identity unavailable")
+        .accessibilityLabel(process.map { "Inspect \($0.name), PID \(pidString($0.id.pid))" } ?? "Process identity unavailable")
     }
 }

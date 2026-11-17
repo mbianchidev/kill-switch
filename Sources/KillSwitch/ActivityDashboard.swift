@@ -116,9 +116,9 @@ struct ActivityDashboard: View {
                         resetAdditional: { monitor.showAllUsers = false }
                     )
                     Table(rows, selection: $monitor.focusedProcess, sortOrder: tableSortOrder($sorting)) {
-                        TableColumn("Process", sortUsing: TableComparator(field: ActivityTableFields.name)) { Text($0.process.name) }
+                        TableColumn("Process", sortUsing: TableComparator(field: ActivityTableFields.name)) { Text($0.process.name).copyProcessName($0.process.name) }
                             .width(min: 140, ideal: 180)
-                        TableColumn("PID", sortUsing: TableComparator(field: ActivityTableFields.pid)) { Text(String($0.process.identity.pid)) }
+                        TableColumn("PID", sortUsing: TableComparator(field: ActivityTableFields.pid)) { Text(pidString($0.process.identity.pid)).copyPID($0.process.identity.pid) }
                             .width(55)
                         TableColumn("CPU", sortUsing: TableComparator(field: ActivityTableFields.cpu)) { Text(formatActivityValue($0.values.cpu, metric: .cpu)) }
                             .width(75)
