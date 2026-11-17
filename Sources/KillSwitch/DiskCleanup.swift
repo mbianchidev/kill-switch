@@ -1057,6 +1057,7 @@ private struct DiskCleanupRow: View {
                             .foregroundColor(.white.opacity(0.36))
                             .lineLimit(1)
                             .truncationMode(.middle)
+                            .copyOnClick(item.url.path, label: "path")
                     }
                     .frame(minWidth: 388, maxWidth: .infinity, alignment: .leading)
 

@@ -979,7 +979,7 @@ struct DevCleanupTab: View {
                                 .foregroundColor(.white)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
-                                .textSelection(.enabled)
+                                .copyOnClick(proc.command, label: "command")
                             Text(verbatim: "PID: \(pidString(proc.pid))")
                                 .font(.system(size: 11))
                                 .foregroundColor(.white.opacity(0.4))
@@ -1067,7 +1067,7 @@ struct DevCleanupTab: View {
                             .foregroundColor(.white.opacity(0.8))
                             .lineLimit(1)
                             .truncationMode(.middle)
-                            .textSelection(.enabled)
+                            .copyOnClick(proc.command, label: "command")
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12)

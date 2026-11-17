@@ -159,11 +159,13 @@ struct DestinationsTab: View {
             InspectionStatus(monitor: monitor, count: rows.count, noun: "destinations")
             Table(rows, selection: $selection, sortOrder: tableSortOrder($sorting)) {
                 TableColumn("Address", sortUsing: TableComparator(field: DestinationTableFields.address)) {
-                    Text($0.destination.address).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+                    Text($0.destination.address).font(.system(size: 11, design: .monospaced))
+                        .copyOnClick($0.destination.address, label: "address")
                 }
                 .width(min: 120, ideal: 170)
                 TableColumn("Hostname", sortUsing: TableComparator(field: DestinationTableFields.host)) { row in
                     Text(hostnameText(row)).foregroundColor(row.hostname == nil ? .secondary : .primary).lineLimit(1)
+                        .copyOnClick(row.hostname ?? "", label: "hostname")
                 }
                 .width(min: 120, ideal: 220)
                 TableColumn("Scope", sortUsing: TableComparator(field: DestinationTableFields.scope)) {
@@ -230,7 +232,7 @@ struct DestinationsTab: View {
             }
             Table(rows, selection: $interfaceSelection, sortOrder: tableSortOrder($interfaceSorting)) {
                 TableColumn("Interface", sortUsing: TableComparator(field: InterfaceTableFields.interface)) {
-                    Text($0.interface).font(.system(size: 11, design: .monospaced))
+                    Text($0.interface).font(.system(size: 11, design: .monospaced)).copyOnClick($0.interface, label: "interface")
                 }
                 .width(min: 60, ideal: 80)
                 TableColumn("Family", sortUsing: TableComparator(field: InterfaceTableFields.family)) { Text($0.family) }
@@ -238,7 +240,7 @@ struct DestinationsTab: View {
                 TableColumn("Address", sortUsing: TableComparator(field: InterfaceTableFields.address)) { address in
                     Text(address.prefixLength.map { "\(address.address)/\($0)" } ?? address.address)
                         .font(.system(size: 11, design: .monospaced))
-                        .textSelection(.enabled)
+                        .copyOnClick(address.address, label: "address")
                 }
                 .width(min: 160, ideal: 280)
                 TableColumn("Scope", sortUsing: TableComparator(field: InterfaceTableFields.scope)) { Text($0.scope.rawValue) }

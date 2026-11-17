@@ -23,7 +23,7 @@ struct OpenFilesTable: View {
                     TableColumn("Process", sortUsing: TableComparator(field: OpenFileTableFields.process)) { Text($0.process).copyProcessName($0.process) }
                         .width(min: 110, ideal: 150)
                     TableColumn("PID", sortUsing: TableComparator(field: OpenFileTableFields.pid)) { Text(pidString($0.pid)).copyPID($0.pid) }.width(min: 36, ideal: 55)
-                    TableColumn("User", sortUsing: TableComparator(field: OpenFileTableFields.user)) { Text($0.user) }.width(min: 57, ideal: 95)
+                    TableColumn("User", sortUsing: TableComparator(field: OpenFileTableFields.user)) { Text($0.user).copyOnClick($0.user, label: "user") }.width(min: 57, ideal: 95)
                     detailColumns
                     TableColumn("Inspect") { file in
                         InspectProcessButton(process: identities[file.pid].map {
@@ -39,7 +39,7 @@ struct OpenFilesTable: View {
 
     @TableColumnBuilder<OpenFileRecord, TableComparator<OpenFileRecord>>
     private var pathColumn: some TableColumnContent<OpenFileRecord, TableComparator<OpenFileRecord>> {
-        TableColumn("Path", sortUsing: TableComparator(field: OpenFileTableFields.path)) { Text($0.path).help($0.path) }
+        TableColumn("Path", sortUsing: TableComparator(field: OpenFileTableFields.path)) { Text($0.path).copyOnClick($0.path, label: "path") }
             .width(min: 230, ideal: 360)
     }
 
@@ -85,8 +85,8 @@ struct ConnectionsTable: View {
     @TableColumnBuilder<NetworkConnectionRecord, TableComparator<NetworkConnectionRecord>>
     private var connectionColumns: some TableColumnContent<NetworkConnectionRecord, TableComparator<NetworkConnectionRecord>> {
         TableColumn("Protocol", sortUsing: TableComparator(field: ConnectionTableFields.protocolDisplay)) { Text($0.protocolDescription) }.width(min: 54, ideal: 90)
-        TableColumn("Local endpoint", sortUsing: TableComparator(field: ConnectionTableFields.local)) { Text($0.local).help($0.local) }.width(min: 150, ideal: 200)
-        TableColumn("Remote endpoint", sortUsing: TableComparator(field: ConnectionTableFields.remote)) { Text($0.remote ?? "None").help($0.remote ?? "No remote endpoint") }
+        TableColumn("Local endpoint", sortUsing: TableComparator(field: ConnectionTableFields.local)) { Text($0.local).copyOnClick($0.local, label: "local endpoint") }.width(min: 150, ideal: 200)
+        TableColumn("Remote endpoint", sortUsing: TableComparator(field: ConnectionTableFields.remote)) { Text($0.remote ?? "None").copyOnClick($0.remote ?? "", label: "remote endpoint") }
             .width(min: 150, ideal: 200)
         TableColumn("State", sortUsing: TableComparator(field: ConnectionTableFields.state)) { Text($0.state) }.width(min: 75, ideal: 125)
         TableColumn("HTTP") { OpenListenerButton(connection: $0) }.width(min: 51, ideal: 85)

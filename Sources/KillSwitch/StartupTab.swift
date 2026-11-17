@@ -183,11 +183,11 @@ struct StartupTab: View {
                 .foregroundColor(.secondary)
 
             Table(rows, selection: $selected, sortOrder: tableSortOrder($sorting)) {
-                TableColumn("Name / schedule", sortUsing: TableComparator(field: StartupTableFields.name)) { Text($0.name).help($0.name) }.width(min: 170, ideal: 220)
+                TableColumn("Name / schedule", sortUsing: TableComparator(field: StartupTableFields.name)) { Text($0.name).copyOnClick($0.name, label: "name") }.width(min: 170, ideal: 220)
                 TableColumn("Type", sortUsing: TableComparator(field: StartupTableFields.kind)) { Text($0.kind.rawValue) }.width(min: 81, ideal: 135)
                 TableColumn("Scope", sortUsing: TableComparator(field: StartupTableFields.scope)) { Text($0.domain.label) }.width(min: 54, ideal: 90)
                 TableColumn("State", sortUsing: TableComparator(field: StartupTableFields.state)) { Text($0.state.rawValue) }.width(min: 45, ideal: 75)
-                TableColumn("Command / app", sortUsing: TableComparator(field: StartupTableFields.command)) { Text($0.command).help($0.command) }.width(min: 180, ideal: 320)
+                TableColumn("Command / app", sortUsing: TableComparator(field: StartupTableFields.command)) { Text($0.command).copyOnClick($0.command, label: "command") }.width(min: 180, ideal: 320)
                 TableColumn("Startup control") { item in
                     if case .managedBackgroundItem = item.source {
                         Button("macOS settings") { monitor.openLoginSettings() }

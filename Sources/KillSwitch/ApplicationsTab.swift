@@ -129,10 +129,13 @@ struct ApplicationsTab: View {
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(row.app.name).font(.system(size: 12, weight: .medium))
+                                .copyOnClick(row.app.name, label: "application name")
                             Text(row.app.bundleIdentifier ?? row.app.path)
                                 .font(.system(size: 10))
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
+                                .copyOnClick(row.app.bundleIdentifier ?? row.app.path,
+                                             label: row.app.bundleIdentifier == nil ? "path" : "bundle identifier")
                         }
                     }
                     .help(row.app.path)
@@ -141,6 +144,7 @@ struct ApplicationsTab: View {
                 .width(min: 150)
                 TableColumn("Version", sortUsing: TableComparator(field: ApplicationTableFields.version)) {
                     Text($0.app.version ?? "—").font(.system(size: 11, design: .monospaced)).lineLimit(1)
+                        .copyOnClick($0.app.version ?? "", label: "version")
                 }
                 .width(min: 36, ideal: 56)
                 TableColumn("Signature", sortUsing: TableComparator(field: ApplicationTableFields.source)) { row in
@@ -150,7 +154,7 @@ struct ApplicationsTab: View {
                 TableColumn("Homebrew", sortUsing: TableComparator(field: ApplicationTableFields.cask)) { row in
                     if let cask = row.cask {
                         StatusBadge(title: cask.name, color: Theme.energy, systemImage: "mug.fill")
-                            .help("Installed by the Homebrew cask \(cask.fullName)")
+                            .copyOnClick(cask.fullName, label: "Homebrew cask")
                     } else {
                         Text("—").foregroundColor(.secondary)
                     }

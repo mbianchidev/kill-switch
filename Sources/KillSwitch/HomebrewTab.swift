@@ -184,6 +184,7 @@ struct HomebrewTab: View {
                 TableColumn("Package", sortUsing: TableComparator(field: HomebrewTableFields.name)) { package in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(package.displayName).font(.system(size: 12, weight: .medium))
+                            .copyOnClick(package.fullName, label: "Homebrew name")
                         Text(package.summary ?? package.fullName)
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
@@ -268,7 +269,7 @@ struct HomebrewTab: View {
             .font(.system(size: 11, design: .monospaced))
             .lineLimit(1)
             .truncationMode(.middle)
-            .help("Installed \(installed), latest \(package.latestVersion ?? "unknown")")
+            .copyOnClick(text, label: "version")
     }
 
     private func transcriptView(_ transcript: HomebrewTranscript) -> some View {
