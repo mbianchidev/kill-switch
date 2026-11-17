@@ -43,6 +43,10 @@ terminate real processes.
   `netstat`, and `pmset` run only for metrics that require them. See
   [resource data sources and restrictions](system-diagnostics.md#resources).
 - **`osascript`:** native notifications and administrator-authorized diagnostics.
+- **Software inventory commands:** the user's own `brew` for Homebrew, `spctl`
+  for Gatekeeper assessments, `softwareupdate --list`, and the unprivileged
+  `fdesetup`, `socketfilterfw`, `spctl --status`, and `csrutil status` reads.
+  `system_profiler`, IOKit, and `SystemConfiguration` supply system details.
 - **SQLite:** macOS's built-in `sqlite3` library stores private, bounded activity
   history through the `CSQLite` system-library target, without a package download.
 - **Process inspection and startup:** NUL-delimited `lsof` data, launchd
@@ -70,7 +74,8 @@ terminate real processes.
 | [`KeepAwakeCore`](../Sources/KeepAwakeCore) | IOKit power assertions, timed sessions, and resource cleanup |
 | [`InstallCore`](../Sources/InstallCore) | Binary/symlink path safety, native command execution, whole-app validation, staging, startup confirmation, and rollback |
 | [`ScreenTimeCore`](../Sources/ScreenTimeCore) | Active-time tracking, idle breaks, daily rollover, and reminder boundaries |
-| [`SystemMetricsCore`](../Sources/SystemMetricsCore) | Resource/system-health parsing, continuous sampling policy, PID-safe history/rates and inspection, bounded project discovery, and private SQLite storage |
+| [`SoftwareInventoryCore`](../Sources/SoftwareInventoryCore) | Homebrew inventory parsing and upgrade/uninstall plans, application scanning and Gatekeeper classification, macOS update parsing, and security posture reads behind a mockable command runner |
+| [`SystemMetricsCore`](../Sources/SystemMetricsCore) | Resource/system-health parsing, continuous sampling policy, PID-safe history/rates and inspection, network destination grouping and interface addresses, system details, bounded project discovery, and private SQLite storage |
 | [`StartupCore`](../Sources/StartupCore) | Startup inventory, protected-service policy, command planning, reversible cron/login changes, and backups |
 
 [`KillSwitch`](../Sources/KillSwitch) contains the GUI and basename-dispatched
@@ -145,6 +150,35 @@ path as the watchdog. The in-app banner is a leaf view above the native page
 host; it observes the monitor without making `ContentView` observe updates.
 Opening the visible Folder alerts page acknowledges banner alerts.
 
+## Software inventory model
+
+`SoftwareInventoryCore` keeps every external command behind
+`SoftwareCommandRunning`; checks use a recording mock and synthetic JSON, plist,
+and command output. Homebrew is located only at its standard Apple silicon and
+Intel paths. `HomebrewCommandPlanner` builds explicit `brew upgrade --formula`
+and `--cask` commands from the parsed inventory, so self-updating, unversioned,
+and pinned packages are never named, and validates names before they become
+arguments. Uninstall plans never add `--force`, `--zap`, or
+`--ignore-dependencies`. Commands set `HOMEBREW_NO_AUTO_UPDATE` and a fixed
+`PATH`; `HomebrewService.perform` stops at the first failure and returns the
+transcript so far.
+
+`HomebrewMonitor.shared` serializes Homebrew work and is shared by the Homebrew,
+Applications, and Security pages. `ApplicationsMonitor` assesses apps in batches
+of eight and caches results by path and modification date. Gatekeeper output is
+classified from `spctl`'s standard error; anything not notarized, from the Mac
+App Store, or from Apple is local, and unrecognized output is unverified rather
+than local. Security posture parsers return Unknown for unrecognized output.
+`softwareupdate` output is parsed into items and readable warnings; same-major
+macOS, Safari, and security-response items are marked security-relevant.
+
+Destinations reuse `ProcessInspectionMonitor` in connections mode and group
+records with `NetworkDestinationGrouping`. `ReverseDNSCache` resolves at most
+four addresses at a time and caches results, including missing names, for the
+app's lifetime. System details load once per System page visit through
+`SystemDetailsMonitor`. All of these pages load on demand, only while visible,
+and skip live reads when live operations are disabled, as in the probe.
+
 ## Run checks
 
 The regression targets are executable checks, not an XCTest suite. Run the same
@@ -156,6 +190,7 @@ swift run DiskCleanupCoreChecks
 swift run InstallCoreChecks
 swift run SystemMetricsChecks
 swift run ScreenTimeCoreChecks
+swift run SoftwareInventoryCoreChecks
 swift run StartupCoreChecks
 ```
 
@@ -421,9 +456,11 @@ The optional PNG is the probe's own unshown window, never a desktop capture.
 explicit synthetic providers/termination results. It is a GUI fixture, not a
 live-cleanup measurement; synthetic cleanup startup rejects a missing injected
 service. The other navigation scenarios still exclude cleanup.
-`folder-alerts` is also a GUI fixture rather than a footprint scenario: it
-renders the page with fictional in-memory folders and alerts and does not
-measure, persist, or notify.
+`folder-alerts`, `homebrew`, `applications`, and `security` are also GUI
+fixtures rather than footprint scenarios: they render their pages with fictional
+in-memory data and never measure folders, run `brew`, `spctl`, or
+`softwareupdate`, persist, or notify. The `system` scenario also renders
+fictional system details and identifiers.
 `--performance-probe --native-health-check` separately verifies public native health interfaces
 without identifiers, UI interaction, or privileged diagnostics; it is not a
 synthetic measurement scenario.

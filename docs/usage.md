@@ -124,6 +124,27 @@ Inspection refreshes every ten seconds while this tab is visible and stops when
 you switch tabs. It does not close files or terminate processes. See the
 [inspection limitations](system-diagnostics.md#connections-and-open-files).
 
+## Destinations
+
+**Destinations** under **Investigate** groups the active TCP and UDP connections
+visible to your account by remote address. Each row shows the address, its
+reverse DNS hostname when one exists, the scope (Public, Private, Carrier-grade
+NAT, Link-local, Loopback, or Multicast), remote ports, the connection count,
+and every process with a connection to that address. IPv4-mapped IPv6 addresses
+are merged with their IPv4 form. Loopback connections are hidden unless you
+select **Include loopback**; listeners, bound sockets, and closed connections
+are not destinations.
+
+Below it, **This Mac's IP addresses** lists every IPv4 and IPv6 interface
+address with its prefix length, scope, and up/down status. It does not look up
+a public IP address through an external service.
+
+The page reuses the Connections collection: it refreshes every ten seconds
+while visible, follows the shared **My processes** / **All processes** scope,
+and stops when you leave. Hostnames come from reverse DNS lookups through your
+Mac's configured resolver, four at a time, and are cached until KillSwitch quits.
+A missing or different name is normal; it need not match the name an app used.
+
 ## Process investigation
 
 Use **Inspect** from Dashboard, a resource page, Connections, Open files, or Dev
@@ -189,6 +210,15 @@ one logical core. Load averages are runnable/waiting work, not percentages.
 Awake time since restart is `ProcessInfo.systemUptime` and excludes sleep; it
 is not presented as total elapsed time since boot.
 
+**System details** on the System page adds the model name and identifier, model
+number, computer name, local hostname, boot time, serial number, hardware UUID,
+every visible storage volume with available and total space, and online
+displays with resolution. They are read with `system_profiler`, IOKit, and
+volume information when the page opens; use its refresh button to read them
+again. The serial number and hardware UUID identify your Mac, so they stay
+masked until you choose **Show**; **Copy** places one on the clipboard. They are
+never stored.
+
 **Battery** shows charge, charging state, power source, reported condition,
 cycle count, applicable time estimates, and Low Power Mode when macOS exposes
 them. A desktop's verified lack of an internal battery is distinct from a
@@ -200,8 +230,8 @@ KillSwitch does not invent sensor readings or fan speeds.
 
 One shared health monitor uses supported public interfaces at most every thirty
 seconds while one of these pages or Dashboard is visible. No privileged helper,
-serial number, hardware UUID, temperature sensor, or additional background
-recording is involved. Health details are live, not persisted.
+temperature sensor, or additional background recording is involved. Health
+details are live, not persisted.
 
 ## Startup
 
@@ -218,6 +248,31 @@ Modern app-owned background-item switches remain in macOS **Login Items
 settings**. **Load system cron** explicitly authorizes reading root's crontab.
 See [startup management](startup.md) for supported entries, backups, permissions,
 and recovery.
+
+## Homebrew
+
+**Homebrew** under **Manage** lists installed formulae and casks with their
+installed and latest versions, status, and actions. KillSwitch looks for `brew`
+in `/opt/homebrew/bin` and `/usr/local/bin`. If neither exists, the page stays
+empty: KillSwitch never installs, repairs, or configures Homebrew.
+
+- **Upgrade** upgrades one outdated formula or cask; **Upgrade all** upgrades
+  every outdated package that KillSwitch may upgrade, after confirmation.
+- Self-updating casks (`auto_updates`) are always skipped, even when Homebrew
+  lists them as outdated; they show **Updates itself**. Unversioned (`latest`)
+  casks and pinned packages are skipped too. KillSwitch names each package it
+  upgrades, so a greedy Homebrew setting cannot include skipped casks.
+- **Uninstall** runs `brew uninstall` after confirmation, without `--force`,
+  `--zap`, or `--ignore-dependencies`. Homebrew refuses to remove a formula that
+  another package needs. A cask uninstall removes its app but keeps its settings.
+- **Check for updates** runs `brew update`; the refresh button relists packages.
+
+Every action runs `brew` in the background as your user, one at a time, with
+`HOMEBREW_NO_AUTO_UPDATE` set so upgrades act on the versions shown. The last
+command's output appears on the page; failures are shown with Homebrew's error.
+Casks whose installers ask for an administrator password cannot finish from
+KillSwitch; run those in Terminal. Filter by **Outdated**, **Formulae**, or
+**Casks**, or search with fields such as `outdated = yes`.
 
 ## Disk cleanup
 
@@ -439,6 +494,45 @@ last 500 lines.
 These are sampled observations, not proof of uninterrupted load for an exact
 duration. See the [watchdog model](development.md#watchdog-model).
 
+## Applications
+
+**Applications** under **Your Mac** lists the app bundles in `/Applications` and
+`~/Applications`, including subfolders up to three levels deep, with their name,
+bundle identifier, version, and modification date. Built-in apps in
+`/System/Applications` are not listed.
+
+- **Homebrew** marks apps installed by a Homebrew cask, with the cask name.
+- **Signature** shows Gatekeeper's assessment from `spctl --assess`:
+  **Notarized**, **App Store**, **Apple**, **Local**, or **Unverified**.
+  **Local** means the app is not notarized: Gatekeeper rejected it, or it is
+  signed with a Developer ID but not notarized. Ad-hoc builds, including
+  KillSwitch itself, are local. **Unverified** means Gatekeeper could not assess
+  it, for example because assessments are disabled.
+
+Use **Homebrew**, **Not Homebrew**, or **Local** to filter, or search fields such
+as `local = yes` and `homebrew = no`. Assessments run in small parallel batches
+when the page first opens and are cached until an app changes. The refresh
+button scans again. The page is read-only; **Reveal in Finder** shows an app.
+
+## Security
+
+**Security** under **Your Mac** reads, without administrator access:
+
+- **Protections:** FileVault, the firewall and its stealth mode, Gatekeeper,
+  System Integrity Protection, the XProtect definitions version, and whether
+  security responses install automatically. A protection that is off is
+  highlighted; stealth mode is informational. An unrecognized or failed read is
+  shown as Unknown with the raw output, never assumed.
+- **macOS updates:** opening the page lists the updates found by macOS's most
+  recent Software Update scan (`softwareupdate --list --no-scan`). **Scan now**
+  contacts Apple and can take minutes. Security responses, updates within your
+  installed macOS major version, and Safari updates are highlighted as security
+  updates because Apple ships security fixes in them; major upgrades and other
+  software are listed without highlighting. **Open Software Update** opens
+  System Settings to install them; KillSwitch does not install macOS updates.
+- **Homebrew packages:** every outdated package, because Homebrew does not label
+  which upgrades fix vulnerabilities. Upgrade them from the Homebrew page.
+
 ## Screen time
 
 Tracks today's active use and the current continuous stretch. Counting pauses
@@ -508,4 +602,9 @@ These preferences persist. See [update controls](auto-update.md#using-updates),
   selected files and confirmation. iCloud and protected locations are excluded.
 - Releases are ad-hoc signed, not Apple-notarized. Checksums verify integrity
   against the published release, not an Apple-verified publisher identity.
+- Homebrew upgrades and uninstalls run `brew` as your user and cannot be
+  undone by KillSwitch. Review the confirmation; self-updating casks are never
+  upgraded.
+- Applications, Security, Destinations, and System details are read-only.
+  KillSwitch does not change security settings or install macOS updates.
 - Monitoring and keep-awake sessions stop when the app quits.

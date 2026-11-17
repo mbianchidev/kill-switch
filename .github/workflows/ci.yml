@@ -50,6 +50,9 @@ jobs:
       - name: Test screen time tracking
         run: swift run ScreenTimeCoreChecks
 
+      - name: Test Homebrew, application, update, and security parsing
+        run: swift run SoftwareInventoryCoreChecks
+
       - name: Package universal app and DMG
         run: bash scripts/package-macos.sh --universal-build
 
