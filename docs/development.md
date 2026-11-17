@@ -144,8 +144,12 @@ error rather than zero bytes. Unreadable saved data is copied to
 
 `FolderSizeMonitor.shared` starts with the app delegate, measures one folder at
 a time on a utility queue, and uses per-folder cancellation tokens. Removing or
-pausing a folder cancels its pending measurement, and results for removed,
-paused, or replaced work are ignored. Notifications use the same `osascript`
+pausing a folder, or changing its limit, cancels its pending measurement, and
+results for removed, paused, or replaced work are ignored. Root permission
+failures are tracked separately from denied entries so the Full Disk Access
+action stays visible. Folder paths keep the unified log's default private
+redaction. Probe builds back the shared monitor with an empty, isolated
+defaults suite. Notifications use the same `osascript`
 path as the watchdog. The in-app banner is a leaf view above the native page
 host; it observes the monitor without making `ContentView` observe updates.
 Opening the visible Folder alerts page acknowledges banner alerts.

@@ -5,9 +5,12 @@ import Foundation
 import os
 
 struct FolderSizeWatchStatus: Equatable {
+    /// The last successful measurement; kept after a failed check so its age and size stay visible.
     var measurement: FolderSizeMeasurement?
     var isMeasuring = false
     var errorMessage: String?
+    /// The latest check could not read the watched folder itself.
+    var permissionDenied = false
 }
 
 /// Measures watched folders one at a time on a background queue, persists alert
@@ -15,7 +18,14 @@ struct FolderSizeWatchStatus: Equatable {
 /// Monitoring runs for the app's lifetime, including while the window is hidden.
 @MainActor
 final class FolderSizeMonitor: ObservableObject {
+#if KILLSWITCH_PERFORMANCE_PROBE
+    // The probe never reads or writes the user's saved folder watches.
+    static let shared = FolderSizeMonitor(store: FolderSizeWatchStore(
+        defaults: UserDefaults(suiteName: "KillSwitch.synthetic-folder-alerts-\(UUID().uuidString)") ?? UserDefaults()
+    ))
+#else
     static let shared = FolderSizeMonitor()
+#endif
     // Full folder walks are too heavy for a 30-second cadence.
     static let intervalOptions = SamplingIntervals.standard.filter { $0.seconds >= 60 }
     private static let maxAlerts = 50
@@ -34,9 +44,12 @@ final class FolderSizeMonitor: ObservableObject {
 
     var isMeasuring: Bool { statuses.values.contains { $0.isMeasuring } }
     var lastMeasured: Date? { statuses.values.compactMap { $0.measurement?.measuredAt }.max() }
+    /// Protected items skipped inside otherwise readable watched folders.
     var permissionDeniedCount: Int {
         statuses.values.reduce(0) { $0 + ($1.measurement?.permissionDeniedCount ?? 0) }
     }
+    /// Watched folders whose latest check was denied access to the folder itself.
+    var unreadableFolderCount: Int { statuses.values.filter(\.permissionDenied).count }
 
     private var list = FolderSizeWatchList() {
         didSet { watches = list.watches }
@@ -117,6 +130,8 @@ final class FolderSizeMonitor: ObservableObject {
             return
         }
         persist()
+        // A walk started before the edit must not be judged against the re-armed limit.
+        cancelMeasurement(of: id)
         if let watch = list.watch(id: id) { enqueueMeasurement(of: watch) }
     }
 
@@ -194,6 +209,7 @@ final class FolderSizeMonitor: ObservableObject {
         case .success(let measurement):
             status.measurement = measurement
             status.errorMessage = nil
+            status.permissionDenied = false
             statuses[id] = status
             let previous = list
             let alert = list.record(measurement, for: id)
@@ -203,8 +219,14 @@ final class FolderSizeMonitor: ObservableObject {
             statuses[id] = status
         case .failure(let error):
             status.errorMessage = error.localizedDescription
+            if case FolderSizeWatchError.permissionDenied = error {
+                status.permissionDenied = true
+            } else {
+                status.permissionDenied = false
+            }
             statuses[id] = status
-            logger.error("Folder size measurement failed: \(error.localizedDescription, privacy: .public)")
+            // Messages contain folder paths, so they keep the unified log's default private redaction.
+            logger.error("Folder size measurement failed: \(error.localizedDescription)")
         }
     }
 
@@ -244,7 +266,7 @@ final class FolderSizeMonitor: ObservableObject {
 
     private func report(_ message: String) {
         errorMessage = message
-        logger.error("\(message, privacy: .public)")
+        logger.error("\(message)")
     }
 
     private func reschedule() {

@@ -15,6 +15,21 @@ struct FolderSizeWatchRowModel: Identifiable {
     var usagePercent: Double? {
         status.measurement.map { Double($0.sizeBytes) / Double(watch.thresholdBytes) * 100 }
     }
+
+    enum DisplayState: Equatable {
+        case paused, measuring, limitReached, unavailable, checkFailed, incomplete, belowLimit, waiting
+    }
+
+    /// "Below limit" requires a complete, current measurement: a partial size or a failed
+    /// latest check cannot show that the folder is under its limit.
+    var displayState: DisplayState {
+        if !watch.isEnabled { return .paused }
+        if status.isMeasuring { return .measuring }
+        if hasReachedLimit { return .limitReached }
+        if status.errorMessage != nil { return status.measurement == nil ? .unavailable : .checkFailed }
+        guard let measurement = status.measurement else { return .waiting }
+        return measurement.isComplete ? .belowLimit : .incomplete
+    }
 }
 
 private enum WatchTableFields {
@@ -170,11 +185,11 @@ struct FolderSizeAlertsTab: View {
             .padding(10)
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.12)))
         }
-        if monitor.permissionDeniedCount > 0 {
+        if monitor.permissionDeniedCount > 0 || monitor.unreadableFolderCount > 0 {
             HStack(spacing: 10) {
                 Image(systemName: "lock.trianglebadge.exclamationmark.fill")
                     .foregroundColor(.orange)
-                Text("\(monitor.permissionDeniedCount) protected location(s) could not be measured, so some sizes are lower bounds.")
+                Text(permissionNotice)
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.8))
                 Spacer()
@@ -185,6 +200,17 @@ struct FolderSizeAlertsTab: View {
             .padding(10)
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.1)))
         }
+    }
+
+    private var permissionNotice: String {
+        var parts: [String] = []
+        if monitor.unreadableFolderCount > 0 {
+            parts.append("\(monitor.unreadableFolderCount) watched folder(s) could not be read at all.")
+        }
+        if monitor.permissionDeniedCount > 0 {
+            parts.append("\(monitor.permissionDeniedCount) protected location(s) inside watched folders could not be measured, so some sizes are lower bounds.")
+        }
+        return parts.joined(separator: " ")
     }
 
     private var watchesSection: some View {
@@ -369,22 +395,29 @@ private struct FolderSizeWatchRow: View {
 
     @ViewBuilder
     private var statusBadge: some View {
-        if !row.watch.isEnabled {
+        switch row.displayState {
+        case .paused:
             badge("Paused", systemImage: "pause.circle", color: .white.opacity(0.5))
-        } else if row.status.isMeasuring {
+        case .measuring:
             HStack(spacing: 5) {
                 ProgressView().controlSize(.mini)
                 Text("Measuring…")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(.white.opacity(0.6))
             }
-        } else if row.status.errorMessage != nil, row.status.measurement == nil {
-            badge("Unavailable", systemImage: "xmark.octagon.fill", color: .red)
-        } else if row.hasReachedLimit {
+        case .limitReached:
             badge("Limit reached", systemImage: "exclamationmark.triangle.fill", color: .red)
-        } else if row.status.measurement != nil {
+        case .unavailable:
+            badge("Unavailable", systemImage: "xmark.octagon.fill", color: .red)
+        case .checkFailed:
+            badge("Check failed", systemImage: "exclamationmark.octagon.fill", color: .orange)
+                .help("The latest check failed; the size shown is from the last successful measurement.")
+        case .incomplete:
+            badge("Incomplete", systemImage: "lock.trianglebadge.exclamationmark", color: .orange)
+                .help("Some contents could not be read, so the folder may already be over its limit.")
+        case .belowLimit:
             badge("Below limit", systemImage: "checkmark.circle.fill", color: .green)
-        } else {
+        case .waiting:
             badge("Waiting", systemImage: "clock", color: .white.opacity(0.5))
         }
     }

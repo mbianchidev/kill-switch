@@ -335,10 +335,15 @@ the limit does not alert on every check. Changing the limit re-arms it.
 Sizes add up the allocated space of every file, including hidden files and
 package contents, like `du`. Symbolic links are not followed, and hard-linked
 files count once. When some contents cannot be read, the size is shown as a
-lower bound (`≥`); it can still trigger an alert but never re-arms one. A folder
-that cannot be read at all is reported as unavailable, not as 0 bytes.
+lower bound (`≥`); it can still trigger an alert but never re-arms one, and the
+folder shows **Incomplete** rather than **Below limit**. A folder that cannot be
+read at all is reported as unavailable, not as 0 bytes. When a later check
+fails, the folder shows **Check failed** with the error and keeps its last
+successful size for reference. Changing a limit while a folder is being measured
+discards that measurement and starts a new one.
 Desktop, Documents, Downloads, and other protected locations may need
-**Full Disk Access**.
+**Full Disk Access**; the page links to its settings whenever a watched folder
+or something inside one is denied.
 
 Folders, limits, alert state, and the interval persist across launches.
 Folders are measured one at a time at background priority, so very large

@@ -5,6 +5,7 @@ import Foundation
 import SwiftUI
 import SystemMetricsCore
 import DevCleanupCore
+import DiskCleanupCore
 import os
 
 @MainActor
@@ -276,6 +277,7 @@ enum PerformanceProbe {
         devServerDetectionChecks(check)
         copyFeedbackChecks(check)
         dashboardSelectionChecks(check)
+        folderAlertStateChecks(check)
 
         let suite = "KillSwitch.synthetic-entry-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suite) else {
@@ -1730,6 +1732,32 @@ enum PerformanceProbe {
               "A visible affected listener must still raise its project warning.")
         check(!DevServersTab.hasProjectWarnings(in: [NetworkConnectionRecord](), identities: inspection.identities, errors: errors),
               "No matching listeners must not claim that visible rows explain hidden project errors.")
+    }
+
+    private static func folderAlertStateChecks(_ check: (Bool, String) -> Void) {
+        let watch = FolderSizeWatch(path: "/synthetic/watched", thresholdBytes: FolderSizeThreshold.minimumBytes)
+        func measurement(denied: Int) -> FolderSizeMeasurement {
+            FolderSizeMeasurement(path: watch.path, sizeBytes: 1_024, fileCount: 1, permissionDeniedCount: denied,
+                                  unreadableItemCount: 0, measuredAt: Date())
+        }
+        func state(_ status: FolderSizeWatchStatus, watch: FolderSizeWatch = watch) -> FolderSizeWatchRowModel.DisplayState {
+            FolderSizeWatchRowModel(watch: watch, status: status).displayState
+        }
+        check(state(FolderSizeWatchStatus(measurement: measurement(denied: 0))) == .belowLimit,
+              "A complete measurement under the limit is below the limit.")
+        check(state(FolderSizeWatchStatus(measurement: measurement(denied: 2))) == .incomplete,
+              "A partial measurement must not claim the folder is below its limit.")
+        check(state(FolderSizeWatchStatus(measurement: measurement(denied: 0), errorMessage: "synthetic failure")) == .checkFailed,
+              "A failed latest check must not keep a stale below-limit state.")
+        check(state(FolderSizeWatchStatus(errorMessage: "synthetic failure", permissionDenied: true)) == .unavailable,
+              "A folder that was never read is unavailable.")
+        let reached = FolderSizeWatch(id: watch.id, path: watch.path, thresholdBytes: watch.thresholdBytes,
+                                      alertState: .reached(since: Date()))
+        check(state(FolderSizeWatchStatus(measurement: measurement(denied: 0), errorMessage: "synthetic failure"), watch: reached) == .limitReached,
+              "A reached folder keeps its limit state across a failed check.")
+        let paused = FolderSizeWatch(id: watch.id, path: watch.path, thresholdBytes: watch.thresholdBytes, isEnabled: false)
+        check(state(FolderSizeWatchStatus(measurement: measurement(denied: 0)), watch: paused) == .paused, "Paused folders show paused.")
+        check(FolderSizeMonitor.shared.watches.isEmpty, "The probe's folder monitor must not load saved folder watches.")
     }
 
     private static func dashboardSelectionChecks(_ check: (Bool, String) -> Void) {

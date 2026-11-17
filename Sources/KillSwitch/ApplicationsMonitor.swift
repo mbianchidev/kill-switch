@@ -52,7 +52,7 @@ final class ApplicationsMonitor: ObservableObject {
         lastScan = Date()
         applications = result.applications
         failures = result.failures
-        for failure in result.failures { logger.error("Application scan: \(failure, privacy: .public)") }
+        for failure in result.failures { logger.error("Application scan: \(failure)") }
 
         var known: [String: ApplicationTrust] = [:]
         var unknown: [InstalledApplication] = []

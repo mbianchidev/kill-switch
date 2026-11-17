@@ -134,7 +134,8 @@ final class HomebrewMonitor: ObservableObject {
 
     private func report(_ message: String) {
         errorMessage = message
-        logger.error("\(message, privacy: .public)")
+        // brew errors can include home-folder paths, so keep the default private redaction.
+        logger.error("\(message)")
     }
 }
 
