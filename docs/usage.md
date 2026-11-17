@@ -262,7 +262,7 @@ its own size limit.
 
 | Setting | Default | Choices |
 | --- | --- | --- |
-| Alert limit | 10 GB per folder | 1 MB through 1,024 TB, entered in MB, GB, or TB |
+| Alert limit | 10 GB per folder | 1 MB through 1024 TB, entered in MB, GB, or TB with up to two decimals |
 | Check every | 15 minutes | 1/5/10/15/30/60 minutes |
 | Monitoring | On for new folders | Per-folder switch |
 

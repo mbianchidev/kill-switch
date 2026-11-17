@@ -109,6 +109,7 @@ final class FolderSizeMonitor: ObservableObject {
 
     /// Saves a new threshold and measures again so the alert is judged against it.
     func setThreshold(_ bytes: UInt64, for id: UUID) {
+        guard list.watch(id: id)?.thresholdBytes != bytes else { return }
         do {
             try list.setThreshold(bytes, for: id)
         } catch {

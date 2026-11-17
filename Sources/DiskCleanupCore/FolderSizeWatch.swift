@@ -21,18 +21,20 @@ public enum FolderSizeThreshold {
     public static let maximumBytes: UInt64 = 1_024 * FolderSizeUnit.terabytes.bytes
     public static let defaultBytes: UInt64 = 10 * FolderSizeUnit.gigabytes.bytes
 
-    /// Parses a positive decimal value such as `10`, `1.5`, or `1,5` in the given unit.
+    /// Parses a positive value such as `10`, `1.5`, or `1,5` in the given unit. At most two
+    /// decimals are accepted, so a thousands separator such as `1,500` is rejected, not read as 1.5.
     public static func bytes(from text: String, unit: FolderSizeUnit) throws -> UInt64 {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalized = trimmed.replacingOccurrences(of: ",", with: ".")
-        let digits = normalized.filter { $0 != "." }
-        guard !digits.isEmpty,
-              digits.allSatisfy({ $0.isASCII && $0.isNumber }),
-              normalized.filter({ $0 == "." }).count <= 1,
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: ",", with: ".")
+        let parts = normalized.split(separator: ".", omittingEmptySubsequences: false)
+        guard (1...2).contains(parts.count),
+              parts.allSatisfy({ $0.allSatisfy { $0.isASCII && $0.isNumber } }),
+              parts.contains(where: { !$0.isEmpty }),
+              parts.count == 1 || parts[1].count <= 2,
               let value = Decimal(string: normalized, locale: Locale(identifier: "en_US_POSIX")),
               value > 0 else {
             throw FolderSizeWatchError.invalidThreshold(
-                "Enter a positive number, for example 10 or 1.5."
+                "Enter a positive number with up to two decimals and no thousands separators, for example 10 or 1.5."
             )
         }
         var exact = value * Decimal(unit.bytes)
@@ -44,13 +46,23 @@ public enum FolderSizeThreshold {
         return NSDecimalNumber(decimal: rounded).uint64Value
     }
 
-    /// Splits a byte count into the largest whole unit and a value rounded to two decimals.
+    /// Returns the largest unit whose two-decimal value parses back to exactly `bytes`,
+    /// so redisplaying and resubmitting a saved limit never changes it.
     public static func components(for bytes: UInt64) -> (value: String, unit: FolderSizeUnit) {
-        let unit = FolderSizeUnit.allCases.last { bytes >= $0.bytes } ?? .megabytes
+        for unit in FolderSizeUnit.allCases.reversed() where bytes >= unit.bytes {
+            let value = roundedValue(bytes, unit: unit)
+            if (try? Self.bytes(from: value, unit: unit)) == bytes {
+                return (value, unit)
+            }
+        }
+        return (roundedValue(bytes, unit: .megabytes), .megabytes)
+    }
+
+    private static func roundedValue(_ bytes: UInt64, unit: FolderSizeUnit) -> String {
         var value = Decimal(bytes) / Decimal(unit.bytes)
         var rounded = Decimal()
         NSDecimalRound(&rounded, &value, 2, .plain)
-        return (NSDecimalNumber(decimal: rounded).stringValue, unit)
+        return NSDecimalNumber(decimal: rounded).stringValue
     }
 
     public static func validate(_ bytes: UInt64) throws {
@@ -60,7 +72,7 @@ public enum FolderSizeThreshold {
     }
 
     private static var rangeDescription: String {
-        "Choose a limit from 1 MB through 1,024 TB."
+        "Choose a limit from 1 MB through 1024 TB."
     }
 }
 

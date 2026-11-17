@@ -377,10 +377,7 @@ private struct FolderSizeWatchRow: View {
                 .fill(row.hasReachedLimit ? Color.red.opacity(0.12) : Color.white.opacity(0.05))
         )
         .onChange(of: row.watch.thresholdBytes) { bytes in
-            let saved = FolderSizeThreshold.components(for: bytes)
-            draftValue = saved.value
-            draftUnit = saved.unit
-            draftError = nil
+            resetDraft(to: bytes)
         }
     }
 
@@ -499,13 +496,25 @@ private struct FolderSizeWatchRow: View {
     }
 
     private func saveThreshold() {
+        guard hasUnsavedThreshold else { return }
         do {
             let bytes = try FolderSizeThreshold.bytes(from: draftValue, unit: draftUnit)
-            draftError = nil
-            monitor.setThreshold(bytes, for: row.id)
+            if bytes == row.watch.thresholdBytes {
+                resetDraft(to: bytes)
+            } else {
+                draftError = nil
+                monitor.setThreshold(bytes, for: row.id)
+            }
         } catch {
             draftError = error.localizedDescription
         }
+    }
+
+    private func resetDraft(to bytes: UInt64) {
+        let saved = FolderSizeThreshold.components(for: bytes)
+        draftValue = saved.value
+        draftUnit = saved.unit
+        draftError = nil
     }
 }
 

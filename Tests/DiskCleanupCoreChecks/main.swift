@@ -52,7 +52,8 @@ struct CheckRunner {
         let gigabyte = FolderSizeUnit.gigabytes.bytes
         check((try? FolderSizeThreshold.bytes(from: " 10 ", unit: .gigabytes)) == 10 * gigabyte, "parses whole thresholds in binary units")
         check((try? FolderSizeThreshold.bytes(from: "1,5", unit: .gigabytes)) == gigabyte + gigabyte / 2, "accepts a comma decimal separator")
-        for invalid in ["", "abc", "-1", "0", "1e3", "1.2.3", "10GB"] {
+        check((try? FolderSizeThreshold.bytes(from: "1.25", unit: .gigabytes)) == gigabyte + gigabyte / 4, "accepts two decimals")
+        for invalid in ["", "abc", "-1", "0", "1e3", "1.2.3", "10GB", ".", "1,500", "1.500"] {
             check((try? FolderSizeThreshold.bytes(from: invalid, unit: .gigabytes)) == nil, "rejects malformed threshold \(invalid)")
         }
         check((try? FolderSizeThreshold.bytes(from: "0.5", unit: .megabytes)) == nil, "rejects thresholds below 1 MB")
@@ -61,6 +62,15 @@ struct CheckRunner {
         let oneAndHalf = FolderSizeThreshold.components(for: 1_536 * FolderSizeUnit.megabytes.bytes)
         check(tenGB.value == "10" && tenGB.unit == .gigabytes && oneAndHalf.value == "1.5" && oneAndHalf.unit == .gigabytes,
               "displays thresholds in the largest whole unit")
+        for (text, unit) in [("2000", FolderSizeUnit.gigabytes), ("1500", .megabytes), ("1.95", .terabytes), ("1023.99", .megabytes)] {
+            guard let bytes = try? FolderSizeThreshold.bytes(from: text, unit: unit) else {
+                fail("parses round-trip threshold \(text) \(unit.rawValue)")
+                continue
+            }
+            let shown = FolderSizeThreshold.components(for: bytes)
+            check((try? FolderSizeThreshold.bytes(from: shown.value, unit: shown.unit)) == bytes,
+                  "redisplayed threshold \(text) \(unit.rawValue) parses back without changing")
+        }
     }
 
     private mutating func checkFolderSizeAlertPolicy() {
