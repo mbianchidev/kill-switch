@@ -23,8 +23,8 @@ quitting. Its status item uses a bolt-shaped icon (`bolt.slash`).
 - **Quit KillSwitch** fully exits, saves screen-time state, and releases
   keep-awake resources.
 
-The watchdog, screen-time monitor, and CPU/memory/disk/network sampling continue
-with the window hidden and while using other tabs. Quitting flushes the current
+The watchdog, folder size alerts, screen-time monitor, and CPU/memory/disk/network
+sampling continue with the window hidden and while using other tabs. Quitting flushes the current
 history bucket. Energy details run only while their resource view is selected;
 connection/open-file inspection runs only while its panel is visible.
 Confirmed Dev cleanup runs immediately and keeps its cleanup timer active while
@@ -243,6 +243,51 @@ and recovery.
 - Partial scans report permission problems and link to **Full Disk Access**.
   Desktop, Documents, Downloads, and other protected locations may need access.
   Updating an ad-hoc-signed app or binary may require granting it again.
+
+## Folder size alerts
+
+**Folder alerts** measures folders you choose and alerts you when one reaches
+its own size limit.
+
+- Choose **Add folder…** and select one or more folders. Each starts with a
+  10 GB limit and monitoring on. Links resolve to their target folder, and a
+  folder can be watched only once.
+- Edit **Alert at** with a number and MB, GB, or TB, then press Return or
+  **Save**. Units are 1,024-based, matching the sizes KillSwitch displays.
+  Saving a new limit re-arms the alert and measures the folder again.
+- The switch pauses or resumes one folder. **Reveal in Finder** opens it, and
+  the remove button stops watching it without changing its files.
+- Folders are measured at launch, when added, resumed, or given a new limit,
+  with **Check now**, and at the selected interval.
+
+| Setting | Default | Choices |
+| --- | --- | --- |
+| Alert limit | 10 GB per folder | 1 MB through 1,024 TB, entered in MB, GB, or TB |
+| Check every | 15 minutes | 1/5/10/15/30/60 minutes |
+| Monitoring | On for new folders | Per-folder switch |
+
+When a folder reaches its limit, KillSwitch posts a macOS notification titled
+**Folder size alert**, shows a banner above every page, marks the folder
+**Limit reached**, and adds it to **Recent alerts**. Choose **Review**, dismiss
+the banner, or open Folder alerts to acknowledge it. Recent alerts keep the
+last 50 alerts for the current app session. If macOS does not deliver the
+notification, the page reports it and the in-app alert remains.
+
+A folder alerts once each time it reaches its limit. It alerts again only after
+a complete measurement falls below 95% of the limit, so a folder hovering at
+the limit does not alert on every check. Changing the limit re-arms it.
+
+Sizes add up the allocated space of every file, including hidden files and
+package contents, like `du`. Symbolic links are not followed, and hard-linked
+files count once. When some contents cannot be read, the size is shown as a
+lower bound (`≥`); it can still trigger an alert but never re-arms one. A folder
+that cannot be read at all is reported as unavailable, not as 0 bytes.
+Desktop, Documents, Downloads, and other protected locations may need
+**Full Disk Access**.
+
+Folders, limits, alert state, and the interval persist across launches.
+Folders are measured one at a time at background priority, so very large
+folders can take a while. Monitoring stops when KillSwitch quits.
 
 ## Dev cleanup
 

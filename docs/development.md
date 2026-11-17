@@ -66,7 +66,7 @@ terminate real processes.
 | --- | --- |
 | [`TableQueryCore`](../Sources/TableQueryCore) | Typed text/numeric/date/boolean filters, unit parsing, quoted search, and bidirectional comparators shared by all data tables |
 | [`DevCleanupCore`](../Sources/DevCleanupCore) | Preferences, integration-port merging, CLI parsing, cleanup classification, and shared termination protection |
-| [`DiskCleanupCore`](../Sources/DiskCleanupCore) | Parallel file scanning, cleanup candidates, protected-path checks, and Trash operations |
+| [`DiskCleanupCore`](../Sources/DiskCleanupCore) | Parallel file scanning, cleanup candidates, protected-path checks, Trash operations, and folder size measurement, alert thresholds, and watched-folder persistence |
 | [`KeepAwakeCore`](../Sources/KeepAwakeCore) | IOKit power assertions, timed sessions, and resource cleanup |
 | [`InstallCore`](../Sources/InstallCore) | Binary/symlink path safety, native command execution, whole-app validation, staging, startup confirmation, and rollback |
 | [`ScreenTimeCore`](../Sources/ScreenTimeCore) | Active-time tracking, idle breaks, daily rollover, and reminder boundaries |
@@ -124,6 +124,26 @@ After an alert, the process counter resets and can alert again after the same
 number of further consecutive sightings. See the
 [watchdog guide](usage.md#cpu-watchdog) for controls, recent alerts,
 kill buttons, and the bounded log.
+
+## Folder size alert model
+
+[`FolderSizeWatch.swift`](../Sources/DiskCleanupCore/FolderSizeWatch.swift)
+holds the reusable rules: threshold parsing, the alert policy, watched-folder
+list changes, `du`-style measurement, and JSON persistence. Measurement reuses
+the parallel directory walk with at most four workers, includes hidden files and
+package contents, skips symbolic links, and counts hard-linked files once by
+device and inode. Unreadable entries make a measurement incomplete; its size
+is a lower bound that may alert but cannot re-arm. An unreadable root is an
+error rather than zero bytes. Unreadable saved data is copied to
+`foldersize.watches.unreadable` before the list is reset and the error is shown.
+
+`FolderSizeMonitor.shared` starts with the app delegate, measures one folder at
+a time on a utility queue, and uses per-folder cancellation tokens. Removing or
+pausing a folder cancels its pending measurement, and results for removed,
+paused, or replaced work are ignored. Notifications use the same `osascript`
+path as the watchdog. The in-app banner is a leaf view above the native page
+host; it observes the monitor without making `ContentView` observe updates.
+Opening the visible Folder alerts page acknowledges banner alerts.
 
 ## Run checks
 
@@ -393,6 +413,7 @@ Run the deterministic native-state checks directly:
 "$PROBE" --performance-probe --interface-checks
 "$PROBE" --performance-probe dashboard 3 1000 .build/dashboard.png 900x650
 "$PROBE" --performance-probe cleanup-settings 3 3 .build/cleanup-settings.png 1280x1400
+"$PROBE" --performance-probe folder-alerts 3 3 .build/folder-alerts.png 1280x900
 ```
 
 The optional PNG is the probe's own unshown window, never a desktop capture.
@@ -400,6 +421,9 @@ The optional PNG is the probe's own unshown window, never a desktop capture.
 explicit synthetic providers/termination results. It is a GUI fixture, not a
 live-cleanup measurement; synthetic cleanup startup rejects a missing injected
 service. The other navigation scenarios still exclude cleanup.
+`folder-alerts` is also a GUI fixture rather than a footprint scenario: it
+renders the page with fictional in-memory folders and alerts and does not
+measure, persist, or notify.
 `--performance-probe --native-health-check` separately verifies public native health interfaces
 without identifiers, UI interaction, or privileged diagnostics; it is not a
 synthetic measurement scenario.

@@ -86,28 +86,27 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 170, ideal: 195, max: 245)
 #endif
         } detail: {
-            RetainedPageHost(
-                selection: selectedTab,
-                content: AnyView(pageContent
-                    .preferredColorScheme(.dark)
-                    .tint(Theme.accent)
-                    .environment(\.isKillSwitchWindowVisible, windowVisible)
-                    .environment(\.allowsLiveOperations, startsServices)
-                    .environment(\.navigatePage, { navigationSelection.wrappedValue = $0 })
-                    .environment(\.inspectProcess, { inspectedProcess = $0 }))
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Banners sit above the native page host; split-view safe-area insets do not reach AppKit-hosted pages.
+            VStack(spacing: 0) {
+                UpdateBanner(updater: updater)
+                FolderSizeAlertBanner(monitor: folderSizes) { navigationSelection.wrappedValue = .folderAlerts }
+                RetainedPageHost(
+                    selection: selectedTab,
+                    content: AnyView(pageContent
+                        .preferredColorScheme(.dark)
+                        .tint(Theme.accent)
+                        .environment(\.isKillSwitchWindowVisible, windowVisible)
+                        .environment(\.allowsLiveOperations, startsServices)
+                        .environment(\.navigatePage, { navigationSelection.wrappedValue = $0 })
+                        .environment(\.inspectProcess, { inspectedProcess = $0 }))
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .navigationSplitViewStyle(.balanced)
         .preferredColorScheme(.dark)
         .tint(Theme.accent)
         .background(Theme.background)
-        .safeAreaInset(edge: .top) {
-            VStack(spacing: 0) {
-                UpdateBanner(updater: updater)
-                FolderSizeAlertBanner(monitor: folderSizes) { navigationSelection.wrappedValue = .folderAlerts }
-            }
-        }
         .alert("Open Dev cleanup?", isPresented: Binding(
             get: { startsServices && confirmCleanup && currentCleanupConfirmation != nil },
             set: { confirmCleanup = $0 }

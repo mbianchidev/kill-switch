@@ -93,6 +93,8 @@ See [architecture and development](docs/development.md).
   administrator access.
 - **Startup:** review apps, services, and cron jobs before disabling future
   launches. System-wide changes require administrator approval.
+- **Folder alerts:** add folders and per-folder size limits; KillSwitch alerts
+  in the app and through macOS notifications when a folder reaches its limit.
 - **Dev cleanup:** understand the age-based safety rules before opening the tab;
   its Settings card controls auto-kill, age, detection, and exclusions.
 - **Screen time / Keep awake:** enable optional reminders or sleep prevention.
@@ -112,6 +114,7 @@ the read-only [status command](docs/cli.md#read-saved-status).
 | System health | CPU/hardware details, awake time since restart, load averages, public battery readings, Low Power Mode, and macOS thermal pressure |
 | Startup | Reversible login app, service, and cron controls, with protected macOS entries kept read-only |
 | Disk cleanup | Large files, temporary data, caches, and folders with confirmation and Trash |
+| Folder size alerts | Background size checks for chosen folders, with per-folder limits, in-app alerts, and macOS notifications |
 | Developer tools | Configurable dev cleanup, protected-process rules, CPU alerts, and JSON port syncing |
 | Screen time | Local active-time totals, continuous stretches, and optional break reminders |
 | Keep awake | Timed or indefinite sessions with optional display sleep and launch activation |
