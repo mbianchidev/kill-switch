@@ -214,25 +214,44 @@ public enum NetworkInterfaceReader {
     }
 }
 
+public enum ReverseDNSResult: Equatable, Sendable {
+    case name(String)
+    /// The resolver answered that the address has no name, or it is not a numeric address.
+    case noName
+    /// The lookup failed, for example while the network or resolver is unavailable; retry later.
+    case failed
+
+    /// `getnameinfo` reports a definitive missing name as `EAI_NONAME`; anything else is a failure.
+    public static func classify(nameInfoStatus status: Int32, name: String?, address: String) -> ReverseDNSResult {
+        guard status == 0 else { return status == EAI_NONAME ? .noName : .failed }
+        guard let name, !name.isEmpty, name != address else { return .noName }
+        return .name(name)
+    }
+}
+
 public enum ReverseDNS {
     /// Looks up the PTR name for a numeric address; blocks, so call it off the main thread.
     /// Returns nil when no name exists or the lookup fails.
     public static func hostname(for host: String) -> String? {
+        if case .name(let name) = lookup(host) { return name }
+        return nil
+    }
+
+    /// Looks up the PTR name and tells a missing name apart from a failed lookup.
+    public static func lookup(_ host: String) -> ReverseDNSResult {
         let address = NetworkAddress.identity(host)
         var hints = addrinfo(
             ai_flags: AI_NUMERICHOST, ai_family: AF_UNSPEC, ai_socktype: SOCK_STREAM,
             ai_protocol: 0, ai_addrlen: 0, ai_canonname: nil, ai_addr: nil, ai_next: nil
         )
         var info: UnsafeMutablePointer<addrinfo>?
+        // AI_NUMERICHOST never contacts a resolver, so a parse failure means it is not an address.
         guard getaddrinfo(address, nil, &hints, &info) == 0, let first = info, let socketAddress = first.pointee.ai_addr else {
-            return nil
+            return .noName
         }
         defer { freeaddrinfo(info) }
         var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-        guard getnameinfo(socketAddress, first.pointee.ai_addrlen, &buffer, socklen_t(buffer.count), nil, 0, NI_NAMEREQD) == 0 else {
-            return nil
-        }
-        let name = String(cString: buffer)
-        return name == address ? nil : name
+        let status = getnameinfo(socketAddress, first.pointee.ai_addrlen, &buffer, socklen_t(buffer.count), nil, 0, NI_NAMEREQD)
+        return ReverseDNSResult.classify(nameInfoStatus: status, name: status == 0 ? String(cString: buffer) : nil, address: address)
     }
 }

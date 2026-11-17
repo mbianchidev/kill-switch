@@ -48,8 +48,10 @@ final class HomebrewMonitor: ObservableObject {
 
     private init() {}
 
+    /// Retries discovery on every visit until an inventory loads, so installing Homebrew while
+    /// KillSwitch runs is noticed without a relaunch.
     func loadIfNeeded() {
-        guard !inventoryLoaded, availability != .notInstalled else { return }
+        guard !inventoryLoaded else { return }
         reload()
     }
 

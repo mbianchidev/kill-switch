@@ -47,6 +47,16 @@ public enum MaintenancePath {
         return nil
     }
 
+    /// Git metadata names compare case-insensitively: on the default macOS file system `.GIT`
+    /// is the same folder as `.git`, and Git accepts it.
+    public static func isGitMetadata<S: StringProtocol>(_ name: S) -> Bool {
+        name.lowercased() == ".git"
+    }
+
+    public static func containsGitMetadata<S: StringProtocol>(_ components: [S]) -> Bool {
+        components.contains { isGitMetadata($0) }
+    }
+
     public static func relative(_ path: String, to root: String) -> String? {
         let child = URL(fileURLWithPath: path).standardizedFileURL.pathComponents
         let parent = URL(fileURLWithPath: root).standardizedFileURL.pathComponents

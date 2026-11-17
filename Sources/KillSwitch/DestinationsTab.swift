@@ -4,15 +4,18 @@ import SystemMetricsCore
 import TableQueryCore
 
 /// Resolves PTR names for destination addresses off the main thread, a few at a time,
-/// and caches every result (including "no name") for the app's lifetime.
+/// and caches names and definitive "no name" answers for the app's lifetime. Failed lookups
+/// are retried once a minute while their destination is shown.
 @MainActor
 final class ReverseDNSCache: ObservableObject {
     static let shared = ReverseDNSCache()
     private static let maximumEntries = 4_096
+    private static let retryInterval: TimeInterval = 60
 
     enum Entry: Equatable {
         case resolving
         case resolved(String?)
+        case failed(Date)
     }
 
     @Published private(set) var entries: [String: Entry] = [:]
@@ -27,7 +30,14 @@ final class ReverseDNSCache: ObservableObject {
     private init() {}
 
     func resolve(_ addresses: [String]) {
-        let pending = addresses.filter { entries[$0] == nil }
+        let now = Date()
+        let pending = addresses.filter { address in
+            switch entries[address] {
+            case nil: return true
+            case .failed(let at): return now.timeIntervalSince(at) >= Self.retryInterval
+            case .resolving, .resolved: return false
+            }
+        }
         guard !pending.isEmpty else { return }
         if entries.count + pending.count > Self.maximumEntries {
             // Keep the requested addresses so visible rows keep their names and in-flight lookups.
@@ -37,9 +47,15 @@ final class ReverseDNSCache: ObservableObject {
         for address in pending {
             entries[address] = .resolving
             queue.addOperation { [weak self] in
-                let name = ReverseDNS.hostname(for: address)
+                let result = ReverseDNS.lookup(address)
                 DispatchQueue.main.async {
-                    self?.entries[address] = .resolved(name)
+                    // A lookup for an address evicted meanwhile must not recreate its entry.
+                    guard let self, self.entries[address] == .resolving else { return }
+                    switch result {
+                    case .name(let name): self.entries[address] = .resolved(name)
+                    case .noName: self.entries[address] = .resolved(nil)
+                    case .failed: self.entries[address] = .failed(Date())
+                    }
                 }
             }
         }
@@ -164,7 +180,11 @@ struct DestinationsTab: View {
         .padding(12)
         .inspectionSampling(monitor, mode: .connections)
         .onAppear { readInterfaces() }
-        .onChange(of: monitor.lastUpdated) { _ in readInterfaces() }
+        .onChange(of: monitor.lastUpdated) { _ in
+            readInterfaces()
+            // Retries failed lookups on each refresh; cached names are not looked up again.
+            if allowsOperations { resolver.resolve(destinations.map(\.address)) }
+        }
         .onChange(of: destinations.map(\.address)) { addresses in
             if allowsOperations { resolver.resolve(addresses) }
         }
@@ -203,6 +223,7 @@ struct DestinationsTab: View {
         switch resolver.entries[row.destination.address] {
         case .resolving, nil: return "Resolving…"
         case .resolved(let name): return name ?? "No reverse DNS name"
+        case .failed: return "Lookup failed; retrying"
         }
     }
 

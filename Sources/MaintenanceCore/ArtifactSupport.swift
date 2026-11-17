@@ -127,7 +127,7 @@ public enum ArtifactInspector {
             return inspection
         }
         while let url = enumerator.nextObject() as? URL {
-            if url.lastPathComponent == ".git" {
+            if MaintenancePath.isGitMetadata(url.lastPathComponent) {
                 inspection.nestedGitPaths.append(url.path)
                 enumerator.skipDescendants()
                 continue
@@ -136,10 +136,12 @@ public enum ArtifactInspector {
                 inspection.unreadableCount += 1
                 continue
             }
-            if values.isSymbolicLink == true { continue }
+            // Configuration names are checked before links are skipped, so a link named `.env`
+            // protects its folder; the link's target is never followed.
             if checkLocalConfiguration, isLocalConfiguration(url.lastPathComponent) {
                 inspection.localConfigurationPaths.append(url.path)
             }
+            if values.isSymbolicLink == true { continue }
             if values.isRegularFile == true {
                 inspection.sizeBytes += UInt64(max(0, values.totalFileAllocatedSize ?? values.fileSize ?? 0))
                 inspection.fileCount += 1
@@ -157,7 +159,8 @@ public enum ArtifactInspector {
             : SoftwareCommand("/usr/bin/tar", arguments: ["-tzf", path])
         guard let result = try? runner.run(command), result.succeeded else { return false }
         return result.output.split(separator: "\n").contains { line in
-            let parts = line.split(separator: "/", omittingEmptySubsequences: true)
+            // `./Release/App.app` and `Release/App.app` are the same depth.
+            let parts = line.split(separator: "/", omittingEmptySubsequences: true).filter { $0 != "." }
             guard let index = parts.firstIndex(where: { $0.lowercased().hasSuffix(".app") }) else { return false }
             return index <= 1 && !parts[..<index].contains { $0.hasPrefix("__MACOSX") }
         }

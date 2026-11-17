@@ -54,15 +54,20 @@ final class SecurityMonitor: ObservableObject {
         isFullScan = scan
         let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
         let service = SoftwareUpdateService()
+        let posture = SecurityPostureService()
         queue.async { [weak self] in
             let result = Result { try service.list(scan: scan, currentMajorVersion: major) }
+            // A scan records a new check time, so read it again with the result.
+            let lastCheck = posture.lastSuccessfulUpdateCheck()
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isListingUpdates = false
                 self.isFullScan = false
-                self.updatesListedAt = Date()
+                if let lastCheck { self.lastSystemUpdateCheck = lastCheck }
                 switch result {
                 case .success(let list):
+                    // Only a successful listing has a time; a failed first load stays retryable.
+                    self.updatesListedAt = Date()
                     self.updates = list
                     self.updatesError = nil
                 case .failure(let error):

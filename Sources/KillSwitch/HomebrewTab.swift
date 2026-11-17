@@ -114,6 +114,10 @@ struct HomebrewTab: View {
             .buttonStyle(.borderedProminent)
             .disabled(monitor.isBusy || monitor.upgradable.isEmpty || !allowsOperations)
             .help("Upgrade every outdated package except self-updating, unversioned, pinned, or running ones")
+        } else if monitor.availability == .notInstalled {
+            Button { monitor.reload() } label: { Label("Look again", systemImage: "arrow.clockwise") }
+                .disabled(monitor.isBusy || !allowsOperations)
+                .help("Look for brew again after installing Homebrew")
         }
     }
 

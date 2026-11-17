@@ -153,6 +153,8 @@ The page reuses the Connections collection: it refreshes every ten seconds
 while visible, follows the shared **My processes** / **All processes** scope,
 and stops when you leave. Hostnames come from reverse DNS lookups through your
 Mac's configured resolver, four at a time, and are cached until KillSwitch quits.
+A lookup that fails, for example while offline, shows **Lookup failed; retrying**
+and is tried again about once a minute.
 A missing or different name is normal; it need not match the name an app used.
 
 ## Process investigation

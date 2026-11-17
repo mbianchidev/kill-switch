@@ -62,7 +62,14 @@ extension SystemMetricsChecks {
         } catch {
             check(false, "interface addresses: \(error.localizedDescription)")
         }
-        check(ReverseDNS.hostname(for: "not-an-address") == nil, "reverse DNS rejects non-numeric input")
+        check(ReverseDNS.hostname(for: "not-an-address") == nil && ReverseDNS.lookup("not-an-address") == .noName,
+              "reverse DNS rejects non-numeric input as having no name")
+        check(ReverseDNSResult.classify(nameInfoStatus: EAI_NONAME, name: nil, address: "192.0.2.1") == .noName
+              && ReverseDNSResult.classify(nameInfoStatus: EAI_AGAIN, name: nil, address: "192.0.2.1") == .failed
+              && ReverseDNSResult.classify(nameInfoStatus: EAI_FAIL, name: nil, address: "192.0.2.1") == .failed
+              && ReverseDNSResult.classify(nameInfoStatus: 0, name: "192.0.2.1", address: "192.0.2.1") == .noName
+              && ReverseDNSResult.classify(nameInfoStatus: 0, name: "host.example", address: "192.0.2.1") == .name("host.example"),
+              "a temporary resolver failure is retryable, not a missing name")
     }
 
     static func checkSystemDetails() {

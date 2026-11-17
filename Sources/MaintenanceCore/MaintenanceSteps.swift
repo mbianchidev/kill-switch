@@ -10,7 +10,7 @@ public enum CheckoutDiscovery {
             var queue: [(String, Int)] = [(root, 0)]
             while let (directory, depth) = queue.popLast() {
                 guard let children = try? fileManager.contentsOfDirectory(atPath: directory) else { continue }
-                if depth > 0, children.contains(".git") {
+                if depth > 0, MaintenancePath.containsGitMetadata(children) {
                     found.append(directory)
                     continue
                 }
@@ -283,8 +283,8 @@ public enum ArchiveSweeper {
         var queue: [(String, Int)] = [(root, 0)]
         while let (directory, depth) = queue.popLast() {
             guard let children = try? fileManager.contentsOfDirectory(atPath: directory) else { continue }
-            if depth > 0, children.contains(".git") { continue }
-            for child in children where !skippedDirectories.contains(child) {
+            if depth > 0, MaintenancePath.containsGitMetadata(children) { continue }
+            for child in children where !skippedDirectories.contains(child) && !MaintenancePath.isGitMetadata(child) {
                 let path = (directory as NSString).appendingPathComponent(child)
                 guard !excluding.contains(path), let identity = FileIdentity.read(path), !identity.isSymbolicLink else { continue }
                 if identity.isDirectory {

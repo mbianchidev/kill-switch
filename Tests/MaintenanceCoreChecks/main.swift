@@ -14,6 +14,7 @@ struct CheckRunner {
         checkDiskImagesAndInspection()
         checkVersionsAndCaches()
         do {
+            try checkInspectionWalk()
             try checkMergedArtifacts()
             try checkApplyAndWorktreeRemoval()
             try checkDiskImageEject()
@@ -108,6 +109,27 @@ struct CheckRunner {
               && !ArtifactInspector.isStagedApplication(relativePath: "Sources/Demo.app"), "recognizes staged apps in packaging folders")
         check(ArchiveSweeper.isArchive("a.TAR.GZ") && ArchiveSweeper.isArchive("x.zip") && !ArchiveSweeper.isArchive("a.pkg")
               && !ArchiveSweeper.isArchive("a.jar"), "matches the skill's archive extensions in any case")
+        check(MaintenancePath.isGitMetadata(".GIT") && MaintenancePath.containsGitMetadata(["dist", ".Git", "HEAD"])
+              && !MaintenancePath.isGitMetadata(".github"), "recognizes Git metadata names in any case")
+        let listing = ScriptedRunner { command in
+            command.executable == "/usr/bin/tar" ? ScriptedRunner.ok("./\n./Release/\n./Release/Synthetic.app/Contents/Info.plist\n") : nil
+        }
+        check(ArtifactInspector.archiveContainsApplication("/synthetic/Synthetic.tar.gz", runner: listing),
+              "a leading ./ in an archive listing does not change the app's depth")
+    }
+
+    private mutating func checkInspectionWalk() throws {
+        let home = try SyntheticHome()
+        defer { home.remove() }
+        try home.write("dist/nested/.GIT/HEAD", "ref: refs/heads/main")
+        try home.write("dist/app.js")
+        let nested = ArtifactInspector.inspect(home.path("dist"), checkLocalConfiguration: true)
+        check(nested.nestedGitPaths.contains { $0.hasSuffix("nested/.GIT") }, "protects nested checkouts whose metadata folder is .GIT")
+        try home.write("outside/.env", "SYNTHETIC=1")
+        try home.write("linked/app.js")
+        try FileManager.default.createSymbolicLink(atPath: home.path("linked/.env"), withDestinationPath: home.path("outside/.env"))
+        let linked = ArtifactInspector.inspect(home.path("linked"), checkLocalConfiguration: true)
+        check(linked.localConfigurationPaths.contains { $0.hasSuffix("linked/.env") }, "a link named like local configuration protects its folder")
     }
 
     private mutating func checkVersionsAndCaches() {

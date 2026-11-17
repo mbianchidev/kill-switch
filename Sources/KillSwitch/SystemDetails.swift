@@ -186,9 +186,7 @@ struct SystemDetailsCard: View {
     }
 
     private func volumeRow(_ volume: SystemVolume) -> some View {
-        let fraction = volume.totalBytes.flatMap { total in
-            volume.usedBytes.map { total > 0 ? Double($0) / Double(total) : 0 }
-        }
+        let fraction = volume.usedFraction
         return VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(volume.name).font(.system(size: 12, weight: .medium))

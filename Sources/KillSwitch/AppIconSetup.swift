@@ -23,9 +23,12 @@ enum AppIconSetup {
         DispatchQueue.global(qos: .utility).async {
             do {
                 if let warning = try AppIconRefresh(bundleURL: bundleURL).refresh() {
+                    // Not recorded, so the installed copy of this release still refreshes, for
+                    // example after a first launch from the read-only disk image.
                     logger.notice("App icon registered again without marking the bundle changed: \(warning.localizedDescription)")
+                } else {
+                    UserDefaults.standard.set(fingerprint, forKey: AppIconRefresh.defaultsKey)
                 }
-                UserDefaults.standard.set(fingerprint, forKey: AppIconRefresh.defaultsKey)
             } catch {
                 // Retried at the next launch; a read-only location such as a mounted disk image fails here.
                 logger.error("App icon refresh failed: \(error.localizedDescription)")

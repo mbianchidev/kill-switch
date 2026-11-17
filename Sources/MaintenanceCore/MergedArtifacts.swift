@@ -393,7 +393,7 @@ public final class MergedArtifactPlanner {
         let isDirectory = entry.hasSuffix("/")
         let relative = isDirectory ? String(entry.dropLast()) : entry
         let components = relative.split(separator: "/")
-        guard !components.contains(".git"), let name = components.last.map(String.init) else { return }
+        guard !MaintenancePath.containsGitMetadata(components), let name = components.last.map(String.init) else { return }
         let path = (topLevel as NSString).appendingPathComponent(relative)
         if isDirectory {
             if let kind = MergedArtifactKind.directoryKind(name: name, path: path, fileManager: environment.fileManager) {
@@ -423,7 +423,7 @@ public final class MergedArtifactPlanner {
         let skipped: Set<String> = [".git", "node_modules", "vendor", ".venv", "Pods", ".gradle", ".m2", ".yarn", ".terraform", "DerivedData", "cache", ".cache"]
         while let (current, depth) = queue.popLast() {
             guard let children = try? environment.fileManager.contentsOfDirectory(atPath: current) else { continue }
-            for child in children where !skipped.contains(child) {
+            for child in children where !skipped.contains(child) && !MaintenancePath.isGitMetadata(child) {
                 let path = (current as NSString).appendingPathComponent(child)
                 guard let identity = FileIdentity.read(path), !identity.isSymbolicLink else { continue }
                 if identity.isDirectory {
@@ -484,7 +484,7 @@ public final class MergedArtifactPlanner {
         guard MaintenancePath.isDescendant(resolved, of: MaintenancePath.resolved(root), orEqual: false) else {
             return "its resolved path escapes \(root)"
         }
-        if resolved.split(separator: "/").contains(".git") { return "it is inside Git metadata" }
+        if MaintenancePath.containsGitMetadata(resolved.split(separator: "/")) { return "it is inside Git metadata" }
         if case .worktree = owner {
             guard let relative = MaintenancePath.relative(path, to: root) else { return "its location could not be verified" }
             do {

@@ -196,9 +196,11 @@ macOS, Safari, and security-response items are marked security-relevant.
 Destinations reuse `ProcessInspectionMonitor` in connections mode and group
 records with `NetworkDestinationGrouping`. Remote addresses keep IPv6 zones as part of their identity;
 zones are dropped only for scope classification and interface display.
-`ReverseDNSCache` resolves at most four addresses at a time and caches results,
-including missing names, for the app's lifetime. When the cache is full it keeps
-the addresses currently requested. System details load once per System page visit through
+`ReverseDNSCache` resolves at most four addresses at a time and caches names and
+definitive missing names (`EAI_NONAME`) for the app's lifetime; other resolver
+errors are retried after a minute. When the cache is full it keeps the
+addresses currently requested, and a lookup that finishes after its address was
+evicted is discarded. System details load once per System page visit through
 `SystemDetailsMonitor`. All of these pages load on demand, only while visible,
 and skip live reads when live operations are disabled, as in the probe.
 
