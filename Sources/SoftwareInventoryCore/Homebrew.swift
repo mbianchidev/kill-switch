@@ -28,12 +28,14 @@ public struct HomebrewPackage: Identifiable, Equatable, Sendable {
     public let installedOnRequest: Bool
     /// Installed application bundle paths for casks.
     public let appPaths: [String]
+    /// Bundle identifiers a cask's uninstall stanza quits; a running one means the app is in use.
+    public let quitBundleIDs: [String]
 
     public init(
         kind: HomebrewPackageKind, name: String, fullName: String, displayName: String, summary: String?,
         installedVersion: String?, latestVersion: String?, isOutdated: Bool, autoUpdates: Bool = false,
         isPinned: Bool = false, isDeprecated: Bool = false, isDisabled: Bool = false,
-        installedOnRequest: Bool = true, appPaths: [String] = []
+        installedOnRequest: Bool = true, appPaths: [String] = [], quitBundleIDs: [String] = []
     ) {
         self.kind = kind
         self.name = name
@@ -49,6 +51,7 @@ public struct HomebrewPackage: Identifiable, Equatable, Sendable {
         self.isDisabled = isDisabled
         self.installedOnRequest = installedOnRequest
         self.appPaths = appPaths
+        self.quitBundleIDs = quitBundleIDs
     }
 
     /// Unversioned casks cannot be compared, so Homebrew only reinstalls them when forced.
@@ -127,27 +130,78 @@ public enum HomebrewError: LocalizedError, Equatable, Sendable {
     }
 }
 
+/// Which casks are in use. Homebrew replaces a cask's whole bundle, which deletes files a
+/// running app still loads, so a running cask is never upgraded.
+public enum RunningCaskDetector {
+    public static let processListCommand = SoftwareCommand("/bin/ps", arguments: ["-axo", "comm="])
+
+    /// Returns the full names of running casks, or nil when running state is unknown.
+    public static func runningCasks(
+        _ packages: [HomebrewPackage], installation: HomebrewInstallation,
+        processPaths: [String]?, runningBundleIDs: Set<String>?,
+        bundleIdentifier: (String) -> String? = RunningCaskDetector.bundleIdentifier
+    ) -> Set<String>? {
+        guard let processPaths, let runningBundleIDs else { return nil }
+        var running = Set<String>()
+        for package in packages where package.kind == .cask {
+            let caskroom = "\(installation.prefix)/Caskroom/\(package.name)/"
+            let roots = package.appPaths.map { $0.hasSuffix("/") ? $0 : $0 + "/" } + [caskroom]
+            let bundles = Set(package.appPaths.compactMap(bundleIdentifier) + package.quitBundleIDs)
+            if processPaths.contains(where: { path in roots.contains { path.hasPrefix($0) } })
+                || !bundles.isDisjoint(with: runningBundleIDs) {
+                running.insert(package.fullName)
+            }
+        }
+        return running
+    }
+
+    public static func processPaths(runner: SoftwareCommandRunning) -> [String]? {
+        guard let result = try? runner.run(processListCommand), result.succeeded else { return nil }
+        let paths = result.output.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        return paths.isEmpty ? nil : paths
+    }
+
+    public static func bundleIdentifier(_ appPath: String) -> String? {
+        let url = URL(fileURLWithPath: appPath).appendingPathComponent("Contents/Info.plist")
+        guard let data = try? Data(contentsOf: url),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return nil }
+        return plist["CFBundleIdentifier"] as? String
+    }
+}
+
 public enum HomebrewCommandPlanner {
-    /// Upgrades only the listed outdated packages, never self-updating, unversioned, or pinned
-    /// ones. Naming packages also prevents a user's greedy Homebrew setting from applying.
+    /// Why a cask is kept for its running state, or nil. Unknown running state keeps every cask.
+    public static func runningRestriction(_ package: HomebrewPackage, running: Set<String>?) -> String? {
+        guard package.kind == .cask else { return nil }
+        guard let running else { return "Running apps could not be listed, so casks are not upgraded." }
+        return running.contains(package.fullName) ? "\(package.displayName) is running. Quit it, then upgrade." : nil
+    }
+
+    /// Upgrades only the listed outdated packages, never self-updating, unversioned, pinned, or
+    /// running ones. Naming packages also prevents a user's greedy Homebrew setting from applying.
+    /// Casks upgrade one at a time so a failure or newly running app affects only that cask.
     public static func upgradeAll(
-        _ packages: [HomebrewPackage], installation: HomebrewInstallation
+        _ packages: [HomebrewPackage], installation: HomebrewInstallation, running: Set<String>?
     ) throws -> [SoftwareCommand] {
         var commands: [SoftwareCommand] = []
-        for kind in HomebrewPackageKind.allCases {
-            let names = packages.filter { $0.kind == kind && $0.canUpgrade }.map(\.fullName).sorted()
-            guard !names.isEmpty else { continue }
-            try names.forEach(validate)
-            commands.append(installation.command(["upgrade", "--\(kind.rawValue)"] + names))
+        let formulae = packages.filter { $0.kind == .formula && $0.canUpgrade }.map(\.fullName).sorted()
+        if !formulae.isEmpty {
+            try formulae.forEach(validate)
+            commands.append(installation.command(["upgrade", "--formula"] + formulae))
+        }
+        for cask in packages.filter({ $0.kind == .cask && $0.canUpgrade && runningRestriction($0, running: running) == nil })
+            .sorted(by: { $0.fullName < $1.fullName }) {
+            try validate(cask.fullName)
+            commands.append(installation.command(["upgrade", "--cask", cask.fullName]))
         }
         guard !commands.isEmpty else { throw HomebrewError.nothingToUpgrade }
         return commands
     }
 
     public static func upgrade(
-        _ package: HomebrewPackage, installation: HomebrewInstallation
+        _ package: HomebrewPackage, installation: HomebrewInstallation, running: Set<String>?
     ) throws -> SoftwareCommand {
-        if let reason = package.upgradeRestriction {
+        if let reason = package.upgradeRestriction ?? runningRestriction(package, running: running) {
             throw HomebrewError.upgradeNotAllowed(package.displayName, reason)
         }
         try validate(package.fullName)
@@ -204,7 +258,8 @@ public enum HomebrewInventoryParser {
                 isOutdated: latest != nil, autoUpdates: cask.autoUpdates ?? false,
                 isPinned: cask.pinned ?? false, isDeprecated: cask.deprecated ?? false,
                 isDisabled: cask.disabled ?? false,
-                appPaths: (cask.artifacts ?? []).flatMap(\.appPaths)
+                appPaths: (cask.artifacts ?? []).flatMap(\.appPaths),
+                quitBundleIDs: (cask.artifacts ?? []).flatMap(\.quitBundleIDs)
             )
         }
         return (formulae + casks).sorted {
@@ -280,6 +335,20 @@ public enum HomebrewInventoryParser {
     /// the installed `target`; older output names the bundle relative to `/Applications`.
     private struct Artifact: Decodable {
         let appPaths: [String]
+        let quitBundleIDs: [String]
+
+        private struct Uninstall: Decodable {
+            let quit: [String]
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: Key.self)
+                if let single = try? container.decode(String.self, forKey: Key(stringValue: "quit")) {
+                    quit = [single]
+                } else {
+                    quit = (try? container.decode([String].self, forKey: Key(stringValue: "quit"))) ?? []
+                }
+            }
+        }
 
         private struct Key: CodingKey {
             let stringValue: String
@@ -306,8 +375,10 @@ public enum HomebrewInventoryParser {
         }
 
         init(from decoder: Decoder) throws {
-            guard let container = try? decoder.container(keyedBy: Key.self),
-                  let elements = try? container.decode([Element].self, forKey: Key(stringValue: "app")) else {
+            let container = try? decoder.container(keyedBy: Key.self)
+            quitBundleIDs = ((try? container?.decode([Uninstall].self, forKey: Key(stringValue: "uninstall"))) ?? [])?
+                .flatMap(\.quit) ?? []
+            guard let container, let elements = try? container.decode([Element].self, forKey: Key(stringValue: "app")) else {
                 appPaths = []
                 return
             }
@@ -375,9 +446,14 @@ public struct HomebrewService: Sendable {
     }
 
     /// Runs commands in order and stops at the first failure, keeping the transcript so far.
-    public func perform(_ commands: [SoftwareCommand]) -> HomebrewTranscript {
+    /// `skip` is asked just before each command; a returned reason skips it without failing.
+    public func perform(_ commands: [SoftwareCommand], skip: (SoftwareCommand) -> String? = { _ in nil }) -> HomebrewTranscript {
         var lines: [String] = []
         for command in commands {
+            if let reason = skip(command) {
+                lines.append("Skipped \(command.displayString): \(reason)")
+                continue
+            }
             lines.append("$ \(command.displayString)")
             let result: SoftwareCommandResult
             do {

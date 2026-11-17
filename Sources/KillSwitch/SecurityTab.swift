@@ -176,9 +176,9 @@ struct SecurityTab: View {
                         Text("\(package.installedVersion ?? "?") → \(package.latestVersion ?? "?")")
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(.secondary)
-                        if !package.canUpgrade {
+                        if let restriction = homebrew.restriction(for: package) {
                             StatusBadge(title: package.autoUpdates ? "Updates itself" : "Skipped", color: .secondary)
-                                .help(package.upgradeRestriction ?? "")
+                                .help(restriction)
                         }
                     }
                 }

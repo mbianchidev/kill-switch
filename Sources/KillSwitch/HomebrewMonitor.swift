@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SoftwareInventoryCore
 import os
@@ -22,10 +23,18 @@ final class HomebrewMonitor: ObservableObject {
     @Published private(set) var activeOperation: String?
     @Published private(set) var transcript: HomebrewTranscript?
     @Published private(set) var errorMessage: String?
+    /// Full names of running casks; nil when running apps could not be listed.
+    @Published private(set) var runningCasks: Set<String>? = []
 
     var isBusy: Bool { isLoading || activeOperation != nil }
     var outdated: [HomebrewPackage] { packages.filter(\.isOutdated) }
-    var upgradable: [HomebrewPackage] { packages.filter(\.canUpgrade) }
+    var upgradable: [HomebrewPackage] {
+        packages.filter { $0.canUpgrade && HomebrewCommandPlanner.runningRestriction($0, running: runningCasks) == nil }
+    }
+
+    func restriction(for package: HomebrewPackage) -> String? {
+        package.upgradeRestriction ?? HomebrewCommandPlanner.runningRestriction(package, running: runningCasks)
+    }
     var installation: HomebrewInstallation? {
         if case .installed(let installation) = availability { return installation }
         return nil
@@ -52,8 +61,14 @@ final class HomebrewMonitor: ObservableObject {
         availability = .installed(installation)
         isLoading = true
         let service = HomebrewService(installation: installation)
+        let bundles = Self.runningBundleIDs()
         queue.async { [weak self] in
             let result = Result { try service.loadPackages() }
+            let running = (try? result.get()).flatMap {
+                RunningCaskDetector.runningCasks($0, installation: installation,
+                                                 processPaths: RunningCaskDetector.processPaths(runner: NativeSoftwareCommandRunner()),
+                                                 runningBundleIDs: bundles)
+            }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isLoading = false
@@ -61,6 +76,7 @@ final class HomebrewMonitor: ObservableObject {
                 switch result {
                 case .success(let packages):
                     self.packages = packages
+                    self.runningCasks = running
                     self.errorMessage = nil
                 case .failure(let error):
                     self.report("Homebrew packages could not be listed: \(error.localizedDescription)")
@@ -78,7 +94,8 @@ final class HomebrewMonitor: ObservableObject {
     func upgradeAll() {
         guard let installation else { return }
         do {
-            run("Upgrading \(upgradable.count) package(s)", commands: try HomebrewCommandPlanner.upgradeAll(packages, installation: installation))
+            let commands = try HomebrewCommandPlanner.upgradeAll(packages, installation: installation, running: runningCasks)
+            run("Upgrading \(upgradable.count) package(s)", commands: commands, recheckRunning: true)
         } catch {
             report(error.localizedDescription)
         }
@@ -87,7 +104,8 @@ final class HomebrewMonitor: ObservableObject {
     func upgrade(_ package: HomebrewPackage) {
         guard let installation else { return }
         do {
-            run("Upgrading \(package.displayName)", commands: [try HomebrewCommandPlanner.upgrade(package, installation: installation)])
+            let command = try HomebrewCommandPlanner.upgrade(package, installation: installation, running: runningCasks)
+            run("Upgrading \(package.displayName)", commands: [command], recheckRunning: true)
         } catch {
             report(error.localizedDescription)
         }
@@ -110,15 +128,32 @@ final class HomebrewMonitor: ObservableObject {
         errorMessage = nil
     }
 
-    private func run(_ label: String, commands: [SoftwareCommand]) {
+    /// GUI apps by bundle identifier, read on the main thread where AppKit keeps the list current.
+    nonisolated private static func runningBundleIDs() -> Set<String> {
+        let read = { Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier)) }
+        return Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
+    }
+
+    private func run(_ label: String, commands: [SoftwareCommand], recheckRunning: Bool = false) {
         guard !isBusy, let installation else { return }
         activeOperation = label
         errorMessage = nil
         transcript = nil
         let service = HomebrewService(installation: installation)
+        let packages = packages
         logger.notice("\(label, privacy: .public): \(commands.map(\.displayString).joined(separator: "; "), privacy: .public)")
         queue.async { [weak self] in
-            let transcript = service.perform(commands)
+            // Each cask upgrade rechecks whether its app started running since the plan.
+            let transcript = service.perform(commands) { command in
+                guard recheckRunning, command.arguments.contains("--cask"), let name = command.arguments.last,
+                      let package = packages.first(where: { $0.kind == .cask && $0.fullName == name }) else { return nil }
+                let bundles = Self.runningBundleIDs()
+                let running = RunningCaskDetector.runningCasks(
+                    [package], installation: installation,
+                    processPaths: RunningCaskDetector.processPaths(runner: NativeSoftwareCommandRunner()), runningBundleIDs: bundles
+                )
+                return HomebrewCommandPlanner.runningRestriction(package, running: running)
+            }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.activeOperation = nil
@@ -157,8 +192,12 @@ extension HomebrewMonitor {
                             appPaths: ["/Applications/Synthetic Editor.app"]),
             HomebrewPackage(kind: .cask, name: "synthetic-browser", fullName: "synthetic-browser", displayName: "Synthetic Browser",
                             summary: "Self-updating synthetic browser", installedVersion: "5.0", latestVersion: "5.0",
-                            isOutdated: false, autoUpdates: true, appPaths: ["/Applications/Synthetic Browser.app"])
+                            isOutdated: false, autoUpdates: true, appPaths: ["/Applications/Synthetic Browser.app"]),
+            HomebrewPackage(kind: .cask, name: "synthetic-chat", fullName: "synthetic-chat", displayName: "Synthetic Chat",
+                            summary: "Running synthetic chat app", installedVersion: "6.0", latestVersion: "6.1", isOutdated: true,
+                            appPaths: ["/Applications/Synthetic Chat.app"])
         ]
+        runningCasks = ["synthetic-chat"]
         lastLoaded = Date()
     }
 }

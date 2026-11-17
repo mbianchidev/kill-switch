@@ -14,6 +14,7 @@ struct CheckRunner {
             try checkHomebrewInventory()
             try checkHomebrewPlans()
             try checkHomebrewService()
+            try checkRunningCasks()
             try checkHomebrewLocation(in: root)
             checkGatekeeper()
             try checkApplicationScanner(in: root)
@@ -61,33 +62,64 @@ struct CheckRunner {
     private mutating func checkHomebrewPlans() throws {
         let packages = try packages()
         let brew = HomebrewInstallation(executable: "/synthetic/homebrew/bin/brew")
-        let plan = try HomebrewCommandPlanner.upgradeAll(packages, installation: brew)
+        let plan = try HomebrewCommandPlanner.upgradeAll(packages, installation: brew, running: [])
         check(plan.map(\.arguments) == [
             ["upgrade", "--formula", "synthetic-owner/tap/tapped", "synthetic-tool"],
             ["upgrade", "--cask", "plain-app"]
         ], "upgrade all names only upgradable formulae and casks, skipping self-updating casks")
+        check((try? HomebrewCommandPlanner.upgradeAll(packages, installation: brew, running: ["plain-app"]))?.map(\.arguments)
+              == [["upgrade", "--formula", "synthetic-owner/tap/tapped", "synthetic-tool"]], "upgrade all skips running casks")
+        check((try? HomebrewCommandPlanner.upgradeAll(packages, installation: brew, running: nil))?.allSatisfy { !$0.arguments.contains("--cask") } == true,
+              "unknown running state skips every cask")
         check(plan.allSatisfy { $0.executable == brew.executable && $0.environment["HOMEBREW_NO_AUTO_UPDATE"] == "1"
                 && $0.environment["PATH"]?.hasPrefix("/synthetic/homebrew/bin:") == true },
               "brew commands use the located executable without implicit metadata updates")
         func rejectsUpgrade(_ name: String) -> Bool {
             guard let package = packages.first(where: { $0.name == name }) else { return false }
-            return (try? HomebrewCommandPlanner.upgrade(package, installation: brew)) == nil
+            return (try? HomebrewCommandPlanner.upgrade(package, installation: brew, running: [])) == nil
         }
         check(rejectsUpgrade("self-updater") && rejectsUpgrade("pinned-lib") && rejectsUpgrade("latest-app") && rejectsUpgrade("current-lib"),
               "single upgrades refuse self-updating, pinned, unversioned, and current packages")
         if let cask = packages.first(where: { $0.name == "plain-app" }) {
-            check((try? HomebrewCommandPlanner.upgrade(cask, installation: brew))?.arguments == ["upgrade", "--cask", "plain-app"],
+            check((try? HomebrewCommandPlanner.upgrade(cask, installation: brew, running: []))?.arguments == ["upgrade", "--cask", "plain-app"],
                   "plans a single cask upgrade")
+            check((try? HomebrewCommandPlanner.upgrade(cask, installation: brew, running: ["plain-app"])) == nil
+                  && (try? HomebrewCommandPlanner.upgrade(cask, installation: brew, running: nil)) == nil,
+                  "a single cask upgrade refuses a running or unknown-state app")
             check((try? HomebrewCommandPlanner.uninstall(cask, installation: brew))?.arguments == ["uninstall", "--cask", "plain-app"],
                   "uninstall never forces, zaps, or ignores dependencies")
         }
         let hostile = HomebrewPackage(kind: .formula, name: "--force", fullName: "--force", displayName: "--force",
                                       summary: nil, installedVersion: "1", latestVersion: "2", isOutdated: true)
         check((try? HomebrewCommandPlanner.uninstall(hostile, installation: brew)) == nil
-              && (try? HomebrewCommandPlanner.upgradeAll([hostile], installation: brew)) == nil,
+              && (try? HomebrewCommandPlanner.upgradeAll([hostile], installation: brew, running: [])) == nil,
               "refuses option-like package names")
-        check((try? HomebrewCommandPlanner.upgradeAll(packages.filter { !$0.canUpgrade }, installation: brew)) == nil,
+        check((try? HomebrewCommandPlanner.upgradeAll(packages.filter { !$0.canUpgrade }, installation: brew, running: [])) == nil,
               "reports when nothing can be upgraded")
+    }
+
+    private mutating func checkRunningCasks() throws {
+        let packages = try packages()
+        let brew = HomebrewInstallation(executable: "/synthetic/homebrew/bin/brew")
+        let ids: (String) -> String? = { $0.hasSuffix("Plain App.app") ? "com.example.plain" : nil }
+        func running(_ paths: [String]?, _ bundles: Set<String>?) -> Set<String>? {
+            RunningCaskDetector.runningCasks(packages, installation: brew, processPaths: paths, runningBundleIDs: bundles, bundleIdentifier: ids)
+        }
+        check(running(["/Applications/Plain App.app/Contents/MacOS/Plain"], []) == ["plain-app"], "a process inside the app bundle marks its cask running")
+        check(running(["/synthetic/homebrew/Caskroom/renamed-app/4.0/helper"], []) == ["renamed-app"], "a process from the Caskroom marks its cask running")
+        check(running([], ["com.example.plain"]) == ["plain-app"], "a running bundle identifier marks its cask running")
+        check(running(["/Applications/Plain App Helper.app/x"], []) == [], "a similarly named app is not a match")
+        check(running(nil, []) == nil && running([], nil) == nil, "unreadable process lists leave running state unknown")
+        let quit = try HomebrewInventoryParser.parse(
+            info: Data(#"{"formulae": [], "casks": [{"token": "q", "installed": "1", "artifacts": [{"uninstall": [{"quit": ["com.example.q", "com.example.q.helper"]}, {"quit": "com.example.q2"}]}]}]}"#.utf8),
+            outdated: Data(#"{"formulae": [], "casks": []}"#.utf8)
+        )
+        check(quit.first?.quitBundleIDs == ["com.example.q", "com.example.q.helper", "com.example.q2"], "reads uninstall quit bundle identifiers")
+        let runner = MockRunner { _ in SoftwareCommandResult(status: 0, output: "ok", error: "") }
+        let commands = [brew.command(["upgrade", "--cask", "a"]), brew.command(["upgrade", "--cask", "b"])]
+        let transcript = HomebrewService(installation: brew, runner: runner).perform(commands) { $0.arguments.last == "a" ? "a is running" : nil }
+        check(runner.commands.map { $0.arguments.last } == ["b"] && transcript.failure == nil && transcript.text.contains("Skipped"),
+              "a cask that starts running before its turn is skipped, not upgraded")
     }
 
     private mutating func checkHomebrewService() throws {
@@ -109,7 +141,7 @@ struct CheckRunner {
                 ? SoftwareCommandResult(status: 1, output: "Upgrading synthetic-tool", error: "Error: synthetic upgrade failure")
                 : SoftwareCommandResult(status: 0, output: "ok", error: "")
         }
-        let plan = try HomebrewCommandPlanner.upgradeAll(try packages(), installation: brew)
+        let plan = try HomebrewCommandPlanner.upgradeAll(try packages(), installation: brew, running: [])
         let transcript = HomebrewService(installation: brew, runner: partial).perform(plan)
         check(partial.commands.count == 1 && transcript.failure?.contains("synthetic upgrade failure") == true
               && transcript.text.contains("Upgrading synthetic-tool"),

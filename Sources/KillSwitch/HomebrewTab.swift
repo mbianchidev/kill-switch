@@ -113,7 +113,7 @@ struct HomebrewTab: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(monitor.isBusy || monitor.upgradable.isEmpty || !allowsOperations)
-            .help("Upgrade every outdated package except self-updating, unversioned, or pinned ones")
+            .help("Upgrade every outdated package except self-updating, unversioned, pinned, or running ones")
         }
     }
 
@@ -193,7 +193,7 @@ struct HomebrewTab: View {
                         .foregroundColor(.secondary)
                 }
             }
-            Text("Upgrades and removals run brew in the background with automatic metadata updates turned off, so they act on the versions listed here. Use Check for updates to run brew update first. Self-updating casks are always skipped; their apps update themselves.")
+            Text("Upgrades and removals run brew in the background with automatic metadata updates turned off, so they act on the versions listed here. Use Check for updates to run brew update first. Self-updating casks are always skipped; their apps update themselves. Casks whose apps are running are skipped until you quit them.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
         }
@@ -205,6 +205,9 @@ struct HomebrewTab: View {
         HStack(spacing: 4) {
             if package.autoUpdates {
                 StatusBadge(title: "Updates itself", color: Theme.diskCleanupAccent, systemImage: "arrow.triangle.2.circlepath")
+            } else if package.isOutdated, monitor.runningCasks?.contains(package.fullName) == true {
+                StatusBadge(title: "Running", color: .orange, systemImage: "play.circle.fill")
+                    .help("Quit \(package.displayName) to upgrade it; Homebrew replaces the app bundle while it runs.")
             } else if package.isOutdated {
                 StatusBadge(title: "Outdated", color: .orange, systemImage: "arrow.up.circle.fill")
             } else {
@@ -221,8 +224,8 @@ struct HomebrewTab: View {
         HStack(spacing: 6) {
             Button("Upgrade") { monitor.upgrade(package) }
                 .controlSize(.small)
-                .disabled(!package.canUpgrade || monitor.isBusy || !allowsOperations)
-                .help(package.upgradeRestriction ?? "Upgrade \(package.displayName) to \(package.latestVersion ?? "the latest version")")
+                .disabled(monitor.restriction(for: package) != nil || monitor.isBusy || !allowsOperations)
+                .help(monitor.restriction(for: package) ?? "Upgrade \(package.displayName) to \(package.latestVersion ?? "the latest version")")
                 .accessibilityLabel("Upgrade \(package.displayName)")
             Button("Uninstall", role: .destructive) { pendingUninstall = package }
                 .controlSize(.small)
@@ -256,12 +259,12 @@ struct HomebrewTab: View {
     }
 
     private var upgradeAllMessage: String {
-        let skipped = monitor.outdated.filter { !$0.canUpgrade }
+        let skipped = monitor.outdated.filter { monitor.restriction(for: $0) != nil }
         var text = "Runs brew upgrade for \(monitor.upgradable.map(\.displayName).prefix(8).joined(separator: ", "))"
         if monitor.upgradable.count > 8 { text += ", and \(monitor.upgradable.count - 8) more" }
         text += "."
         if !skipped.isEmpty {
-            text += " Skipped: \(skipped.count) self-updating, unversioned, or pinned package(s)."
+            text += " Skipped: \(skipped.count) self-updating, unversioned, pinned, or running package(s)."
         }
         return text
     }
