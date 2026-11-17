@@ -362,6 +362,17 @@ struct CheckRunner {
         check(builtIn.runtime(for: fixtureServer) == "python", "detects Python server scripts in agent worktrees")
         check(builtIn.listsListener(command: fixtureServer, port: 61962), "lists Python server scripts on random ports")
         check(
+            builtIn.runtime(for: "/usr/bin/python3 -u -X dev /Users/example/demo/mock-server.py --port 41000") == "python",
+            "skips Python interpreter options before the server script"
+        )
+        for unrelated in [
+            "/usr/bin/python3 /Users/example/jobs/observer.py",
+            "/usr/bin/python3 worker.py --input /tmp/server.py",
+            "/usr/bin/python3 -c print(1) /tmp/https_server.py"
+        ] {
+            check(builtIn.runtime(for: unrelated) == nil, "ignores non-script server names: \(unrelated)")
+        }
+        check(
             builtIn.runtime(for: "/usr/local/bin/node /Users/example/workspace/copilot-worktrees/demo/session-a/node_modules/.bin/vite") == "node",
             "detects dev servers in agent worktrees"
         )

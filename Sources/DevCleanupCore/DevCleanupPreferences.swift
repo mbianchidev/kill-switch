@@ -31,7 +31,7 @@ public enum DevCleanupDefaults {
         "go run", "air",
         "rails server", "rails s", "puma", "rackup",
         "flask run", "uvicorn", "gunicorn", "manage.py runserver", "runserver",
-        "http.server", "server.py", "deno run", "deno task"
+        "http.server", "deno run", "deno task"
     ]
 
     // Copilot entries name Copilot itself, not the bare word, so servers started

@@ -87,13 +87,21 @@ public struct DevServerClassifier {
     public func runtime(for command: String) -> String? {
         guard !Self.isSystemProcess(command) else { return nil }
         let lower = command.lowercased()
-        guard indicators.contains(where: { lower.contains($0) }),
-              !exclusions.contains(where: { lower.contains($0) }),
-              let firstToken = command.split(whereSeparator: { $0.isWhitespace }).first else {
+        let tokens = command.split(whereSeparator: { $0.isWhitespace })
+        guard !exclusions.contains(where: { lower.contains($0) }), let firstToken = tokens.first else {
             return nil
         }
         let executable = firstToken.split(separator: "/").last.map(String.init)?.lowercased() ?? ""
-        return runtimes.first { executable == $0 || executable.hasPrefix($0) }
+        guard let runtime = runtimes.first(where: { executable == $0 || executable.hasPrefix($0) }) else {
+            return nil
+        }
+        if indicators.contains(where: { lower.contains($0) }) { return runtime }
+        guard executable.hasPrefix("python"),
+              let script = Self.pythonScriptArgument(tokens.dropFirst()),
+              Self.isServerScript(script) else {
+            return nil
+        }
+        return runtime
     }
 
     /// Matches Dev cleanup's running dev servers and watched ports. A missing command matches by port only.
@@ -105,6 +113,35 @@ public struct DevServerClassifier {
 
     private static func isSystemProcess(_ command: String) -> Bool {
         command.trimmingCharacters(in: .whitespaces).hasPrefix("/System/")
+    }
+
+    /// The script Python executes, skipping interpreter options. `-c` and `-m` run no script file.
+    private static func pythonScriptArgument(_ arguments: ArraySlice<Substring>) -> Substring? {
+        var index = arguments.startIndex
+        while index < arguments.endIndex {
+            let argument = arguments[index]
+            index += 1
+            if argument == "--" { return index < arguments.endIndex ? arguments[index] : nil }
+            guard argument.hasPrefix("-"), argument.count > 1 else { return argument }
+            if argument.hasPrefix("--") {
+                if argument == "--check-hash-based-pycs" { index += 1 }
+                continue
+            }
+            // Short options can be combined (`-uB`); `-X`/`-W` take a value attached or as the next argument.
+            for (offset, flag) in argument.dropFirst().enumerated() {
+                if flag == "c" || flag == "m" { return nil }
+                if flag == "X" || flag == "W" {
+                    if offset == argument.count - 2 { index += 1 }
+                    break
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func isServerScript(_ script: Substring) -> Bool {
+        let name = script.split(separator: "/").last?.lowercased() ?? ""
+        return name == "server.py" || name.hasSuffix("_server.py") || name.hasSuffix("-server.py")
     }
 }
 
