@@ -561,28 +561,47 @@ final class DiskCleanupMonitor: ObservableObject {
     }
 }
 
+private enum DiskCleanupSection: Hashable {
+    case files(DiskCleanupCategory)
+    case maintenance
+}
+
 struct DiskCleanupTab: View {
     @ObservedObject var monitor: DiskCleanupMonitor
+    let maintenance: MaintenanceMonitor
+    @State private var showsMaintenance = false
     @State private var searchText = ""
     @State private var sorting = TableComparator(field: DiskCleanupTableFields.size, order: .reverse)
     @State private var pendingTrashItems: [DiskCleanupItem] = []
     @State private var showTrashConfirmation = false
+
+#if KILLSWITCH_PERFORMANCE_PROBE
+    init(monitor: DiskCleanupMonitor, maintenance: MaintenanceMonitor, startsInMaintenance: Bool = false) {
+        self.monitor = monitor
+        self.maintenance = maintenance
+        _showsMaintenance = State(initialValue: startsInMaintenance)
+    }
+#endif
 
     var body: some View {
         let rows = visibleItems
         return VStack(spacing: 0) {
             header
             Divider()
-            notices
-            browserToolbar(rows)
-            filterToolbar
-            Divider()
-            itemBrowser(rows)
-            Divider()
-            actionBar
+            if showsMaintenance {
+                MaintenanceView(monitor: maintenance)
+            } else {
+                notices
+                browserToolbar(rows)
+                filterToolbar
+                Divider()
+                itemBrowser(rows)
+                Divider()
+                actionBar
+            }
         }
         .background(Theme.background)
-        .onAppear { monitor.start() }
+        .onAppear { if !showsMaintenance { monitor.start() } }
         .alert(trashAlertTitle, isPresented: $showTrashConfirmation) {
             Button("Cancel", role: .cancel) {
                 pendingTrashItems = []
@@ -613,14 +632,18 @@ struct DiskCleanupTab: View {
                     Text("Disk cleanup")
                         .font(.system(size: 18, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
-                    Text(monitor.category.description)
+                    Text(showsMaintenance
+                         ? "Clear rebuildable leftovers from agent work, installers, caches, and build output."
+                         : monitor.category.description)
                         .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.45))
                 }
 
                 Spacer()
 
-                if monitor.isScanning {
+                if showsMaintenance {
+                    EmptyView()
+                } else if monitor.isScanning {
                     Button {
                         monitor.cancelScan()
                     } label: {
@@ -638,11 +661,13 @@ struct DiskCleanupTab: View {
                 }
             }
 
-            Picker("Cleanup view", selection: categorySelection) {
+            Picker("Cleanup view", selection: sectionSelection) {
                 ForEach(DiskCleanupCategory.allCases, id: \.self) { category in
                     Label(category.label, systemImage: category.systemImage)
-                        .tag(category)
+                        .tag(DiskCleanupSection.files(category))
                 }
+                Label("Maintenance", systemImage: "wrench.and.screwdriver")
+                    .tag(DiskCleanupSection.maintenance)
             }
             .labelsHidden()
             .pickerStyle(.segmented)
@@ -934,12 +959,19 @@ struct DiskCleanupTab: View {
         showTrashConfirmation = true
     }
 
-    private var categorySelection: Binding<DiskCleanupCategory> {
+    private var sectionSelection: Binding<DiskCleanupSection> {
         Binding(
-            get: { monitor.category },
-            set: { category in
-                searchText = ""
-                monitor.selectCategory(category)
+            get: { showsMaintenance ? .maintenance : .files(monitor.category) },
+            set: { section in
+                switch section {
+                case .maintenance:
+                    showsMaintenance = true
+                case .files(let category):
+                    showsMaintenance = false
+                    searchText = ""
+                    monitor.selectCategory(category)
+                    monitor.start()
+                }
             }
         )
     }

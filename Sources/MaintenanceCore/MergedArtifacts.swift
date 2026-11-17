@@ -60,6 +60,19 @@ public struct MergedArtifact: Identifiable, Codable, Equatable, Sendable {
     public let identity: FileIdentity
     /// The attached image's whole-disk device to eject normally before trashing.
     public let ejectDevice: String?
+
+    public init(path: String, kind: MergedArtifactKind, sizeBytes: UInt64, repository: String, pullRequest: Int,
+                pullRequestURL: String?, owner: ArtifactOwner, identity: FileIdentity, ejectDevice: String?) {
+        self.path = path
+        self.kind = kind
+        self.sizeBytes = sizeBytes
+        self.repository = repository
+        self.pullRequest = pullRequest
+        self.pullRequestURL = pullRequestURL
+        self.owner = owner
+        self.identity = identity
+        self.ejectDevice = ejectDevice
+    }
 }
 
 public struct MaintenanceFinding: Identifiable, Codable, Equatable, Sendable {
@@ -81,6 +94,15 @@ public struct WorktreeCandidate: Identifiable, Codable, Equatable, Sendable {
     public let pullRequest: Int
     public let head: String
     public let branch: String
+
+    public init(path: String, mainCheckout: String, repository: String, pullRequest: Int, head: String, branch: String) {
+        self.path = path
+        self.mainCheckout = mainCheckout
+        self.repository = repository
+        self.pullRequest = pullRequest
+        self.head = head
+        self.branch = branch
+    }
 }
 
 public struct SessionCandidate: Identifiable, Codable, Equatable, Sendable {
@@ -88,6 +110,12 @@ public struct SessionCandidate: Identifiable, Codable, Equatable, Sendable {
     public let directory: String
     public let repository: String
     public let pullRequest: Int
+
+    public init(directory: String, repository: String, pullRequest: Int) {
+        self.directory = directory
+        self.repository = repository
+        self.pullRequest = pullRequest
+    }
 }
 
 public struct MergedArtifactPlan: Codable, Equatable, Sendable {
@@ -103,6 +131,10 @@ public struct MergedArtifactPlan: Codable, Equatable, Sendable {
     public var isComplete = true
 
     public var totalBytes: UInt64 { artifacts.reduce(0) { $0 + $1.sizeBytes } }
+
+    public init(createdAt: Date) {
+        self.createdAt = createdAt
+    }
 }
 
 public struct MaintenanceApplyResult: Codable, Equatable, Sendable {

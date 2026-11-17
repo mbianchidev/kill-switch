@@ -17,6 +17,7 @@ struct ContentView: View {
     private let systemHealth = SystemHealthMonitor.shared
     private let folderSizes = FolderSizeMonitor.shared
     private let homebrew = HomebrewMonitor.shared
+    private let maintenance = MaintenanceMonitor.shared
     @State private var windowVisible = true
     @State private var confirmCleanup = false
     @State private var cleanupAuthorized = false
@@ -281,7 +282,7 @@ struct ContentView: View {
         case .security:
             SecurityTab(monitor: SecurityMonitor.shared, homebrew: homebrew)
         case .diskCleanup:
-            DiskCleanupTab(monitor: diskCleanupMonitor)
+            DiskCleanupTab(monitor: diskCleanupMonitor, maintenance: maintenance)
         case .folderAlerts:
             FolderSizeAlertsTab(monitor: folderSizes)
         case .cleanup:

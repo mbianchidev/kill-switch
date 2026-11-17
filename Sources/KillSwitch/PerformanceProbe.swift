@@ -44,7 +44,7 @@ enum PerformanceProbe {
         guard (3...5).contains(arguments.count),
               ["background", "dashboard", "cpu", "memory", "energy", "system", "battery", "thermal",
                "connections", "files", "servers", "inspector", "navigation", "cleanup-settings",
-               "folder-alerts", "homebrew", "applications", "security"].contains(arguments[0]),
+               "folder-alerts", "homebrew", "applications", "security", "maintenance"].contains(arguments[0]),
               let duration = Double(arguments[1]), (3...600).contains(duration),
               let count = Int(arguments[2]), (1...5_000).contains(count) else {
             fputs("Usage: KillSwitch --performance-probe SCENARIO SECONDS(3...600) PROCESSES(1...5000) [OFFSCREEN.png [WIDTHxHEIGHT]]; or --performance-probe --interface-checks\n", stderr)
@@ -96,6 +96,10 @@ enum PerformanceProbe {
                 root = AnyView(ContentView(
                     resourceMonitor: monitor, startsServices: false, cleanupPreferences: cleanupPreferences
                 ))
+            } else if scenario == "maintenance" {
+                MaintenanceMonitor.shared.publishPerformanceFixture()
+                root = AnyView(DiskCleanupTab(monitor: DiskCleanupMonitor(), maintenance: MaintenanceMonitor.shared, startsInMaintenance: true)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity))
             } else if ["cpu", "memory", "energy"].contains(scenario) {
                 let metric: ResourceMetric = scenario == "memory" ? .memory : scenario == "energy" ? .energy : .cpu
                 root = AnyView(ResourcesTab(monitor: monitor, initialMetric: metric))
@@ -1758,6 +1762,8 @@ enum PerformanceProbe {
         let paused = FolderSizeWatch(id: watch.id, path: watch.path, thresholdBytes: watch.thresholdBytes, isEnabled: false)
         check(state(FolderSizeWatchStatus(measurement: measurement(denied: 0)), watch: paused) == .paused, "Paused folders show paused.")
         check(FolderSizeMonitor.shared.watches.isEmpty, "The probe's folder monitor must not load saved folder watches.")
+        check(MaintenanceMonitor.shared.history.isEmpty && !MaintenanceMonitor.shared.settings.scheduleEnabled,
+              "The probe's maintenance monitor must start from isolated defaults with the schedule off.")
     }
 
     private static func dashboardSelectionChecks(_ check: (Bool, String) -> Void) {
