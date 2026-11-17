@@ -52,6 +52,12 @@ public struct SystemVolume: Identifiable, Equatable, Sendable {
         guard let totalBytes, let availableBytes, totalBytes >= availableBytes else { return nil }
         return totalBytes - availableBytes
     }
+
+    /// The used share of the volume from 0 to 1, or nil when the capacity is unknown.
+    public var usedFraction: Double? {
+        guard let usedBytes, let totalBytes, totalBytes > 0 else { return nil }
+        return Double(usedBytes) / Double(totalBytes)
+    }
 }
 
 public struct SystemProfilerHardware: Equatable, Sendable {
@@ -160,27 +166,35 @@ public enum SystemDetailsReader {
         )
     }
 
+    private static let volumeKeys: [URLResourceKey] = [
+        .volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey,
+        .volumeAvailableCapacityKey, .volumeIsInternalKey, .volumeIsRemovableKey,
+        .volumeLocalizedFormatDescriptionKey, .volumeIsBrowsableKey
+    ]
+
     /// Lists visible mounted volumes with their capacity and space available for important data.
     public static func volumes(fileManager: FileManager = .default) -> [SystemVolume] {
-        let keys: [URLResourceKey] = [
-            .volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey,
-            .volumeAvailableCapacityKey, .volumeIsInternalKey, .volumeIsRemovableKey,
-            .volumeLocalizedFormatDescriptionKey, .volumeIsBrowsableKey
-        ]
-        let urls = fileManager.mountedVolumeURLs(includingResourceValuesForKeys: keys, options: [.skipHiddenVolumes]) ?? []
-        return urls.compactMap { url -> SystemVolume? in
-            guard let values = try? url.resourceValues(forKeys: Set(keys)), values.volumeIsBrowsable != false else {
-                return nil
-            }
-            let important = values.volumeAvailableCapacityForImportantUsage.flatMap { $0 >= 0 ? UInt64($0) : nil }
-            return SystemVolume(
-                name: values.volumeName ?? url.lastPathComponent, path: url.path,
-                format: values.volumeLocalizedFormatDescription,
-                totalBytes: values.volumeTotalCapacity.flatMap { $0 >= 0 ? UInt64($0) : nil },
-                availableBytes: important ?? values.volumeAvailableCapacity.flatMap { $0 >= 0 ? UInt64($0) : nil },
-                isInternal: values.volumeIsInternal, isRemovable: values.volumeIsRemovable
-            )
-        }
-        .sorted { $0.path == "/" || ($1.path != "/" && $0.name.localizedStandardCompare($1.name) == .orderedAscending) }
+        let urls = fileManager.mountedVolumeURLs(includingResourceValuesForKeys: volumeKeys, options: [.skipHiddenVolumes]) ?? []
+        return urls.compactMap { url in volume(at: url).flatMap { $0.browsable ? $0.volume : nil } }
+            .sorted { $0.path == "/" || ($1.path != "/" && $0.name.localizedStandardCompare($1.name) == .orderedAscending) }
+    }
+
+    /// The startup volume's capacity, read without listing every mounted volume. Available space
+    /// includes purgeable space, as Finder reports it.
+    public static func startupVolume() -> SystemVolume? {
+        volume(at: URL(fileURLWithPath: "/"))?.volume
+    }
+
+    private static func volume(at url: URL) -> (volume: SystemVolume, browsable: Bool)? {
+        guard let values = try? url.resourceValues(forKeys: Set(volumeKeys)) else { return nil }
+        let important = values.volumeAvailableCapacityForImportantUsage.flatMap { $0 >= 0 ? UInt64($0) : nil }
+        let volume = SystemVolume(
+            name: values.volumeName ?? url.lastPathComponent, path: url.path,
+            format: values.volumeLocalizedFormatDescription,
+            totalBytes: values.volumeTotalCapacity.flatMap { $0 >= 0 ? UInt64($0) : nil },
+            availableBytes: important ?? values.volumeAvailableCapacity.flatMap { $0 >= 0 ? UInt64($0) : nil },
+            isInternal: values.volumeIsInternal, isRemovable: values.volumeIsRemovable
+        )
+        return (volume, values.volumeIsBrowsable != false)
     }
 }

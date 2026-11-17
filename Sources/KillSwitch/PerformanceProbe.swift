@@ -44,7 +44,7 @@ enum PerformanceProbe {
         guard (3...5).contains(arguments.count),
               ["background", "dashboard", "cpu", "memory", "energy", "system", "battery", "thermal",
                "connections", "files", "servers", "inspector", "navigation", "cleanup-settings",
-               "folder-alerts", "homebrew", "applications", "security", "maintenance"].contains(arguments[0]),
+               "folder-alerts", "homebrew", "applications", "security", "maintenance", "status-icon"].contains(arguments[0]),
               let duration = Double(arguments[1]), (3...600).contains(duration),
               let count = Int(arguments[2]), (1...5_000).contains(count) else {
             fputs("Usage: KillSwitch --performance-probe SCENARIO SECONDS(3...600) PROCESSES(1...5000) [OFFSCREEN.png [WIDTHxHEIGHT]]; or --performance-probe --interface-checks\n", stderr)
@@ -96,6 +96,8 @@ enum PerformanceProbe {
                 root = AnyView(ContentView(
                     resourceMonitor: monitor, startsServices: false, cleanupPreferences: cleanupPreferences
                 ))
+            } else if scenario == "status-icon" {
+                root = AnyView(StatusIconProbePreview())
             } else if scenario == "maintenance" {
                 MaintenanceMonitor.shared.publishPerformanceFixture()
                 root = AnyView(DiskCleanupTab(monitor: DiskCleanupMonitor(), maintenance: MaintenanceMonitor.shared, startsInMaintenance: true)
@@ -282,6 +284,12 @@ enum PerformanceProbe {
         copyFeedbackChecks(check)
         dashboardSelectionChecks(check)
         folderAlertStateChecks(check)
+        let gauge = StatusItemIcon.image(usedFraction: 0.5)
+        let plain = StatusItemIcon.image(usedFraction: nil)
+        check(gauge.isTemplate && plain.isTemplate && gauge.size.width > plain.size.width && gauge.size.height == StatusItemIcon.height
+              && gauge.accessibilityDescription?.contains("50%") == true && plain.accessibilityDescription == "KillSwitch",
+              "The menu-bar icon must add a template storage gauge only when the capacity is known.")
+        check(StatusItemIcon.toolTip(for: nil).contains("unavailable"), "An unreadable capacity must be reported, not estimated.")
 
         let suite = "KillSwitch.synthetic-entry-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suite) else {
@@ -1950,5 +1958,36 @@ private struct ProbeStateRecorder: NSViewRepresentable {
     let record: (UUID) -> Void
     func makeNSView(context: Context) -> NSView { record(token); return NSView() }
     func updateNSView(_ view: NSView, context: Context) { record(token) }
+}
+/// Magnified menu-bar icons at fixed used shares on dark and light bars; no capacity is read.
+private struct StatusIconProbePreview: View {
+    private let fractions: [Double?] = [nil, 0.08, 0.5, 0.92, 1]
+
+    var body: some View {
+        VStack(spacing: 24) {
+            row(foreground: .white, background: Color(white: 0.15))
+            row(foreground: .black, background: Color(white: 0.92))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func row(foreground: Color, background: Color) -> some View {
+        HStack(spacing: 28) {
+            ForEach(fractions.indices, id: \.self) { index in
+                let image = StatusItemIcon.image(usedFraction: fractions[index])
+                VStack(spacing: 8) {
+                    Image(nsImage: image)
+                        .renderingMode(.template)
+                        .resizable()
+                        .frame(width: image.size.width * 4, height: image.size.height * 4)
+                        .foregroundColor(foreground)
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(background))
+                    Text(fractions[index].map { "\(StatusItemIcon.percent($0))% used" } ?? "Unavailable")
+                        .font(.system(size: 12))
+                }
+            }
+        }
+    }
 }
 #endif

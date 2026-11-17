@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import KeepAwakeCore
+import SystemMetricsCore
 
 struct KillSwitchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
@@ -29,6 +30,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var lastWindowVisibility: Bool?
     private let keepAwakeManager = KeepAwakeManager.shared
     private let screenTimeMonitor = ScreenTimeMonitor.shared
+    private var storageVolume: SystemVolume?
+    private var storageIconPercent: Int?
+    private var storageTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -57,17 +61,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem = item
         updateStatusItem()
+        startStorageUpdates()
+    }
+
+    /// Reads the startup volume's capacity every minute, off the main thread.
+    private func startStorageUpdates() {
+        refreshStorage()
+        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshStorage() }
+        }
+        timer.tolerance = 15
+        RunLoop.main.add(timer, forMode: .common)
+        storageTimer = timer
+    }
+
+    private func refreshStorage() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let volume = SystemDetailsReader.startupVolume()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.storageVolume = volume
+                self.updateStatusIcon()
+            }
+        }
+    }
+
+    /// Redraws the icon only when the rounded used percentage or its availability changes.
+    private func updateStatusIcon() {
+        guard let button = statusItem?.button else { return }
+        let fraction = storageVolume?.usedFraction
+        let percent = fraction.map(StatusItemIcon.percent)
+        if button.image == nil || percent != storageIconPercent {
+            button.image = StatusItemIcon.image(usedFraction: fraction)
+            storageIconPercent = percent
+        }
+        button.toolTip = StatusItemIcon.toolTip(for: storageVolume)
     }
 
     private func updateStatusItem() {
         guard let statusItem else { return }
-
-        if let button = statusItem.button {
-            let image = NSImage(systemSymbolName: "bolt.slash", accessibilityDescription: "KillSwitch")
-            image?.isTemplate = true
-            button.image = image
-            button.toolTip = "KillSwitch"
-        }
+        updateStatusIcon()
 
         let menu = NSMenu()
         let keepAwakeItem = NSMenuItem(title: "Keep Mac Awake", action: nil, keyEquivalent: "")
@@ -193,6 +226,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        storageTimer?.invalidate()
         screenTimeMonitor.stop()
         FolderSizeMonitor.shared.stop()
         MaintenanceMonitor.shared.stop()

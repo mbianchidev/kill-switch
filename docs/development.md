@@ -554,8 +554,10 @@ The optional PNG is the probe's own unshown window, never a desktop capture.
 explicit synthetic providers/termination results. It is a GUI fixture, not a
 live-cleanup measurement; synthetic cleanup startup rejects a missing injected
 service. The other navigation scenarios still exclude cleanup.
-`folder-alerts`, `homebrew`, `applications`, `security`, and `maintenance` are
-also GUI fixtures rather than footprint scenarios: they render their pages with
+`folder-alerts`, `homebrew`, `applications`, `security`, `maintenance`, and
+`status-icon` are also GUI fixtures rather than footprint scenarios;
+`status-icon` magnifies the menu-bar icon at fixed used shares on light and dark
+bars without reading any capacity. The page fixtures render their pages with
 fictional in-memory data and never measure folders, run `brew`, `spctl`,
 `softwareupdate`, `git`, `gh`, or `hdiutil`, move files, persist, or notify. The `system` scenario also renders
 fictional system details and identifiers.
@@ -602,8 +604,10 @@ dist/KillSwitch.tar.gz
 with built-in Core Graphics. Packaging includes all ten native PNG variants
 (16-1024 pixels) in `AppIcon.icns`, with transparent margins and no font or
 third-party asset dependency. Package checks decode and verify every size. The
-menu-bar icon remains a monochrome system-symbol template; icon artwork adds no
-recurring sampling or drawing work to the app.
+menu-bar icon is a monochrome template: the `bolt.slash` symbol plus a storage
+gauge drawn by `StatusItemIcon`. `AppDelegate` reads the startup volume with
+`SystemDetailsReader.startupVolume()` once a minute on a utility queue and
+redraws only when the rounded percentage or its availability changes.
 
 CI and releases use `bash scripts/package-macos.sh --universal-build` to build
 both architectures together in one SwiftPM build graph per product, with the

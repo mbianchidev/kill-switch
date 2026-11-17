@@ -93,7 +93,15 @@ extension SystemMetricsChecks {
               "converts boot time and rejects an unset value")
         let volume = SystemVolume(name: "Synthetic", path: "/synthetic", format: nil, totalBytes: 100,
                                   availableBytes: 30, isInternal: true, isRemovable: false)
-        check(volume.usedBytes == 70, "derives used volume space")
+        check(volume.usedBytes == 70 && volume.usedFraction == 0.7, "derives used volume space and share")
+        func synthetic(_ total: UInt64?, _ available: UInt64?) -> SystemVolume {
+            SystemVolume(name: "Synthetic", path: "/synthetic", format: nil, totalBytes: total, availableBytes: available,
+                         isInternal: nil, isRemovable: nil)
+        }
+        check(synthetic(nil, 10).usedFraction == nil && synthetic(0, 0).usedFraction == nil && synthetic(10, 20).usedFraction == nil,
+              "an unknown or inconsistent capacity has no used share rather than an invented one")
         check(SystemDetailsReader.volumes().contains { $0.path == "/" }, "lists the startup volume")
+        check(SystemDetailsReader.startupVolume().flatMap(\.usedFraction).map { (0...1).contains($0) } == true,
+              "reads the startup volume's used share")
     }
 }
