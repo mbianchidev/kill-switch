@@ -26,6 +26,7 @@ struct MaintenanceView: View {
     @ObservedObject var monitor: MaintenanceMonitor
     @Environment(\.allowsLiveOperations) private var allowsOperations
     @State private var confirmation: MaintenanceConfirmation?
+    @State private var showsSettings = false
 
     var body: some View {
         ScrollView {
@@ -38,11 +39,14 @@ struct MaintenanceView: View {
                 if let warning = monitor.settingsWarning { NoticeBanner(message: warning) }
                 mergedCard
                 stepCard(.archives, scan: monitor.archiveScan,
-                         description: "Untracked .zip, .tar.gz, .7z, and similar archives left in agent worktrees, idle for \(monitor.settings.archiveIdleHours) hour(s) and not open. Tracked archives and session history are never touched.")
+                         summary: "Untracked archives in agent worktrees, idle for \(monitor.settings.archiveIdleHours) hours and not open.",
+                         detail: "Covers .zip, .tar.gz, .7z, and similar archives. Tracked archives and session history are never touched.")
                 stepCard(.diskImages, scan: monitor.diskImageScan,
-                         description: "DMGs in ~/Downloads and ~/Desktop whose apps are already installed at the same or a newer version. Each image is attached read-only and detached again; nothing else in Downloads is opened.")
+                         summary: "Disk images in Downloads and Desktop whose apps are already installed.",
+                         detail: "Each image is attached read-only and detached again to compare app versions. Nothing else in Downloads is opened.")
                 stepCard(.buildOutput, scan: monitor.buildScan,
-                         description: "Ignored target, node_modules, and build folders in clean checkouts under the repository roots that nobody has used for \(monitor.settings.buildIdleDays) day(s). Restore them with the project's install or build command.")
+                         summary: "Ignored target, node_modules, and build folders in clean repositories unused for \(monitor.settings.buildIdleDays) days.",
+                         detail: "Found in checkouts under the repository roots. Restore them with the project's install or build command.")
                 cachesCard
                 trashCard
                 historyCard
@@ -58,22 +62,21 @@ struct MaintenanceView: View {
     // MARK: Merged artifacts
 
     private var mergedCard: some View {
-        card(MaintenanceMonitor.Step.mergedArtifacts, icon: "checkmark.seal") {
-            Text("Moves generated installers, staged apps, dependencies, and build and test output belonging to merged pull requests from agent sessions and worktrees to the Trash. Each worktree must be inactive, clean, and at the merged PR's head; GitHub is checked read-only with your gh account. Whole sessions and worktrees are only listed for your approval.")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+        card(
+            MaintenanceMonitor.Step.mergedArtifacts, icon: "checkmark.seal",
+            summary: "Installers, dependencies, and build output from merged PRs in agent sessions and worktrees. Whole sessions and worktrees are only listed for your approval.",
+            detail: "Each worktree must be inactive, clean, and at the merged PR's head. GitHub is checked read-only with your gh account, and every item is checked again right before it moves to the Trash."
+        ) {
+            Button("Preview") { monitor.previewMergedArtifacts() }
+                .disabled(monitor.isBusy || !allowsOperations)
+                .help("Build the exact list without changing anything")
+            Button("Move \(monitor.mergedPlan?.artifacts.count ?? 0) to Trash") {
+                if let plan = monitor.mergedPlan { confirmation = .applyMerged(count: plan.artifacts.count, bytes: plan.totalBytes) }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(monitor.isBusy || (monitor.mergedPlan?.artifacts.isEmpty ?? true) || !allowsOperations)
+        } content: {
             HStack(spacing: 8) {
-                Button("Preview") { monitor.previewMergedArtifacts() }
-                    .disabled(monitor.isBusy || !allowsOperations)
-                    .help("Build the exact list without changing anything")
-                Button("Move \(monitor.mergedPlan?.artifacts.count ?? 0) to Trash") {
-                    if let plan = monitor.mergedPlan { confirmation = .applyMerged(count: plan.artifacts.count, bytes: plan.totalBytes) }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(monitor.isBusy || (monitor.mergedPlan?.artifacts.isEmpty ?? true) || !allowsOperations)
-                busyIndicator(.mergedArtifacts)
-                Spacer()
                 Toggle("Run automatically", isOn: Binding(
                     get: { monitor.settings.scheduleEnabled },
                     set: { monitor.setSchedule(enabled: $0, intervalHours: monitor.settings.scheduleIntervalHours) }
@@ -89,11 +92,13 @@ struct MaintenanceView: View {
                 }
                 .labelsHidden()
                 .frame(width: 70)
+                .controlSize(.small)
                 .disabled(!monitor.settings.scheduleEnabled)
-            }
-            if let last = monitor.lastScheduledRun {
-                Text("Last automatic run: \(last.formatted(date: .abbreviated, time: .shortened))")
-                    .font(.system(size: 11)).foregroundColor(.secondary)
+                Spacer()
+                if let last = monitor.lastScheduledRun {
+                    Text("Last automatic run: \(last.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.system(size: 11)).foregroundColor(.secondary)
+                }
             }
             if let result = monitor.mergedResult { resultSummary(result) }
             if let plan = monitor.mergedPlan { planDetails(plan) }
@@ -192,24 +197,18 @@ struct MaintenanceView: View {
 
     // MARK: Skill steps
 
-    private func stepCard(_ step: MaintenanceMonitor.Step, scan: TrashScan?, description: String) -> some View {
-        card(step, icon: icon(step)) {
-            Text(description).font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 8) {
-                Button("Scan") { monitor.scan(step) }
-                    .disabled(monitor.isBusy || !allowsOperations)
-                Button("Move \(scan?.candidates.count ?? 0) to Trash") {
-                    if let scan { confirmation = .trashStep(step, count: scan.candidates.count, bytes: scan.totalBytes) }
-                }
-                .disabled(monitor.isBusy || (scan?.candidates.isEmpty ?? true) || !allowsOperations)
-                busyIndicator(step)
-                Spacer()
-                if let scan {
-                    Text("\(scan.candidates.count) eligible · \(formatBytes(scan.totalBytes)) · \(scan.kept.count) kept")
-                        .font(.system(size: 11)).foregroundColor(.secondary)
-                }
+    private func stepCard(_ step: MaintenanceMonitor.Step, scan: TrashScan?, summary: String, detail: String) -> some View {
+        card(step, icon: icon(step), summary: summary, detail: detail) {
+            Button("Scan") { monitor.scan(step) }
+                .disabled(monitor.isBusy || !allowsOperations)
+            Button("Move \(scan?.candidates.count ?? 0) to Trash") {
+                if let scan { confirmation = .trashStep(step, count: scan.candidates.count, bytes: scan.totalBytes) }
             }
+            .disabled(monitor.isBusy || (scan?.candidates.isEmpty ?? true) || !allowsOperations)
+        } content: {
             if let scan {
+                Text("\(scan.candidates.count) eligible · \(formatBytes(scan.totalBytes)) · \(scan.kept.count) kept")
+                    .font(.system(size: 11, weight: .medium))
                 ForEach(scan.errors, id: \.self) { NoticeBanner(message: $0) }
                 ForEach(scan.candidates.prefix(40)) { candidate in
                     HStack(spacing: 8) {
@@ -233,14 +232,14 @@ struct MaintenanceView: View {
     }
 
     private var cachesCard: some View {
-        card(.caches, icon: "shippingbox") {
-            Text("Clears tool caches with each tool's own command; they refill on demand. A cache is kept while a program that uses it runs. Modules and crates download again on the next build.")
-                .font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Button("Check caches") { monitor.scan(.caches) }
-                    .disabled(monitor.isBusy || !allowsOperations)
-                busyIndicator(.caches)
-            }
+        card(
+            .caches, icon: "shippingbox",
+            summary: "Clears tool caches with each tool's own command; they refill on demand.",
+            detail: "A cache is kept while a program that uses it runs. Modules and crates download again on the next build."
+        ) {
+            Button("Check caches") { monitor.scan(.caches) }
+                .disabled(monitor.isBusy || !allowsOperations)
+        } content: {
             if let caches = monitor.caches {
                 if caches.isEmpty { Text("No supported caches were found.").font(.system(size: 11)).foregroundColor(.secondary) }
                 ForEach(caches) { cache in
@@ -262,20 +261,17 @@ struct MaintenanceView: View {
     }
 
     private var trashCard: some View {
-        card(.trash, icon: "trash") {
-            Text("Everything above goes to the Trash, so it stays recoverable until you empty it here or in Finder. Emptying asks Finder, which may need Automation permission.")
-                .font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 8) {
-                Button("Count items") { monitor.scan(.trash) }
-                    .disabled(monitor.isBusy || !allowsOperations)
-                Button("Empty Trash…", role: .destructive) { confirmation = .emptyTrash(monitor.trashItemCount) }
-                    .disabled(monitor.isBusy || monitor.trashItemCount == 0 || !allowsOperations)
-                busyIndicator(.trash)
-                Spacer()
-                if let count = monitor.trashItemCount {
-                    Text("\(count) item(s) in the Trash").font(.system(size: 11)).foregroundColor(.secondary)
-                }
-            }
+        card(
+            .trash, icon: "trash",
+            summary: monitor.trashItemCount.map { "\($0) item(s) in the Trash. Everything above stays recoverable until it is emptied." }
+                ?? "Everything above stays recoverable in the Trash until it is emptied.",
+            detail: "Emptying asks Finder, which may need Automation permission."
+        ) {
+            Button("Count items") { monitor.scan(.trash) }
+                .disabled(monitor.isBusy || !allowsOperations)
+            Button("Empty Trash…", role: .destructive) { confirmation = .emptyTrash(monitor.trashItemCount) }
+                .disabled(monitor.isBusy || monitor.trashItemCount == 0 || !allowsOperations)
+        } content: {
             HStack(spacing: 8) {
                 Toggle("Empty automatically", isOn: Binding(
                     get: { monitor.settings.trashScheduleEnabled },
@@ -304,8 +300,10 @@ struct MaintenanceView: View {
                         .font(.system(size: 11)).foregroundColor(.secondary)
                 }
             }
-            Text("Automatic emptying permanently deletes everything in the Trash, including items you moved there yourself. If KillSwitch was closed when it was due, it runs shortly after KillSwitch starts. Finder can also remove items after 30 days in its own settings.")
-                .font(.system(size: 10)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+            if monitor.settings.trashScheduleEnabled {
+                Text("Automatic emptying permanently deletes everything in the Trash, including items you moved there yourself. A missed run happens shortly after KillSwitch starts.")
+                    .font(.system(size: 10)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -354,10 +352,30 @@ struct MaintenanceView: View {
     }
 
     private var settingsCard: some View {
+        DisclosureGroup(isExpanded: $showsSettings) {
+            settingsContent.padding(.top, 8)
+        } label: {
+            HStack(spacing: 8) {
+                Label("Settings", systemImage: "folder.badge.gearshape")
+                    .font(.system(size: 13, weight: .semibold)).foregroundColor(Theme.accent)
+                Text(settingsSummary).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.panel))
+    }
+
+    private var settingsSummary: String {
+        let settings = monitor.settings
+        return "\(settings.artifactRoots.count) agent root(s) · \(settings.repositoryRoots.count) repository root(s) · "
+            + "archives \(settings.archiveIdleHours)h · build output \(settings.buildIdleDays)d"
+    }
+
+    private var settingsContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("Maintenance roots", systemImage: "folder.badge.gearshape")
-                    .font(.system(size: 13, weight: .semibold)).foregroundColor(Theme.accent)
+                Text("Maintenance roots").font(.system(size: 12, weight: .semibold))
                 Spacer()
                 Button("Reset to defaults") { monitor.resetRoots() }.controlSize(.small).disabled(monitor.isBusy)
             }
@@ -379,9 +397,6 @@ struct MaintenanceView: View {
             Text("Roots must be folders in your home folder. ~/Downloads, ~/Library, and the Trash are refused. Session history, Git metadata, VM disks, models, and app data are never removed.")
                 .font(.system(size: 10)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.panel))
     }
 
     private func rootList(_ title: String, detail: String, roots: [String], repository: Bool) -> some View {
@@ -414,9 +429,24 @@ struct MaintenanceView: View {
 
     // MARK: Helpers
 
-    private func card<Content: View>(_ step: MaintenanceMonitor.Step, icon: String, @ViewBuilder content: () -> Content) -> some View {
+    /// A card with its actions in the header, a one-line summary, and longer detail on hover.
+    private func card<Actions: View, Content: View>(
+        _ step: MaintenanceMonitor.Step, icon: String, summary: String, detail: String,
+        @ViewBuilder actions: () -> Actions, @ViewBuilder content: () -> Content
+    ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(step.title, systemImage: icon).font(.system(size: 13, weight: .semibold)).foregroundColor(Theme.accent)
+            HStack(spacing: 8) {
+                Label(step.title, systemImage: icon).font(.system(size: 13, weight: .semibold)).foregroundColor(Theme.accent)
+                Image(systemName: "info.circle")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .help(detail)
+                    .accessibilityLabel(detail)
+                busyIndicator(step)
+                Spacer(minLength: 8)
+                HStack(spacing: 6) { actions() }.controlSize(.small)
+            }
+            Text(summary).font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)

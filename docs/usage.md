@@ -262,7 +262,8 @@ and recovery.
 ## Homebrew
 
 **Homebrew** under **Manage** lists installed formulae and casks with their
-installed and latest versions, status, and actions. KillSwitch looks for `brew`
+versions (`installed → latest` when an upgrade exists), one status badge, and
+actions. KillSwitch looks for `brew`
 in `/opt/homebrew/bin` and `/usr/local/bin`. If neither exists, the page stays
 empty: KillSwitch never installs, repairs, or configures Homebrew.
 
@@ -316,8 +317,10 @@ KillSwitch; run those in Terminal. Filter by **Outdated**, **Formulae**, or
 ### Maintenance
 
 **Maintenance** collects the disk steps of a periodic Mac cleanup. Each card
-scans first, lists what it would move with reasons for anything kept, and asks
-before acting. Everything moves to the Trash unless stated otherwise.
+shows its actions in the header and a one-line summary; hover the info icon for
+details. Each card scans first, lists what it would move with reasons for
+anything kept, and asks before acting. Everything moves to the Trash unless
+stated otherwise.
 
 - **Merged PR artifacts:** **Preview** finds generated installers (`.dmg`,
   `.pkg`, app installer `.zip`/`.tar.gz`), staged apps in packaging folders, and
@@ -361,7 +364,8 @@ before acting. Everything moves to the Trash unless stated otherwise.
   a pending run. Finder's own settings can instead remove items after 30 days.
 - **Last 24 hours** shows run counts, space moved and freed, and errors. Only
   counts and sizes are kept, for 24 hours.
-- **Maintenance roots:** agent session and worktree roots default to
+- **Settings** (collapsed, with a one-line summary) holds the roots and idle
+  times. Agent session and worktree roots default to
   `~/.copilot/session-state` and `~/workspace/copilot-worktrees`; repository
   roots default to existing `~/Projects`, `~/workspace`, `~/Developer`, `~/src`,
   and `~/code`. Add or remove roots inside your home folder; `~/Downloads`,

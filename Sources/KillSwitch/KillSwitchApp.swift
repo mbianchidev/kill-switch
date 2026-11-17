@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        AppIconSetup.apply()
         NSApp.activate(ignoringOtherApps: true)
         screenTimeMonitor.start()
         ResourceMonitor.shared.start()

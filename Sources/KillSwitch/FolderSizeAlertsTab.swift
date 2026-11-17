@@ -154,7 +154,7 @@ struct FolderSizeAlertsTab: View {
                         .foregroundColor(.white.opacity(0.45))
                 }
             }
-            Text("Monitored folders are measured when KillSwitch starts, when added or changed, and at this interval, including while the window is hidden. A folder alerts once when it reaches its limit and can alert again after a complete measurement falls below 95% of that limit.")
+            Text("Folders are measured at launch, when changed, and at this interval, even with the window hidden. Each folder alerts once when it reaches its limit, then again after it drops below 95%.")
                 .font(.system(size: 11))
                 .foregroundColor(.white.opacity(0.4))
                 .fixedSize(horizontal: false, vertical: true)

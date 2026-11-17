@@ -171,21 +171,18 @@ struct HomebrewTab: View {
                     }
                     .help(package.fullName)
                 }
-                .width(min: 180, ideal: 260)
+                // The name column takes the remaining width, so every column fits the smallest window.
+                .width(min: 150)
                 TableColumn("Type", sortUsing: TableComparator(field: HomebrewTableFields.kind)) { Text($0.kind.title) }
-                    .width(60)
-                TableColumn("Installed", sortUsing: TableComparator(field: HomebrewTableFields.installed)) {
-                    Text($0.installedVersion ?? "—").font(.system(size: 11, design: .monospaced))
+                    .width(56)
+                TableColumn("Version", sortUsing: TableComparator(field: HomebrewTableFields.installed)) { package in
+                    versionText(package)
                 }
-                .width(min: 70, ideal: 100)
-                TableColumn("Latest", sortUsing: TableComparator(field: HomebrewTableFields.latest)) {
-                    Text($0.latestVersion ?? "—").font(.system(size: 11, design: .monospaced))
-                }
-                .width(min: 70, ideal: 100)
+                .width(100)
                 TableColumn("Status") { status(for: $0) }
-                    .width(min: 110, ideal: 140)
+                    .width(120)
                 TableColumn("Actions") { actions(for: $0) }
-                    .width(150)
+                    .width(140)
             }
             .overlay {
                 if rows.isEmpty && !monitor.isLoading {
@@ -195,30 +192,34 @@ struct HomebrewTab: View {
                         .foregroundColor(.secondary)
                 }
             }
-            Text("Upgrades and removals run brew in the background with automatic metadata updates turned off, so they act on the versions listed here. Use Check for updates to run brew update first. Self-updating casks are always skipped; their apps update themselves. Casks whose apps are running are skipped until you quit them.")
+            Text("Actions run brew in the background on the versions listed; Check for updates fetches newer ones. Self-updating casks, and casks whose apps are running, are skipped.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
         }
         .padding(12)
     }
 
+    /// One badge per row, most important state first; the Version column already shows whether
+    /// an upgrade exists, so pinned or deprecated packages do not need a second Outdated badge.
     @ViewBuilder
     private func status(for package: HomebrewPackage) -> some View {
-        HStack(spacing: 4) {
-            if package.autoUpdates {
-                StatusBadge(title: "Updates itself", color: Theme.diskCleanupAccent, systemImage: "arrow.triangle.2.circlepath")
-            } else if package.isOutdated, monitor.runningCasks?.contains(package.fullName) == true {
-                StatusBadge(title: "Running", color: .orange, systemImage: "play.circle.fill")
-                    .help("Quit \(package.displayName) to upgrade it; Homebrew replaces the app bundle while it runs.")
-            } else if package.isOutdated {
-                StatusBadge(title: "Outdated", color: .orange, systemImage: "arrow.up.circle.fill")
-            } else {
-                StatusBadge(title: "Up to date", color: .green)
-            }
-            if package.isPinned { StatusBadge(title: "Pinned", color: .white.opacity(0.6), systemImage: "pin.fill") }
-            if package.isDeprecated || package.isDisabled {
-                StatusBadge(title: package.isDisabled ? "Disabled" : "Deprecated", color: .red)
-            }
+        let upgrade = package.isOutdated ? " An upgrade to \(package.latestVersion ?? "a newer version") is available." : ""
+        if package.isDeprecated || package.isDisabled {
+            StatusBadge(title: package.isDisabled ? "Disabled" : "Deprecated", color: .red)
+                .help("Homebrew marks \(package.displayName) as \(package.isDisabled ? "disabled" : "deprecated").\(upgrade)")
+        } else if package.autoUpdates {
+            StatusBadge(title: "Updates itself", color: Theme.diskCleanupAccent, systemImage: "arrow.triangle.2.circlepath")
+                .help("This app updates itself, so KillSwitch never upgrades it.")
+        } else if package.isPinned {
+            StatusBadge(title: "Pinned", color: .white.opacity(0.6), systemImage: "pin.fill")
+                .help("Pinned in Homebrew, so it is not upgraded.\(upgrade)")
+        } else if package.isOutdated, monitor.runningCasks?.contains(package.fullName) == true {
+            StatusBadge(title: "Running", color: .orange, systemImage: "play.circle.fill")
+                .help("Quit \(package.displayName) to upgrade it; Homebrew replaces the app bundle while it runs.")
+        } else if package.isOutdated {
+            StatusBadge(title: "Outdated", color: .orange, systemImage: "arrow.up.circle.fill")
+        } else {
+            StatusBadge(title: "Up to date", color: .green)
         }
     }
 
@@ -235,6 +236,18 @@ struct HomebrewTab: View {
                 .help("Remove \(package.displayName) with brew uninstall")
                 .accessibilityLabel("Uninstall \(package.displayName)")
         }
+    }
+
+    /// One column for both versions keeps the table narrow: `4.0 → 4.2` when an upgrade exists.
+    private func versionText(_ package: HomebrewPackage) -> some View {
+        let installed = package.installedVersion ?? "—"
+        let text = package.isOutdated && package.latestVersion != nil && package.latestVersion != package.installedVersion
+            ? "\(installed) → \(package.latestVersion ?? "")" : installed
+        return Text(text)
+            .font(.system(size: 11, design: .monospaced))
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .help("Installed \(installed), latest \(package.latestVersion ?? "unknown")")
     }
 
     private func transcriptView(_ transcript: HomebrewTranscript) -> some View {

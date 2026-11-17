@@ -521,7 +521,8 @@ struct NetworkConnectionsPanel: View {
                     ForEach(NetworkConnectionFilter.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 260)
+                .labelsHidden()
+                .fixedSize()
                 TableSortControls(fields: ConnectionTableFields.all, sorting: $sorting)
                 Spacer()
                 InspectionRefreshButton(monitor: monitor)

@@ -137,15 +137,16 @@ struct ApplicationsTab: View {
                     }
                     .help(row.app.path)
                 }
-                .width(min: 200, ideal: 280)
+                // The name column takes the remaining width, so every column fits the smallest window.
+                .width(min: 150)
                 TableColumn("Version", sortUsing: TableComparator(field: ApplicationTableFields.version)) {
-                    Text($0.app.version ?? "—").font(.system(size: 11, design: .monospaced))
+                    Text($0.app.version ?? "—").font(.system(size: 11, design: .monospaced)).lineLimit(1)
                 }
-                .width(min: 60, ideal: 90)
+                .width(56)
                 TableColumn("Signature", sortUsing: TableComparator(field: ApplicationTableFields.source)) { row in
                     trustBadge(row.trust).help(row.trust?.detail ?? "Gatekeeper assessment is in progress.")
                 }
-                .width(min: 90, ideal: 110)
+                .width(100)
                 TableColumn("Homebrew", sortUsing: TableComparator(field: ApplicationTableFields.cask)) { row in
                     if let cask = row.cask {
                         StatusBadge(title: cask.name, color: Theme.energy, systemImage: "mug.fill")
@@ -154,19 +155,20 @@ struct ApplicationsTab: View {
                         Text("—").foregroundColor(.secondary)
                     }
                 }
-                .width(min: 90, ideal: 140)
+                .width(104)
                 TableColumn("Modified", sortUsing: TableComparator(field: ApplicationTableFields.modified)) {
                     Text($0.app.modificationDate?.formatted(date: .abbreviated, time: .omitted) ?? "—")
                         .font(.system(size: 11))
+                        .lineLimit(1)
                 }
-                .width(min: 80, ideal: 100)
+                .width(78)
                 TableColumn("") { row in
                     Button { reveal(row.app.path) } label: { Image(systemName: "magnifyingglass") }
                         .buttonStyle(.borderless)
                         .help("Reveal in Finder")
                         .accessibilityLabel("Reveal \(row.app.name) in Finder")
                 }
-                .width(30)
+                .width(22)
             }
             .overlay {
                 if rows.isEmpty && !monitor.isScanning {
@@ -174,7 +176,7 @@ struct ApplicationsTab: View {
                         .foregroundColor(.secondary)
                 }
             }
-            Text("Local apps are not notarized: Gatekeeper rejected them or found no notarized Developer ID, Mac App Store, or Apple signature. That includes ad-hoc builds such as KillSwitch itself. Homebrew marks apps installed by a cask. Apps inside /System/Applications are not listed.")
+            Text("Local means not notarized by Apple, including ad-hoc builds such as KillSwitch. Apps in /System/Applications are not listed.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
         }

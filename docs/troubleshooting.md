@@ -119,6 +119,16 @@ Then rerun the [development commands](development.md#build-and-run-without-insta
 The single-command packaging alternative remains documented in the
 [development guide](development.md#compatible-sdk-override).
 
+## The Dock or Finder still shows the old app icon
+
+macOS caches app icons by location, so an app replaced in place can keep its
+previous icon. On the first launch of each release, KillSwitch sets its Dock
+tile from the bundled icon and asks Launch Services to register the app again,
+which refreshes the Dock, Finder, and Launchpad. If an old icon remains after
+that launch, quit KillSwitch and open it again; a Dock item you pinned may need
+the Dock to restart (`killall Dock`). A copy running from the mounted disk image
+cannot refresh its icon; install it to Applications first.
+
 ## Reporting a problem
 
 Search [existing issues](https://github.com/mbianchidev/kill-switch/issues) before

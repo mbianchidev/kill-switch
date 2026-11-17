@@ -603,8 +603,13 @@ dist/KillSwitch.tar.gz
 `scripts/make-app-icon.swift` draws the letter-free split-bolt/open-circuit mark
 with built-in Core Graphics. Packaging includes all ten native PNG variants
 (16-1024 pixels) in `AppIcon.icns`, with transparent margins and no font or
-third-party asset dependency. Package checks decode and verify every size. The
-menu-bar icon is a monochrome template: the `bolt.slash` symbol plus a storage
+third-party asset dependency. Package checks decode and verify every size.
+Because macOS caches icons by bundle path, an in-place update can keep showing
+the previous icon. At launch, `AppIconSetup` sets `NSApp.applicationIconImage`
+from the bundled `AppIcon.icns`, and once per version and icon fingerprint
+`InstallCore`'s `AppIconRefresh` updates the bundle's modification date and
+calls `LSRegisterURL` on a utility queue; a failure is logged and retried at
+the next launch. The menu-bar icon is a monochrome template: the `bolt.slash` symbol plus a storage
 gauge drawn by `StatusItemIcon`. `AppDelegate` reads the startup volume with
 `SystemDetailsReader.startupVolume()` once a minute on a utility queue and
 redraws only when the rounded percentage or its availability changes.
