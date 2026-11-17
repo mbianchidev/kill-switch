@@ -1,6 +1,78 @@
 import AppKit
 import MaintenanceCore
 import SwiftUI
+import TableQueryCore
+
+private func bytesValue(_ bytes: UInt64) -> Decimal? { Decimal(bytes) }
+
+private enum ArtifactFields {
+    static let path = TableField<MergedArtifact>.text("path", title: "Path") { $0.path }
+    static let kind = TableField<MergedArtifact>.text("kind", title: "Kind", aliases: ["type"], searchable: false) { $0.kind.title }
+    static let repository = TableField<MergedArtifact>.text("repository", title: "Repository", aliases: ["repo"]) { $0.repository }
+    static let pullRequest = TableField<MergedArtifact>.number("pr", title: "Pull request", aliases: ["pullRequest"], searchable: true) {
+        (artifact: MergedArtifact) -> Decimal? in Decimal(artifact.pullRequest)
+    }
+    static let size = TableField<MergedArtifact>.number("size", title: "Size", unit: .bytes) { bytesValue($0.sizeBytes) }
+    static let all = [path, kind, repository, pullRequest, size]
+}
+
+private enum WorktreeFields {
+    static let path = TableField<WorktreeCandidate>.text("path", title: "Worktree", aliases: ["worktree"]) { $0.path }
+    static let branch = TableField<WorktreeCandidate>.text("branch", title: "Branch") { $0.branch }
+    static let repository = TableField<WorktreeCandidate>.text("repository", title: "Repository", aliases: ["repo"]) { $0.repository }
+    static let pullRequest = TableField<WorktreeCandidate>.number("pr", title: "Pull request", aliases: ["pullRequest"], searchable: true) {
+        (candidate: WorktreeCandidate) -> Decimal? in Decimal(candidate.pullRequest)
+    }
+    static let all = [path, branch, repository, pullRequest]
+}
+
+private enum SessionFields {
+    static let path = TableField<SessionCandidate>.text("path", title: "Session", aliases: ["session", "directory"]) { $0.directory }
+    static let repository = TableField<SessionCandidate>.text("repository", title: "Repository", aliases: ["repo"]) { $0.repository }
+    static let pullRequest = TableField<SessionCandidate>.number("pr", title: "Pull request", aliases: ["pullRequest"], searchable: true) {
+        (candidate: SessionCandidate) -> Decimal? in Decimal(candidate.pullRequest)
+    }
+    static let all = [path, repository, pullRequest]
+}
+
+private enum TrashCandidateFields {
+    static let path = TableField<TrashCandidate>.text("path", title: "Path") { $0.path }
+    static let detail = TableField<TrashCandidate>.text("detail", title: "Detail", aliases: ["reason"]) { $0.detail }
+    static let size = TableField<TrashCandidate>.number("size", title: "Size", unit: .bytes) { bytesValue($0.sizeBytes) }
+    static let all = [path, detail, size]
+}
+
+private enum CacheFields {
+    static let name = TableField<ToolCacheStatus>.text("cache", title: "Cache", aliases: ["name", "tool"]) { $0.cache.title }
+    static let path = TableField<ToolCacheStatus>.text("path", title: "Path") { $0.cache.paths.first }
+    static let size = TableField<ToolCacheStatus>.number("size", title: "Size", unit: .bytes) { bytesValue($0.sizeBytes) }
+    static let state = TableField<ToolCacheStatus>.text("state", title: "State", aliases: ["status"], values: ["Ready", "Kept"], searchable: false) {
+        $0.blocker == nil ? "Ready" : "Kept"
+    }
+    static let all = [name, size, state, path]
+}
+
+private enum HistoryFields {
+    static let date = TableField<MaintenanceRunSummary>.date("date", title: "Time", aliases: ["time"]) { $0.date }
+    static let task = TableField<MaintenanceRunSummary>.text("task", title: "Task") { $0.task }
+    static let mode = TableField<MaintenanceRunSummary>.text("mode", title: "Mode", values: ["Automatic", "Manual"], searchable: false) {
+        $0.mode == "scheduled" ? "Automatic" : "Manual"
+    }
+    static let items = TableField<MaintenanceRunSummary>.number("items", title: "Items", aliases: ["count"]) {
+        (entry: MaintenanceRunSummary) -> Decimal? in Decimal(entry.trashedCount)
+    }
+    static let size = TableField<MaintenanceRunSummary>.number("size", title: "Size", unit: .bytes) { bytesValue($0.trashedBytes) }
+    static let errors = TableField<MaintenanceRunSummary>.number("errors", title: "Errors") {
+        (entry: MaintenanceRunSummary) -> Decimal? in Decimal(entry.errorCount)
+    }
+    static let all = [date, task, mode, items, size, errors]
+}
+
+private enum FindingFields {
+    static let path = TableField<MaintenanceFinding>.text("path", title: "Path") { $0.path }
+    static let reason = TableField<MaintenanceFinding>.text("reason", title: "Reason") { $0.reason }
+    static let all = [path, reason]
+}
 
 private enum MaintenanceConfirmation: Identifiable {
     case applyMerged(count: Int, bytes: UInt64)
@@ -135,48 +207,82 @@ struct MaintenanceView: View {
         }
         Text("Preview \(plan.createdAt.formatted(date: .omitted, time: .shortened)): \(plan.artifacts.count) eligible (\(formatBytes(plan.totalBytes)) allocated), \(plan.protected.count) protected, \(plan.skipped.count) skipped")
             .font(.system(size: 12, weight: .semibold))
-        ForEach(plan.artifacts) { artifact in
-            HStack(spacing: 10) {
-                StatusBadge(title: artifact.kind.title, color: Theme.diskCleanupAccent)
-                    .frame(width: 110, alignment: .leading)
-                Text(MaintenancePath.abbreviate(artifact.path, home: monitor.home))
-                    .font(.system(size: 11, design: .monospaced))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(artifact.path)
-                Spacer()
-                pullRequestLink(artifact.repository, artifact.pullRequest, artifact.pullRequestURL)
-                Text(formatBytes(artifact.sizeBytes))
-                    .font(.system(size: 11, design: .monospaced))
-                    .frame(width: 80, alignment: .trailing)
+        if !plan.artifacts.isEmpty {
+            EmbeddedDataTable(
+                plan.artifacts, fields: ArtifactFields.all, sortedBy: TableComparator(field: ArtifactFields.size, order: .reverse),
+                identity: \.id, prompt: "Search paths or repositories, or size > 100MB"
+            ) {
+                TableColumn("Kind", sortUsing: TableComparator(field: ArtifactFields.kind)) { artifact in
+                    StatusBadge(title: artifact.kind.title, color: Theme.diskCleanupAccent)
+                }
+                .width(min: 70, ideal: 110)
+                TableColumn("Path", sortUsing: TableComparator(field: ArtifactFields.path)) { artifact in
+                    pathText(artifact.path)
+                }
+                .width(min: 160, ideal: 340)
+                TableColumn("Pull request", sortUsing: TableComparator(field: ArtifactFields.repository)) { artifact in
+                    pullRequestLink(artifact.repository, artifact.pullRequest, artifact.pullRequestURL)
+                }
+                .width(min: 100, ideal: 170)
+                TableColumn("Size", sortUsing: TableComparator(field: ArtifactFields.size)) { artifact in
+                    Text(formatBytes(artifact.sizeBytes)).font(.system(size: 11, design: .monospaced))
+                }
+                .width(min: 60, ideal: 80)
             }
         }
         if !plan.worktreeCandidates.isEmpty || !plan.sessionCandidates.isEmpty {
             Text("Need your approval").font(.system(size: 12, weight: .semibold)).padding(.top, 4)
-            ForEach(plan.worktreeCandidates) { candidate in
-                HStack(spacing: 8) {
-                    Image(systemName: "folder.badge.minus").foregroundColor(.orange).accessibilityHidden(true)
-                    Text("Worktree \(MaintenancePath.abbreviate(candidate.path, home: monitor.home))")
-                        .font(.system(size: 11, design: .monospaced)).lineLimit(1).truncationMode(.middle)
-                    Spacer()
-                    pullRequestLink(candidate.repository, candidate.pullRequest, nil)
-                    revealButton(candidate.path)
-                    Button("Remove…") { confirmation = .removeWorktree(candidate) }
-                        .controlSize(.small)
-                        .disabled(monitor.isBusy || !allowsOperations)
-                        .help("Runs git worktree remove without --force after rechecking it")
+            if !plan.worktreeCandidates.isEmpty {
+                EmbeddedDataTable(
+                    plan.worktreeCandidates, fields: WorktreeFields.all, sortedBy: TableComparator(field: WorktreeFields.path),
+                    identity: \.id, prompt: "Search worktrees, branches, or repositories"
+                ) {
+                    TableColumn("Worktree", sortUsing: TableComparator(field: WorktreeFields.path)) { candidate in
+                        Label { pathText(candidate.path) } icon: {
+                            Image(systemName: "folder.badge.minus").foregroundColor(.orange)
+                        }
+                    }
+                    .width(min: 160, ideal: 300)
+                    TableColumn("Branch", sortUsing: TableComparator(field: WorktreeFields.branch)) { candidate in
+                        Text(candidate.branch).font(.system(size: 11, design: .monospaced)).lineLimit(1)
+                            .copyOnClick(candidate.branch, label: "branch")
+                    }
+                    .width(min: 80, ideal: 150)
+                    TableColumn("Pull request", sortUsing: TableComparator(field: WorktreeFields.repository)) { candidate in
+                        pullRequestLink(candidate.repository, candidate.pullRequest, nil)
+                    }
+                    .width(min: 100, ideal: 170)
+                    TableColumn("Actions") { candidate in
+                        HStack(spacing: 6) {
+                            revealButton(candidate.path)
+                            Button("Remove…") { confirmation = .removeWorktree(candidate) }
+                                .controlSize(.small)
+                                .disabled(monitor.isBusy || !allowsOperations)
+                                .help("Runs git worktree remove without --force after rechecking it")
+                        }
+                    }
+                    .width(min: 110, ideal: 110)
                 }
             }
-            ForEach(plan.sessionCandidates) { candidate in
-                HStack(spacing: 8) {
-                    Image(systemName: "bubble.left.and.text.bubble.right").foregroundColor(.secondary).accessibilityHidden(true)
-                    Text("Session \(MaintenancePath.abbreviate(candidate.directory, home: monitor.home))")
-                        .font(.system(size: 11, design: .monospaced)).lineLimit(1).truncationMode(.middle)
-                    Spacer()
-                    pullRequestLink(candidate.repository, candidate.pullRequest, nil)
-                    revealButton(candidate.directory)
+            if !plan.sessionCandidates.isEmpty {
+                EmbeddedDataTable(
+                    plan.sessionCandidates, fields: SessionFields.all, sortedBy: TableComparator(field: SessionFields.path),
+                    identity: \.id, prompt: "Search sessions or repositories"
+                ) {
+                    TableColumn("Session", sortUsing: TableComparator(field: SessionFields.path)) { candidate in
+                        Label { pathText(candidate.directory) } icon: {
+                            Image(systemName: "bubble.left.and.text.bubble.right").foregroundColor(.secondary)
+                        }
+                        .help("Its worktree is gone and its PR merged. KillSwitch never deletes session history; archive or remove it in its app if you no longer need it.")
+                    }
+                    .width(min: 160, ideal: 320)
+                    TableColumn("Pull request", sortUsing: TableComparator(field: SessionFields.repository)) { candidate in
+                        pullRequestLink(candidate.repository, candidate.pullRequest, nil)
+                    }
+                    .width(min: 100, ideal: 170)
+                    TableColumn("Reveal") { candidate in revealButton(candidate.directory) }
+                        .width(min: 50, ideal: 50)
                 }
-                .help("Its worktree is gone and its PR merged. KillSwitch never deletes session history; archive or remove it in its app if you no longer need it.")
             }
         }
         findings("Protected", plan.protected)
@@ -210,18 +316,27 @@ struct MaintenanceView: View {
                 Text("\(scan.candidates.count) eligible · \(formatBytes(scan.totalBytes)) · \(scan.kept.count) kept")
                     .font(.system(size: 11, weight: .medium))
                 ForEach(scan.errors, id: \.self) { NoticeBanner(message: $0) }
-                ForEach(scan.candidates.prefix(40)) { candidate in
-                    HStack(spacing: 8) {
-                        Text(MaintenancePath.abbreviate(candidate.path, home: monitor.home))
-                            .font(.system(size: 11, design: .monospaced)).lineLimit(1).truncationMode(.middle)
-                            .help(candidate.detail)
-                        Spacer()
-                        Text(formatBytes(candidate.sizeBytes)).font(.system(size: 11, design: .monospaced))
-                        revealButton(candidate.path)
+                if !scan.candidates.isEmpty {
+                    EmbeddedDataTable(
+                        scan.candidates, fields: TrashCandidateFields.all,
+                        sortedBy: TableComparator(field: TrashCandidateFields.size, order: .reverse),
+                        identity: \.id, prompt: "Search paths, or size > 1GB"
+                    ) {
+                        TableColumn("Path", sortUsing: TableComparator(field: TrashCandidateFields.path)) { candidate in
+                            pathText(candidate.path)
+                        }
+                        .width(min: 160, ideal: 340)
+                        TableColumn("Detail", sortUsing: TableComparator(field: TrashCandidateFields.detail)) { candidate in
+                            Text(candidate.detail).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1).help(candidate.detail)
+                        }
+                        .width(min: 100, ideal: 200)
+                        TableColumn("Size", sortUsing: TableComparator(field: TrashCandidateFields.size)) { candidate in
+                            Text(formatBytes(candidate.sizeBytes)).font(.system(size: 11, design: .monospaced))
+                        }
+                        .width(min: 60, ideal: 80)
+                        TableColumn("Reveal") { candidate in revealButton(candidate.path) }
+                            .width(min: 50, ideal: 50)
                     }
-                }
-                if scan.candidates.count > 40 {
-                    Text("And \(scan.candidates.count - 40) more.").font(.system(size: 11)).foregroundColor(.secondary)
                 }
                 findings("Kept", scan.kept)
             }
@@ -242,18 +357,31 @@ struct MaintenanceView: View {
         } content: {
             if let caches = monitor.caches {
                 if caches.isEmpty { Text("No supported caches were found.").font(.system(size: 11)).foregroundColor(.secondary) }
-                ForEach(caches) { cache in
-                    HStack(spacing: 8) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(cache.cache.title).font(.system(size: 12, weight: .medium))
-                            Text(cache.blocker.map { "Kept: \($0)" } ?? cache.cache.note ?? MaintenancePath.abbreviate(cache.cache.paths[0], home: monitor.home))
-                                .font(.system(size: 10)).foregroundColor(cache.blocker == nil ? .secondary : .orange)
+                if !caches.isEmpty {
+                    EmbeddedDataTable(
+                        caches, fields: CacheFields.all, sortedBy: TableComparator(field: CacheFields.size, order: .reverse),
+                        identity: \.id, prompt: "Search caches, or state = Ready", rowHeight: 34
+                    ) {
+                        TableColumn("Cache", sortUsing: TableComparator(field: CacheFields.name)) { cache in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(cache.cache.title).font(.system(size: 12, weight: .medium))
+                                Text(cache.blocker.map { "Kept: \($0)" } ?? cache.cache.note ?? MaintenancePath.abbreviate(cache.cache.paths[0], home: monitor.home))
+                                    .font(.system(size: 10)).foregroundColor(cache.blocker == nil ? .secondary : .orange)
+                                    .lineLimit(1)
+                                    .help(cache.blocker ?? cache.cache.note ?? cache.cache.paths[0])
+                            }
                         }
-                        Spacer()
-                        Text(formatBytes(cache.sizeBytes)).font(.system(size: 11, design: .monospaced))
-                        Button("Clear…") { confirmation = .clearCache(cache) }
-                            .controlSize(.small)
-                            .disabled(cache.blocker != nil || monitor.isBusy || !allowsOperations)
+                        .width(min: 160, ideal: 360)
+                        TableColumn("Size", sortUsing: TableComparator(field: CacheFields.size)) { cache in
+                            Text(formatBytes(cache.sizeBytes)).font(.system(size: 11, design: .monospaced))
+                        }
+                        .width(min: 60, ideal: 80)
+                        TableColumn("Clear") { cache in
+                            Button("Clear…") { confirmation = .clearCache(cache) }
+                                .controlSize(.small)
+                                .disabled(cache.blocker != nil || monitor.isBusy || !allowsOperations)
+                        }
+                        .width(min: 70, ideal: 70)
                     }
                 }
             }
@@ -328,19 +456,34 @@ struct MaintenanceView: View {
             } else {
                 Text("\(entries.count) run(s): \(formatBytes(moved)) moved to the Trash, \(formatBytes(freed)) freed by emptying it, \(entries.reduce(0) { $0 + $1.errorCount }) error(s).")
                     .font(.system(size: 12, weight: .medium))
-                ForEach(entries) { entry in
-                    HStack(spacing: 8) {
+                EmbeddedDataTable(
+                    entries, fields: HistoryFields.all, sortedBy: TableComparator(field: HistoryFields.date, order: .reverse),
+                    identity: { String($0.date.timeIntervalSinceReferenceDate) }, prompt: "Search tasks, or errors > 0"
+                ) {
+                    TableColumn("Time", sortUsing: TableComparator(field: HistoryFields.date)) { entry in
                         Text(entry.date.formatted(date: .omitted, time: .shortened))
-                            .font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary).frame(width: 64, alignment: .leading)
+                            .font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
+                    }
+                    .width(min: 50, ideal: 70)
+                    TableColumn("Task", sortUsing: TableComparator(field: HistoryFields.task)) { entry in
                         Text(entry.task).font(.system(size: 11))
-                        if entry.mode == "scheduled" { StatusBadge(title: "Automatic", color: Theme.accent) }
-                        Spacer()
+                    }
+                    .width(min: 100, ideal: 200)
+                    TableColumn("Mode", sortUsing: TableComparator(field: HistoryFields.mode)) { entry in
+                        if entry.mode == "scheduled" { StatusBadge(title: "Automatic", color: Theme.accent) } else { Text("Manual") }
+                    }
+                    .width(min: 60, ideal: 90)
+                    TableColumn("Result", sortUsing: TableComparator(field: HistoryFields.size)) { entry in
                         Text(entry.note == MaintenanceRunSummary.spaceFreedNote ? "\(formatBytes(entry.trashedBytes)) freed"
                              : entry.note == MaintenanceRunSummary.spaceUnavailableNote ? "space change unavailable"
                              : "\(entry.trashedCount) item(s), \(formatBytes(entry.trashedBytes))")
                             .font(.system(size: 11, design: .monospaced))
-                        if entry.errorCount > 0 { StatusBadge(title: "\(entry.errorCount) error(s)", color: .orange) }
                     }
+                    .width(min: 100, ideal: 170)
+                    TableColumn("Errors", sortUsing: TableComparator(field: HistoryFields.errors)) { entry in
+                        if entry.errorCount > 0 { StatusBadge(title: "\(entry.errorCount) error(s)", color: .orange) } else { Text("None") }
+                    }
+                    .width(min: 50, ideal: 80)
                 }
             }
             Text("Only counts and sizes are kept, for 24 hours. Paths and reasons for merged-PR runs are in the audit log.")
@@ -467,22 +610,31 @@ struct MaintenanceView: View {
     private func findings(_ title: String, _ items: [MaintenanceFinding]) -> some View {
         if !items.isEmpty {
             DisclosureGroup("\(title) (\(items.count))") {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(items.prefix(200)) { finding in
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(MaintenancePath.abbreviate(finding.path, home: monitor.home))
-                                .font(.system(size: 10, design: .monospaced)).lineLimit(1).truncationMode(.middle)
-                                .frame(maxWidth: 380, alignment: .leading)
-                                .help(finding.path)
-                            Text(finding.reason).font(.system(size: 10)).foregroundColor(.secondary)
-                        }
+                EmbeddedDataTable(
+                    items, fields: FindingFields.all, sortedBy: TableComparator(field: FindingFields.path),
+                    identity: \.id, prompt: "Search paths or reasons"
+                ) {
+                    TableColumn("Path", sortUsing: TableComparator(field: FindingFields.path)) { finding in
+                        pathText(finding.path)
                     }
-                    if items.count > 200 { Text("And \(items.count - 200) more.").font(.system(size: 10)).foregroundColor(.secondary) }
+                    .width(min: 160, ideal: 360)
+                    TableColumn("Reason", sortUsing: TableComparator(field: FindingFields.reason)) { finding in
+                        Text(finding.reason).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1).help(finding.reason)
+                    }
+                    .width(min: 120, ideal: 300)
                 }
-                .textSelection(.enabled)
             }
             .font(.system(size: 11))
         }
+    }
+
+    /// An abbreviated path that shows the full path on hover and copies it on click.
+    private func pathText(_ path: String) -> some View {
+        Text(MaintenancePath.abbreviate(path, home: monitor.home))
+            .font(.system(size: 11, design: .monospaced))
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .copyOnClick(path, label: "path")
     }
 
     private func revealButton(_ path: String) -> some View {
