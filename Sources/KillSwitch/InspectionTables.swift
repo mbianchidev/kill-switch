@@ -86,7 +86,7 @@ struct ConnectionsTable: View {
     private var connectionColumns: some TableColumnContent<NetworkConnectionRecord, TableComparator<NetworkConnectionRecord>> {
         TableColumn("Protocol", sortUsing: TableComparator(field: ConnectionTableFields.protocolDisplay)) { Text($0.protocolDescription) }.width(min: 54, ideal: 90)
         TableColumn("Local endpoint", sortUsing: TableComparator(field: ConnectionTableFields.local)) { Text($0.local).copyOnClick($0.local, label: "local endpoint") }.width(min: 150, ideal: 200)
-        TableColumn("Remote endpoint", sortUsing: TableComparator(field: ConnectionTableFields.remote)) { Text($0.remote ?? "None").copyOnClick($0.remote ?? "", label: "remote endpoint") }
+        TableColumn("Remote endpoint", sortUsing: TableComparator(field: ConnectionTableFields.remote)) { Text($0.remote ?? "None").copyOnClick($0.remote ?? "", label: "remote endpoint", emptyHelp: "No remote endpoint") }
             .width(min: 150, ideal: 200)
         TableColumn("State", sortUsing: TableComparator(field: ConnectionTableFields.state)) { Text($0.state) }.width(min: 75, ideal: 125)
         TableColumn("HTTP") { OpenListenerButton(connection: $0) }.width(min: 51, ideal: 85)

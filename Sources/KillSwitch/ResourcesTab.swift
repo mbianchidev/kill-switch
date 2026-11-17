@@ -330,7 +330,8 @@ private struct ColumnResizeHandle: View {
                 if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
             }
             .gesture(
-                DragGesture(minimumDistance: 1)
+                // Global translation stays stable while the handle moves with the column edge.
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
                         let start = startWidth ?? widths[field]
                         startWidth = start

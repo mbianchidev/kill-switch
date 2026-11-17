@@ -65,6 +65,8 @@ struct SecurityTab: View {
     @Environment(\.isKillSwitchPageVisible) private var pageVisible
     @Environment(\.allowsLiveOperations) private var allowsOperations
     @Environment(\.navigatePage) private var navigate
+    // Retained without observing; only the tables observe it.
+    @State private var tableStates = TableStateStore()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -121,6 +123,7 @@ struct SecurityTab: View {
                 EmbeddedDataTable(
                     monitor.checks, fields: SecurityCheckFields.all,
                     sortedBy: TableComparator(field: SecurityCheckFields.attention, order: .reverse),
+                    state: tableStates, key: "protections",
                     identity: { $0.id.rawValue }, prompt: "Search protections, or state = Off"
                 ) {
                     TableColumn("Protection", sortUsing: TableComparator(field: SecurityCheckFields.name)) { check in
@@ -196,6 +199,7 @@ struct SecurityTab: View {
                 EmbeddedDataTable(
                     items, fields: SoftwareUpdateFields.all,
                     sortedBy: TableComparator(field: SoftwareUpdateFields.security, order: .reverse),
+                    state: tableStates, key: "updates",
                     identity: \.id, prompt: "Search updates, or security = yes"
                 ) {
                     TableColumn("Update", sortUsing: TableComparator(field: SoftwareUpdateFields.title)) { item in
@@ -265,6 +269,7 @@ struct SecurityTab: View {
                     EmbeddedDataTable(
                         outdated.map { OutdatedPackageRow(package: $0, restriction: homebrew.restriction(for: $0)) },
                         fields: OutdatedPackageFields.all, sortedBy: TableComparator(field: OutdatedPackageFields.name),
+                        state: tableStates, key: "packages",
                         identity: \.id, prompt: "Search packages, or upgrade = Upgradable"
                     ) {
                         TableColumn("Package", sortUsing: TableComparator(field: OutdatedPackageFields.name)) { row in

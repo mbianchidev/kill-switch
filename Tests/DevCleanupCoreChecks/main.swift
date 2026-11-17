@@ -13,6 +13,7 @@ struct CheckRunner {
         checkProcessErrors()
         checkProcessTerminationPolicy()
         checkCleanupService()
+        checkGatedTermination()
         checkDevServerClassifier()
         checkProcessArguments()
         checkTableQueries()
@@ -243,6 +244,74 @@ struct CheckRunner {
             ) == nil,
             "requires the limactl hostagent command"
         )
+    }
+
+    private mutating func checkGatedTermination() {
+        var signals: [(Int32, Int32)] = []
+        var reports: [String] = []
+        var allowed = true
+        let send: (Int32, Int32) -> Int32 = { pid, signal in signals.append((pid, signal)); return 0 }
+        let report: (String) -> Void = { reports.append($0) }
+
+        let revoked = ProcessTerminationPolicy.terminate(
+            pid: 501,
+            commandLine: { _ in
+                allowed = false // Permission is revoked while the command line is being read.
+                return "/usr/local/bin/node vite"
+            },
+            shouldContinue: { allowed }, signal: send, report: report
+        )
+        check(!revoked && signals.isEmpty, "rechecks permission after a slow command read, before signaling")
+
+        allowed = true
+        check(
+            !ProcessTerminationPolicy.terminate(pid: 502, commandLine: { _ in nil }, signal: send, report: report)
+                && !ProcessTerminationPolicy.terminate(
+                    pid: 503,
+                    commandLine: { _ in "/opt/homebrew/bin/limactl hostagent --pidfile /Users/example/.lima/porto-dev/ha.pid porto-dev" },
+                    signal: send, report: report
+                )
+                && signals.isEmpty,
+            "refuses uninspectable and protected processes without signaling"
+        )
+        check(
+            ProcessTerminationPolicy.terminate(pid: 504, commandLine: { _ in "node vite" }, signal: send, report: report)
+                && signals.map(\.1) == [SIGTERM],
+            "sends SIGTERM to an allowed process"
+        )
+        signals = []
+        let fallback = ProcessTerminationPolicy.terminate(
+            pid: 505, commandLine: { _ in "node vite" },
+            signal: { pid, signal in signals.append((pid, signal)); return signal == SIGTERM ? -1 : 0 }, report: report
+        )
+        check(fallback && signals.map(\.1) == [SIGTERM, SIGKILL], "falls back to SIGKILL when SIGTERM cannot be sent")
+        check(reports.count == 3, "reports every refused termination")
+
+        var serviceRevoked = false
+        var gatedKills: [Int32] = []
+        let service = DevCleanupService(
+            username: "me",
+            processProvider: { [DevCleanupProcess(pid: 601, user: "me", elapsedSeconds: 7_200, command: "node vite")] },
+            listeningPortsProvider: { [:] },
+            gatedTerminator: { pid, gate in
+                serviceRevoked = true // Revoked while the terminator inspects the process.
+                guard gate() else { return false }
+                gatedKills.append(pid)
+                return true
+            }
+        )
+        do {
+            let result = try service.cleanup(
+                configuration: DevCleanupConfiguration(
+                    autoKillEnabled: true, ageThresholdSeconds: 3_600, effectivePorts: [],
+                    runtimes: ["node"], indicators: ["vite"], exclusions: []
+                ),
+                includingPorts: false, shouldTerminate: { !serviceRevoked }
+            )
+            check(gatedKills.isEmpty && result.killed.isEmpty, "passes the cleanup gate through to the terminator")
+        } catch {
+            fail("runs a gated cleanup pass: \(error.localizedDescription)")
+        }
     }
 
     private mutating func checkCleanupService() {

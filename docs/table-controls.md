@@ -30,6 +30,7 @@ enough for `installed → latest`.
 
 Tables embedded in scrolling pages, such as Security, System, and Maintenance,
 show up to twelve rows and then scroll on their own, with a shown/total count.
+Their filters and sorting remain when you switch pages and come back.
 
 Numbers sort by their underlying value, not their formatted text: 2 is smaller
 than 10, and 900 MB is smaller than 1 GB. Text uses natural alphabetical ordering.

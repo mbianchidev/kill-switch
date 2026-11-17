@@ -61,7 +61,11 @@ private enum HistoryFields {
     static let items = TableField<MaintenanceRunSummary>.number("items", title: "Items", aliases: ["count"]) {
         (entry: MaintenanceRunSummary) -> Decimal? in Decimal(entry.trashedCount)
     }
-    static let size = TableField<MaintenanceRunSummary>.number("size", title: "Size", unit: .bytes) { bytesValue($0.trashedBytes) }
+    /// Unmeasured free-space changes are unavailable, not zero, so they never match or sort as 0 bytes.
+    static let size = TableField<MaintenanceRunSummary>.number("size", title: "Size", unit: .bytes) {
+        (entry: MaintenanceRunSummary) -> Decimal? in
+        entry.note == MaintenanceRunSummary.spaceUnavailableNote ? nil : bytesValue(entry.trashedBytes)
+    }
     static let errors = TableField<MaintenanceRunSummary>.number("errors", title: "Errors") {
         (entry: MaintenanceRunSummary) -> Decimal? in Decimal(entry.errorCount)
     }
@@ -96,6 +100,7 @@ private enum MaintenanceConfirmation: Identifiable {
 
 struct MaintenanceView: View {
     @ObservedObject var monitor: MaintenanceMonitor
+    let tableStates: TableStateStore
     @Environment(\.allowsLiveOperations) private var allowsOperations
     @State private var confirmation: MaintenanceConfirmation?
     @State private var showsSettings = false
@@ -194,7 +199,7 @@ struct MaintenanceView: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(result.errors.isEmpty ? .green : .orange)
             ForEach(result.errors, id: \.self) { Text($0).font(.system(size: 11)).foregroundColor(.orange).textSelection(.enabled) }
-            findings("Kept at removal time", result.kept)
+            findings("Kept at removal time", result.kept, key: "merged-kept")
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
@@ -210,6 +215,7 @@ struct MaintenanceView: View {
         if !plan.artifacts.isEmpty {
             EmbeddedDataTable(
                 plan.artifacts, fields: ArtifactFields.all, sortedBy: TableComparator(field: ArtifactFields.size, order: .reverse),
+                state: tableStates, key: "artifacts",
                 identity: \.id, prompt: "Search paths or repositories, or size > 100MB"
             ) {
                 TableColumn("Kind", sortUsing: TableComparator(field: ArtifactFields.kind)) { artifact in
@@ -220,7 +226,7 @@ struct MaintenanceView: View {
                     pathText(artifact.path)
                 }
                 .width(min: 160, ideal: 340)
-                TableColumn("Pull request", sortUsing: TableComparator(field: ArtifactFields.repository)) { artifact in
+                TableColumn("Pull request", sortUsing: TableComparator(field: ArtifactFields.pullRequest)) { artifact in
                     pullRequestLink(artifact.repository, artifact.pullRequest, artifact.pullRequestURL)
                 }
                 .width(min: 100, ideal: 170)
@@ -235,6 +241,7 @@ struct MaintenanceView: View {
             if !plan.worktreeCandidates.isEmpty {
                 EmbeddedDataTable(
                     plan.worktreeCandidates, fields: WorktreeFields.all, sortedBy: TableComparator(field: WorktreeFields.path),
+                    state: tableStates, key: "worktrees",
                     identity: \.id, prompt: "Search worktrees, branches, or repositories"
                 ) {
                     TableColumn("Worktree", sortUsing: TableComparator(field: WorktreeFields.path)) { candidate in
@@ -248,7 +255,7 @@ struct MaintenanceView: View {
                             .copyOnClick(candidate.branch, label: "branch")
                     }
                     .width(min: 80, ideal: 150)
-                    TableColumn("Pull request", sortUsing: TableComparator(field: WorktreeFields.repository)) { candidate in
+                    TableColumn("Pull request", sortUsing: TableComparator(field: WorktreeFields.pullRequest)) { candidate in
                         pullRequestLink(candidate.repository, candidate.pullRequest, nil)
                     }
                     .width(min: 100, ideal: 170)
@@ -267,6 +274,7 @@ struct MaintenanceView: View {
             if !plan.sessionCandidates.isEmpty {
                 EmbeddedDataTable(
                     plan.sessionCandidates, fields: SessionFields.all, sortedBy: TableComparator(field: SessionFields.path),
+                    state: tableStates, key: "sessions",
                     identity: \.id, prompt: "Search sessions or repositories"
                 ) {
                     TableColumn("Session", sortUsing: TableComparator(field: SessionFields.path)) { candidate in
@@ -276,7 +284,7 @@ struct MaintenanceView: View {
                         .help("Its worktree is gone and its PR merged. KillSwitch never deletes session history; archive or remove it in its app if you no longer need it.")
                     }
                     .width(min: 160, ideal: 320)
-                    TableColumn("Pull request", sortUsing: TableComparator(field: SessionFields.repository)) { candidate in
+                    TableColumn("Pull request", sortUsing: TableComparator(field: SessionFields.pullRequest)) { candidate in
                         pullRequestLink(candidate.repository, candidate.pullRequest, nil)
                     }
                     .width(min: 100, ideal: 170)
@@ -285,8 +293,8 @@ struct MaintenanceView: View {
                 }
             }
         }
-        findings("Protected", plan.protected)
-        findings("Skipped", plan.skipped)
+        findings("Protected", plan.protected, key: "merged-protected")
+        findings("Skipped", plan.skipped, key: "merged-skipped")
     }
 
     private func pullRequestLink(_ repository: String, _ number: Int, _ url: String?) -> some View {
@@ -320,6 +328,7 @@ struct MaintenanceView: View {
                     EmbeddedDataTable(
                         scan.candidates, fields: TrashCandidateFields.all,
                         sortedBy: TableComparator(field: TrashCandidateFields.size, order: .reverse),
+                        state: tableStates, key: "\(step.rawValue)-candidates",
                         identity: \.id, prompt: "Search paths, or size > 1GB"
                     ) {
                         TableColumn("Path", sortUsing: TableComparator(field: TrashCandidateFields.path)) { candidate in
@@ -338,10 +347,10 @@ struct MaintenanceView: View {
                             .width(min: 50, ideal: 50)
                     }
                 }
-                findings("Kept", scan.kept)
+                findings("Kept", scan.kept, key: "\(step.rawValue)-kept")
             }
             if let last = monitor.lastTrashResult, last.step == step {
-                findings("Kept at removal time", last.result.kept)
+                findings("Kept at removal time", last.result.kept, key: "\(step.rawValue)-removal-kept")
             }
         }
     }
@@ -360,6 +369,7 @@ struct MaintenanceView: View {
                 if !caches.isEmpty {
                     EmbeddedDataTable(
                         caches, fields: CacheFields.all, sortedBy: TableComparator(field: CacheFields.size, order: .reverse),
+                        state: tableStates, key: "caches",
                         identity: \.id, prompt: "Search caches, or state = Ready", rowHeight: 40
                     ) {
                         TableColumn("Cache", sortUsing: TableComparator(field: CacheFields.name)) { cache in
@@ -458,6 +468,7 @@ struct MaintenanceView: View {
                     .font(.system(size: 12, weight: .medium))
                 EmbeddedDataTable(
                     entries, fields: HistoryFields.all, sortedBy: TableComparator(field: HistoryFields.date, order: .reverse),
+                    state: tableStates, key: "history",
                     identity: { String($0.date.timeIntervalSinceReferenceDate) }, prompt: "Search tasks, or errors > 0"
                 ) {
                     TableColumn("Time", sortUsing: TableComparator(field: HistoryFields.date)) { entry in
@@ -607,11 +618,12 @@ struct MaintenanceView: View {
     }
 
     @ViewBuilder
-    private func findings(_ title: String, _ items: [MaintenanceFinding]) -> some View {
+    private func findings(_ title: String, _ items: [MaintenanceFinding], key: String) -> some View {
         if !items.isEmpty {
             DisclosureGroup("\(title) (\(items.count))") {
                 EmbeddedDataTable(
                     items, fields: FindingFields.all, sortedBy: TableComparator(field: FindingFields.path),
+                    state: tableStates, key: "findings-\(key)",
                     identity: \.id, prompt: "Search paths or reasons"
                 ) {
                     TableColumn("Path", sortUsing: TableComparator(field: FindingFields.path)) { finding in

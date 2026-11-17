@@ -76,15 +76,19 @@ PIDs with `pidString(_:)` or `Text(verbatim:)`, never by interpolating the
 integer into a localized string. Apply `.copyProcessName(_:)` and `.copyPID(_:)`
 from `PageComponents.swift` wherever a process name or PID is shown, and
 `.copyOnClick(_:label:)` for other identifying values such as names, paths,
-commands, endpoints, and versions: clicking copies the value through a
+commands, endpoints, and versions; an empty value adds no copy action and can
+keep placeholder help through `emptyHelp`. Clicking copies the value through a
 simultaneous gesture, so selection and row actions keep working, and no extra
 control is added. Copy the full value, not an abbreviated display.
 
 Every table gets search, the Filter builder, sorting by header and picker, and
 resizable columns. Give `TableColumn`s a `min`/`ideal` width rather than a fixed
 width, except checkbox or icon columns. Pages that scroll as a whole embed
-tables with `EmbeddedDataTable` from `TableControls.swift`, which owns its
-search and sort state and shows up to twelve rows before scrolling itself. The
+tables with `EmbeddedDataTable` from `TableControls.swift`, which shows up to
+twelve rows before scrolling itself. Its search and sort live in a keyed
+`TableStateStore` that the page retains with `@State` above its visibility
+boundary (Security, System, and Disk cleanup's Maintenance view), so filters
+survive navigation while only the tables observe changes. The
 custom CPU, Memory, Disk, Network, and Energy process table keeps its widths in
 `ResourceColumnWidths`, resized by header drag handles.
 
@@ -369,8 +373,10 @@ at quit (never in probe builds, where it requires an injected service). A
 one-minute check runs a pass on its own serial queue once the saved interval has
 elapsed and saved auto-kill is enabled. `DevCleanupService.cleanup` takes a
 `shouldTerminate` gate that the scheduler binds to its session and the current
-saved auto-kill, rechecked before every termination, so stopping or disabling
-halts a pass mid-way. Kills are logged and announced with a native notification;
+saved auto-kill, rechecked before every termination. The live terminator
+(`ProcessTerminationPolicy.terminate`) receives the same gate and rechecks it
+after its blocking command-line read, immediately before each signal, so
+stopping or disabling halts a pass mid-way. Kills are logged and announced with a native notification;
 `BackgroundCleanupStatus` is the only view observing it. The preview's
 **Turn off auto-kill** always saves the safer setting and, for the current visit
 only, opens read-only cleanup without a pass.

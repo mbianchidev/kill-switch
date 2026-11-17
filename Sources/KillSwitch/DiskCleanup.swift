@@ -570,6 +570,8 @@ struct DiskCleanupTab: View {
     @ObservedObject var monitor: DiskCleanupMonitor
     let maintenance: MaintenanceMonitor
     @State private var showsMaintenance = false
+    // Retained while Maintenance is hidden, without observing; only its tables observe it.
+    @State private var maintenanceTables = TableStateStore()
     @State private var searchText = ""
     @State private var sorting = TableComparator(field: DiskCleanupTableFields.size, order: .reverse)
     @State private var pendingTrashItems: [DiskCleanupItem] = []
@@ -589,7 +591,7 @@ struct DiskCleanupTab: View {
             header
             Divider()
             if showsMaintenance {
-                MaintenanceView(monitor: maintenance)
+                MaintenanceView(monitor: maintenance, tableStates: maintenanceTables)
             } else {
                 notices
                 browserToolbar(rows)

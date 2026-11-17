@@ -119,15 +119,25 @@ func pidString(_ pid: Int32) -> String { String(pid) }
 
 /// Copies an identifying value, such as a process name or PID, when its text is clicked.
 /// A simultaneous gesture keeps row selection and enclosing actions working, and a brief
-/// "Copied" badge confirms the copy without adding a separate control.
+/// "Copied" badge confirms the copy without adding a separate control. An empty value, such as a
+/// missing endpoint, adds no copy action and keeps any placeholder help.
 private struct CopyOnClick: ViewModifier {
     let value: String
     let label: String
+    let emptyHelp: String?
     @State private var feedback: String?
     @State private var revision = 0
     @Environment(\.allowsLiveOperations) private var allowsOperations
 
     func body(content: Content) -> some View {
+        if value.isEmpty {
+            if let emptyHelp { content.help(Text(verbatim: emptyHelp)) } else { content }
+        } else {
+            copyable(content)
+        }
+    }
+
+    private func copyable(_ content: Content) -> some View {
         content
             .contentShape(Rectangle())
             .simultaneousGesture(TapGesture().onEnded { copy() })
@@ -166,8 +176,8 @@ private struct CopyOnClick: ViewModifier {
 }
 
 extension View {
-    func copyOnClick(_ value: String, label: String) -> some View {
-        modifier(CopyOnClick(value: value, label: label))
+    func copyOnClick(_ value: String, label: String, emptyHelp: String? = nil) -> some View {
+        modifier(CopyOnClick(value: value, label: label, emptyHelp: emptyHelp))
     }
 
     func copyProcessName(_ name: String) -> some View {

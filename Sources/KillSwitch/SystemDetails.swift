@@ -108,6 +108,7 @@ extension SystemDetailsMonitor {
 
 struct SystemDetailsCard: View {
     @ObservedObject var monitor: SystemDetailsMonitor
+    let tableStates: TableStateStore
     @Environment(\.allowsLiveOperations) private var allowsOperations
     @State private var revealIdentifiers = false
     @State private var copied: String?
@@ -162,6 +163,7 @@ struct SystemDetailsCard: View {
         if !snapshot.volumes.isEmpty {
             EmbeddedDataTable(
                 snapshot.volumes, fields: VolumeFields.all, sortedBy: TableComparator(field: VolumeFields.name),
+                state: tableStates, key: "volumes",
                 identity: \.id, prompt: "Search volumes, or used > 90%"
             ) {
                 TableColumn("Volume", sortUsing: TableComparator(field: VolumeFields.name)) { volume in
@@ -199,6 +201,7 @@ struct SystemDetailsCard: View {
         if let displays = hardware?.displays, !displays.isEmpty {
             EmbeddedDataTable(
                 displays, fields: DisplayFields.all, sortedBy: TableComparator(field: DisplayFields.main, order: .reverse),
+                state: tableStates, key: "displays",
                 identity: \.id, prompt: "Search displays, or builtIn = no"
             ) {
                 TableColumn("Display", sortUsing: TableComparator(field: DisplayFields.name)) { display in
