@@ -1,0 +1,161 @@
+import Darwin
+import Foundation
+import IOKit
+import SystemConfiguration
+
+public struct SystemDisplay: Identifiable, Equatable, Sendable {
+    public var id: String { "\(name)/\(index)" }
+
+    public let index: Int
+    public let name: String
+    /// Point resolution and refresh rate, for example `1728 x 1117 @ 120.00Hz`.
+    public let resolution: String?
+    public let pixels: String?
+    public let isMain: Bool
+    public let isBuiltIn: Bool
+}
+
+public struct SystemVolume: Identifiable, Equatable, Sendable {
+    public var id: String { path }
+
+    public let name: String
+    public let path: String
+    public let format: String?
+    public let totalBytes: UInt64?
+    public let availableBytes: UInt64?
+    public let isInternal: Bool?
+    public let isRemovable: Bool?
+
+    public init(
+        name: String, path: String, format: String?, totalBytes: UInt64?,
+        availableBytes: UInt64?, isInternal: Bool?, isRemovable: Bool?
+    ) {
+        self.name = name
+        self.path = path
+        self.format = format
+        self.totalBytes = totalBytes
+        self.availableBytes = availableBytes
+        self.isInternal = isInternal
+        self.isRemovable = isRemovable
+    }
+
+    public var usedBytes: UInt64? {
+        guard let totalBytes, let availableBytes, totalBytes >= availableBytes else { return nil }
+        return totalBytes - availableBytes
+    }
+}
+
+public struct SystemProfilerHardware: Equatable, Sendable {
+    public let modelName: String?
+    public let modelIdentifier: String?
+    public let modelNumber: String?
+    public let chip: String?
+    public let memory: String?
+    public let displays: [SystemDisplay]
+}
+
+public struct SystemIdentity: Equatable, Sendable {
+    public let computerName: String?
+    public let localHostName: String?
+    public let bootTime: Date?
+    public let serialNumber: String?
+    public let hardwareUUID: String?
+    public let warnings: [String]
+}
+
+public enum SystemDetailsParser {
+    public static let profilerArguments = ["-json", "-detailLevel", "mini", "SPHardwareDataType", "SPDisplaysDataType"]
+
+    /// Parses `system_profiler -json` output. Missing sections or fields stay nil.
+    public static func parseProfiler(_ data: Data) throws -> SystemProfilerHardware {
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw SystemHealthError(message: "system_profiler did not return a JSON object.")
+        }
+        let hardware = (root["SPHardwareDataType"] as? [[String: Any]])?.first ?? [:]
+        func value(_ key: String) -> String? {
+            (hardware[key] as? String).flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
+        }
+        var displays: [SystemDisplay] = []
+        for adapter in root["SPDisplaysDataType"] as? [[String: Any]] ?? [] {
+            for screen in adapter["spdisplays_ndrvs"] as? [[String: Any]] ?? [] {
+                guard (screen["spdisplays_online"] as? String) != "spdisplays_no" else { continue }
+                displays.append(SystemDisplay(
+                    index: displays.count,
+                    name: screen["_name"] as? String ?? "Display",
+                    resolution: screen["_spdisplays_resolution"] as? String,
+                    pixels: screen["_spdisplays_pixels"] as? String,
+                    isMain: (screen["spdisplays_main"] as? String) == "spdisplays_yes",
+                    isBuiltIn: (screen["spdisplays_connection_type"] as? String) == "spdisplays_internal"
+                ))
+            }
+        }
+        return SystemProfilerHardware(
+            modelName: value("machine_name"), modelIdentifier: value("machine_model"),
+            modelNumber: value("model_number"), chip: value("chip_type") ?? value("cpu_type"),
+            memory: value("physical_memory"), displays: displays
+        )
+    }
+
+    /// Converts `kern.boottime` to a date; a zero or negative time is unavailable.
+    public static func bootTime(seconds: Int, microseconds: Int32) -> Date? {
+        guard seconds > 0 else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(seconds) + TimeInterval(microseconds) / 1_000_000)
+    }
+}
+
+public enum SystemDetailsReader {
+    /// Reads names, boot time, and hardware identifiers with public, unprivileged interfaces.
+    public static func identity() -> SystemIdentity {
+        var warnings: [String] = []
+        let computerName = SCDynamicStoreCopyComputerName(nil, nil) as String?
+        let localHostName = (SCDynamicStoreCopyLocalHostName(nil) as String?).map { "\($0).local" }
+        if computerName == nil { warnings.append("The computer name could not be read.") }
+
+        var bootTime: Date?
+        var value = timeval()
+        var size = MemoryLayout<timeval>.size
+        if sysctlbyname("kern.boottime", &value, &size, nil, 0) == 0, size == MemoryLayout<timeval>.size {
+            bootTime = SystemDetailsParser.bootTime(seconds: value.tv_sec, microseconds: value.tv_usec)
+        }
+        if bootTime == nil { warnings.append("The boot time could not be read.") }
+
+        let platform = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPlatformExpertDevice"))
+        defer { if platform != 0 { IOObjectRelease(platform) } }
+        func property(_ key: String) -> String? {
+            guard platform != 0 else { return nil }
+            return IORegistryEntryCreateCFProperty(platform, key as CFString, kCFAllocatorDefault, 0)?
+                .takeRetainedValue() as? String
+        }
+        let serial = property(kIOPlatformSerialNumberKey)
+        let uuid = property(kIOPlatformUUIDKey)
+        if serial == nil || uuid == nil { warnings.append("Hardware identifiers could not be read from IOKit.") }
+        return SystemIdentity(
+            computerName: computerName, localHostName: localHostName, bootTime: bootTime,
+            serialNumber: serial, hardwareUUID: uuid, warnings: warnings
+        )
+    }
+
+    /// Lists visible mounted volumes with their capacity and space available for important data.
+    public static func volumes(fileManager: FileManager = .default) -> [SystemVolume] {
+        let keys: [URLResourceKey] = [
+            .volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey,
+            .volumeAvailableCapacityKey, .volumeIsInternalKey, .volumeIsRemovableKey,
+            .volumeLocalizedFormatDescriptionKey, .volumeIsBrowsableKey
+        ]
+        let urls = fileManager.mountedVolumeURLs(includingResourceValuesForKeys: keys, options: [.skipHiddenVolumes]) ?? []
+        return urls.compactMap { url -> SystemVolume? in
+            guard let values = try? url.resourceValues(forKeys: Set(keys)), values.volumeIsBrowsable != false else {
+                return nil
+            }
+            let important = values.volumeAvailableCapacityForImportantUsage.flatMap { $0 >= 0 ? UInt64($0) : nil }
+            return SystemVolume(
+                name: values.volumeName ?? url.lastPathComponent, path: url.path,
+                format: values.volumeLocalizedFormatDescription,
+                totalBytes: values.volumeTotalCapacity.flatMap { $0 >= 0 ? UInt64($0) : nil },
+                availableBytes: important ?? values.volumeAvailableCapacity.flatMap { $0 >= 0 ? UInt64($0) : nil },
+                isInternal: values.volumeIsInternal, isRemovable: values.volumeIsRemovable
+            )
+        }
+        .sorted { $0.path == "/" || ($1.path != "/" && $0.name.localizedStandardCompare($1.name) == .orderedAscending) }
+    }
+}
