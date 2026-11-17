@@ -350,6 +350,30 @@ struct CheckRunner {
             classifier.listsListener(command: nil, port: 41000) && !classifier.listsListener(command: nil, port: 41500),
             "matches listeners without command lines by watched port only"
         )
+
+        let builtIn = DevServerClassifier(configuration: DevCleanupConfiguration(
+            autoKillEnabled: false, ageThresholdSeconds: 0, effectivePorts: DevCleanupDefaults.ports,
+            runtimes: DevCleanupDefaults.runtimes, indicators: DevCleanupDefaults.indicators,
+            exclusions: DevCleanupDefaults.exclusions
+        ))
+        let fixtureServer = "/Users/example/Library/Caches/Example/python-bin/../bootstrap/python3/bin/python3 "
+            + "/Users/example/workspace/copilot-worktrees/demo/session-a/tests/fixtures/https_server.py "
+            + "--port 61962 --certificate /var/folders/xx/T/.tmpA1/cert.pem --key /var/folders/xx/T/.tmpA1/key.pem"
+        check(builtIn.runtime(for: fixtureServer) == "python", "detects Python server scripts in agent worktrees")
+        check(builtIn.listsListener(command: fixtureServer, port: 61962), "lists Python server scripts on random ports")
+        check(
+            builtIn.runtime(for: "/usr/local/bin/node /Users/example/workspace/copilot-worktrees/demo/session-a/node_modules/.bin/vite") == "node",
+            "detects dev servers in agent worktrees"
+        )
+        for copilot in [
+            "/usr/local/bin/npx -y @github/copilot",
+            "/usr/local/bin/node /usr/local/bin/copilot --acp npx",
+            "/usr/local/bin/node /Users/example/.copilot/extensions/demo/vite.mjs",
+            "/usr/local/bin/node /Users/example/Library/Caches/github-copilot-sdk/runtime/npm run",
+            "/usr/local/bin/node /Applications/GitHub Copilot.app/Contents/Resources/vite.mjs"
+        ] {
+            check(builtIn.runtime(for: copilot) == nil, "protects Copilot process: \(copilot)")
+        }
     }
 
     private mutating func check(_ condition: Bool, _ name: String) {

@@ -536,12 +536,19 @@ spring-boot:run, gradlew, quarkus:dev,
 cargo run, cargo watch, cargo-watch, trunk serve,
 go run, air, rails server, rails s, puma, rackup,
 flask run, uvicorn, gunicorn, manage.py runserver, runserver,
-http.server, deno run, deno task
+http.server, server.py, deno run, deno task
 ```
+
+`server.py` covers Python server scripts such as leaked `https_server.py` test
+fixtures, which are otherwise orphaned with random ports.
 
 Default protected command-line substrings cover:
 
-- **Copilot CLI / SDK:** `copilot`.
+- **Copilot app, CLI, and SDK:** `@github/copilot`, `bin/copilot`,
+  `github copilot`, `github-copilot`, and `/.copilot/`. These name Copilot
+  itself, so dev servers started from agent checkouts such as
+  `~/workspace/copilot-worktrees` remain detectable. Saved lists keep their
+  entries; **Reset to defaults** applies these.
 - **MCP servers**, including GitHub, Context7, Work IQ, Fabric, Seismic, Azure,
   Kusto, and Revenue examples: `mcp`, `modelcontextprotocol`, `context7`,
   `work_iq`, `work-iq`, `workiq`, `fabric`, `seismic`, `azure`, `kusto`,

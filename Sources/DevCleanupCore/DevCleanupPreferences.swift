@@ -31,11 +31,13 @@ public enum DevCleanupDefaults {
         "go run", "air",
         "rails server", "rails s", "puma", "rackup",
         "flask run", "uvicorn", "gunicorn", "manage.py runserver", "runserver",
-        "http.server", "deno run", "deno task"
+        "http.server", "server.py", "deno run", "deno task"
     ]
 
+    // Copilot entries name Copilot itself, not the bare word, so servers started
+    // from agent checkouts such as `~/workspace/copilot-worktrees` stay detectable.
     public static let exclusions: [String] = [
-        "copilot",
+        "@github/copilot", "bin/copilot", "github copilot", "github-copilot", "/.copilot/",
         "mcp", "modelcontextprotocol", "context7", "work_iq", "work-iq", "workiq",
         "fabric", "seismic", "azure", "kusto", "revenue", "server-github",
         "killswitch", "visual studio code", "code helper", "electron", "obsidian",
