@@ -557,9 +557,9 @@ explicit synthetic providers/termination results. It is a GUI fixture, not a
 live-cleanup measurement; synthetic cleanup startup rejects a missing injected
 service. The other navigation scenarios still exclude cleanup.
 `folder-alerts`, `homebrew`, `applications`, `security`, `maintenance`, and
-`status-icon` are also GUI fixtures rather than footprint scenarios;
-`status-icon` magnifies the menu-bar icon at fixed used shares on light and dark
-bars without reading any capacity. The page fixtures render their pages with
+`storage-menu` are also GUI fixtures rather than footprint scenarios;
+`storage-menu` renders the menu's storage row at fixed used shares on light and
+dark backgrounds without reading any capacity. The page fixtures render their pages with
 fictional in-memory data and never measure folders, run `brew`, `spctl`,
 `softwareupdate`, `git`, `gh`, or `hdiutil`, move files, persist, or notify. The `system` scenario also renders
 fictional system details and identifiers.
@@ -611,10 +611,10 @@ the previous icon. At launch, `AppIconSetup` sets `NSApp.applicationIconImage`
 from the bundled `AppIcon.icns`, and once per version and icon fingerprint
 `InstallCore`'s `AppIconRefresh` updates the bundle's modification date and
 calls `LSRegisterURL` on a utility queue; a failure is logged and retried at
-the next launch. The menu-bar icon is a monochrome template: the `bolt.slash` symbol plus a storage
-gauge drawn by `StatusItemIcon`. `AppDelegate` reads the startup volume with
-`SystemDetailsReader.startupVolume()` once a minute on a utility queue and
-redraws only when the rounded percentage or its availability changes.
+the next launch. The menu-bar icon is the monochrome `bolt.slash` template symbol. The menu's first
+item hosts `StorageMenuView`; `AppDelegate.menuWillOpen` asks `StorageMenuModel`
+to read `SystemDetailsReader.startupVolume()` off the main thread, so capacity is
+read only when the menu opens and the previous reading shows meanwhile.
 
 CI and releases use `bash scripts/package-macos.sh --universal-build` to build
 both architectures together in one SwiftPM build graph per product, with the

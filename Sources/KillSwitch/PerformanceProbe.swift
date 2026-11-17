@@ -44,7 +44,7 @@ enum PerformanceProbe {
         guard (3...5).contains(arguments.count),
               ["background", "dashboard", "cpu", "memory", "energy", "system", "battery", "thermal",
                "connections", "files", "servers", "inspector", "navigation", "cleanup-settings",
-               "folder-alerts", "homebrew", "applications", "security", "maintenance", "status-icon"].contains(arguments[0]),
+               "folder-alerts", "homebrew", "applications", "security", "maintenance", "storage-menu"].contains(arguments[0]),
               let duration = Double(arguments[1]), (3...600).contains(duration),
               let count = Int(arguments[2]), (1...5_000).contains(count) else {
             fputs("Usage: KillSwitch --performance-probe SCENARIO SECONDS(3...600) PROCESSES(1...5000) [OFFSCREEN.png [WIDTHxHEIGHT]]; or --performance-probe --interface-checks\n", stderr)
@@ -96,8 +96,8 @@ enum PerformanceProbe {
                 root = AnyView(ContentView(
                     resourceMonitor: monitor, startsServices: false, cleanupPreferences: cleanupPreferences
                 ))
-            } else if scenario == "status-icon" {
-                root = AnyView(StatusIconProbePreview())
+            } else if scenario == "storage-menu" {
+                root = AnyView(StorageMenuProbePreview())
             } else if scenario == "maintenance" {
                 MaintenanceMonitor.shared.publishPerformanceFixture()
                 root = AnyView(DiskCleanupTab(monitor: DiskCleanupMonitor(), maintenance: MaintenanceMonitor.shared, startsInMaintenance: true)
@@ -284,12 +284,17 @@ enum PerformanceProbe {
         copyFeedbackChecks(check)
         dashboardSelectionChecks(check)
         folderAlertStateChecks(check)
-        let gauge = StatusItemIcon.image(usedFraction: 0.5)
-        let plain = StatusItemIcon.image(usedFraction: nil)
-        check(gauge.isTemplate && plain.isTemplate && gauge.size.width > plain.size.width && gauge.size.height == StatusItemIcon.height
-              && gauge.accessibilityDescription?.contains("50%") == true && plain.accessibilityDescription == "KillSwitch",
-              "The menu-bar icon must add a template storage gauge only when the capacity is known.")
-        check(StatusItemIcon.toolTip(for: nil).contains("unavailable"), "An unreadable capacity must be reported, not estimated.")
+        let half = SystemVolume(name: "Synthetic HD", path: "/", format: nil, totalBytes: 1_000, availableBytes: 500,
+                                isInternal: true, isRemovable: false)
+        check(StorageMenuModel.percent(0.625) == 63 && StorageMenuModel.detail(for: half)?.contains("used") == true,
+              "The storage menu row must show the used percentage and space.")
+        check(StorageMenuModel.detail(for: nil) == nil
+              && StorageMenuModel.detail(for: SystemVolume(name: "X", path: "/", format: nil, totalBytes: 0, availableBytes: 0,
+                                                           isInternal: nil, isRemovable: nil)) == nil,
+              "An unreadable capacity must be reported, not estimated.")
+        let storageItem = StorageMenuItem.make(model: StorageMenuModel())
+        check(storageItem.view?.frame.size == StorageMenuView.size && storageItem.action == nil,
+              "The storage menu row must be a fixed-size, non-actionable view item.")
 
         let suite = "KillSwitch.synthetic-entry-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suite) else {
@@ -1959,33 +1964,37 @@ private struct ProbeStateRecorder: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { record(token); return NSView() }
     func updateNSView(_ view: NSView, context: Context) { record(token) }
 }
-/// Magnified menu-bar icons at fixed used shares on dark and light bars; no capacity is read.
-private struct StatusIconProbePreview: View {
-    private let fractions: [Double?] = [nil, 0.08, 0.5, 0.92, 1]
+/// The storage menu row at fixed used shares on light and dark menus; no capacity is read.
+private struct StorageMenuProbePreview: View {
+    private let models: [StorageMenuModel] = [
+        Self.model(total: 494_384_795_648, available: 185_000_000_000),
+        Self.model(total: 494_384_795_648, available: 30_000_000_000),
+        Self.model(total: nil, available: nil)
+    ]
+
+    private static func model(total: UInt64?, available: UInt64?) -> StorageMenuModel {
+        let model = StorageMenuModel()
+        model.publishPerformanceFixture(total.map {
+            SystemVolume(name: "Synthetic HD", path: "/", format: "APFS", totalBytes: $0, availableBytes: available,
+                         isInternal: true, isRemovable: false)
+        })
+        return model
+    }
 
     var body: some View {
-        VStack(spacing: 24) {
-            row(foreground: .white, background: Color(white: 0.15))
-            row(foreground: .black, background: Color(white: 0.92))
+        HStack(spacing: 32) {
+            column(.dark)
+            column(.light)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func row(foreground: Color, background: Color) -> some View {
-        HStack(spacing: 28) {
-            ForEach(fractions.indices, id: \.self) { index in
-                let image = StatusItemIcon.image(usedFraction: fractions[index])
-                VStack(spacing: 8) {
-                    Image(nsImage: image)
-                        .renderingMode(.template)
-                        .resizable()
-                        .frame(width: image.size.width * 4, height: image.size.height * 4)
-                        .foregroundColor(foreground)
-                        .padding(10)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(background))
-                    Text(fractions[index].map { "\(StatusItemIcon.percent($0))% used" } ?? "Unavailable")
-                        .font(.system(size: 12))
-                }
+    private func column(_ scheme: ColorScheme) -> some View {
+        VStack(spacing: 14) {
+            ForEach(models.indices, id: \.self) { index in
+                StorageMenuView(model: models[index])
+                    .background(RoundedRectangle(cornerRadius: 8).fill(scheme == .dark ? Color(white: 0.2) : Color(white: 0.96)))
+                    .environment(\.colorScheme, scheme)
             }
         }
     }

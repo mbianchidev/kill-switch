@@ -16,11 +16,12 @@ the **Filter**, **Apply**, and **Reset filters** controls.
 
 KillSwitch uses a dark, translucent, Raycast-inspired interface. Like Caffeine,
 closing the main window leaves the menu-bar utility running rather than
-quitting. Its status item uses a bolt-shaped icon (`bolt.slash`) with a thin
-vertical bar beside it that fills from the bottom as the startup disk fills up.
-Hover over the icon to see the disk name, space used, capacity, and percentage.
-Like Finder, available space includes purgeable space. The bar updates every
-minute and is hidden when the capacity cannot be read.
+quitting. Its status item uses a bolt-shaped icon (`bolt.slash`).
+
+- The top of the menu shows the startup disk: its name, the percentage used, a
+  horizontal bar (orange above 90%), and the space used, total, and free. It is
+  read each time you open the menu; like Finder, free space includes purgeable
+  space. If the capacity cannot be read, the menu says so instead of a bar.
 
 - **Keep Mac Awake** offers a duration menu. The active duration is checkmarked;
   **Deactivate** restores normal sleep behavior.
