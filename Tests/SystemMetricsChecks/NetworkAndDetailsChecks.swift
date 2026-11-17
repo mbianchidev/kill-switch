@@ -7,6 +7,9 @@ extension SystemMetricsChecks {
         check(NetworkAddress.split("[2001:db8::5]:8443") == ("2001:db8::5", 8443), "splits bracketed IPv6 endpoints")
         check(NetworkAddress.normalized("::ffff:192.0.2.10") == "192.0.2.10" && NetworkAddress.normalized("fe80::1%en0") == "fe80::1",
               "unwraps IPv4-mapped addresses and drops IPv6 zones")
+        check(NetworkAddress.identity("fe80::1%en0") == "fe80::1%en0" && NetworkAddress.identity("::ffff:192.0.2.10") == "192.0.2.10",
+              "address identity keeps IPv6 zones and unwraps IPv4-mapped addresses")
+        check(NetworkAddress.scope(of: "fe80::1%en0") == .linkLocal, "classifies zoned link-local addresses")
         let scopes: [(String, NetworkAddressScope)] = [
             ("10.1.2.3", .privateNetwork), ("172.16.0.1", .privateNetwork), ("172.32.0.1", .publicAddress),
             ("192.168.1.1", .privateNetwork), ("100.64.0.1", .sharedAddressSpace), ("169.254.1.1", .linkLocal),
@@ -32,12 +35,16 @@ extension SystemMetricsChecks {
             ("IPv4", "TCP", "10.0.0.2:50004->198.51.100.1:443", "CLOSED")
         ]) + process(100_002, "Synthetic Sync", [
             ("IPv6", "TCP", "[::ffff:10.0.0.2]:50005->[::ffff:203.0.113.9]:443", "ESTABLISHED"),
+            ("IPv6", "TCP", "[fe80::2%en0]:50006->[fe80::1%en0]:22", "ESTABLISHED"),
+            ("IPv6", "TCP", "[fe80::2%en1]:50007->[fe80::1%en1]:22", "ESTABLISHED"),
             ("IPv4", "UDP", "10.0.0.2:5353", "")
         ]) + [""]
         let records = ProcessInspectionParser.parseLsof(Data(fields.joined(separator: "\0").utf8)).connections
         let destinations = NetworkDestinationGrouping.group(records, includeLoopback: false)
-        check(destinations.map(\.address) == ["203.0.113.9", "2001:db8::9"],
+        check(destinations.map(\.address) == ["203.0.113.9", "2001:db8::9", "fe80::1%en0", "fe80::1%en1"],
               "groups active remote connections by address, excluding listeners, bound, closed, and loopback sockets")
+        check(destinations.filter { $0.address.hasPrefix("fe80::1%") }.allSatisfy { $0.scope == .linkLocal && $0.connectionCount == 1 },
+              "keeps link-local destinations on different interfaces apart")
         if let first = destinations.first {
             check(first.connectionCount == 3 && first.ports == [80, 443] && first.scope == .publicAddress
                   && first.processes.map(\.name) == ["Synthetic Browser", "Synthetic Sync"],

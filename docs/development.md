@@ -183,17 +183,22 @@ be listed every cask is skipped. The monitor rechecks before each cask command.
 
 `HomebrewMonitor.shared` serializes Homebrew work and is shared by the Homebrew,
 Applications, and Security pages. `ApplicationsMonitor` assesses apps in batches
-of eight and caches results by path and modification date. Gatekeeper output is
-classified from `spctl`'s standard error; anything not notarized, from the Mac
+of eight on every scan; editing files inside a bundle does not change its
+folder's modification date, so results are not cached. Gatekeeper output is
+classified from `spctl`'s standard error, using only the last verdict line and
+the lines after it, because the echoed bundle path can contain newlines;
+acceptance also requires a zero exit status; anything not notarized, from the Mac
 App Store, or from Apple is local, and unrecognized output is unverified rather
 than local. Security posture parsers return Unknown for unrecognized output.
 `softwareupdate` output is parsed into items and readable warnings; same-major
 macOS, Safari, and security-response items are marked security-relevant.
 
 Destinations reuse `ProcessInspectionMonitor` in connections mode and group
-records with `NetworkDestinationGrouping`. `ReverseDNSCache` resolves at most
-four addresses at a time and caches results, including missing names, for the
-app's lifetime. System details load once per System page visit through
+records with `NetworkDestinationGrouping`. Remote addresses keep IPv6 zones as part of their identity;
+zones are dropped only for scope classification and interface display.
+`ReverseDNSCache` resolves at most four addresses at a time and caches results,
+including missing names, for the app's lifetime. When the cache is full it keeps
+the addresses currently requested. System details load once per System page visit through
 `SystemDetailsMonitor`. All of these pages load on demand, only while visible,
 and skip live reads when live operations are disabled, as in the probe.
 

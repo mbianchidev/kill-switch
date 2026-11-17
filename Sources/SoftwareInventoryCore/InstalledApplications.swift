@@ -41,16 +41,29 @@ public enum GatekeeperAssessment {
     }
 
     /// Classifies `spctl --assess -vv` output, which macOS writes to standard error.
+    /// spctl echoes the bundle path before its verdict, and a path may contain newlines that
+    /// imitate a verdict, so only the last verdict line and the lines after it are trusted.
+    /// Acceptance also requires a zero exit status.
     public static func classify(status: Int32, output: String) -> ApplicationTrust {
         let lines = output.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
-        let source = lines.first { $0.hasPrefix("source=") }.map { String($0.dropFirst("source=".count)) }
-        let accepted = lines.contains { $0.hasSuffix(": accepted") }
-        let rejected = lines.contains { $0.hasSuffix(": rejected") || $0.contains(": rejected (") }
+        func isVerdict(_ line: String) -> Bool {
+            line.hasSuffix(": accepted") || line.hasSuffix(": rejected") || line.contains(": rejected (")
+        }
+        guard let verdictIndex = lines.lastIndex(where: isVerdict) else {
+            let message = lines.last { !$0.isEmpty } ?? "spctl exited with status \(status)"
+            return .unverified("Gatekeeper could not assess it: \(message)")
+        }
+        let details = lines[(verdictIndex + 1)...]
+        let source = details.last { $0.hasPrefix("source=") }.map { String($0.dropFirst("source=".count)) }
 
-        if lines.contains(where: { $0.hasPrefix("override=") && $0.contains("security disabled") }) {
+        if details.contains(where: { $0.hasPrefix("override=") && $0.contains("security disabled") }) {
             return .unverified("Gatekeeper assessments are disabled, so notarization was not checked.")
         }
-        if accepted, let source {
+        if lines[verdictIndex].hasSuffix(": accepted") {
+            guard status == 0 else {
+                return .unverified("Gatekeeper reported acceptance but exited with status \(status).")
+            }
+            guard let source else { return .unverified("Gatekeeper accepted it without naming a source.") }
             if source.localizedCaseInsensitiveContains("Unnotarized") {
                 return .local("Signed with Developer ID but not notarized.")
             }
@@ -62,14 +75,10 @@ public enum GatekeeperAssessment {
             }
             return .local("Gatekeeper accepted it from an unrecognized source: \(source).")
         }
-        if rejected {
-            if let source {
-                return .local("Gatekeeper rejected it (\(source)); it is not notarized.")
-            }
-            return .local("Gatekeeper rejected it; it is unsigned, ad-hoc signed, or not notarized.")
+        if let source {
+            return .local("Gatekeeper rejected it (\(source)); it is not notarized.")
         }
-        let message = lines.last { !$0.isEmpty } ?? "spctl exited with status \(status)"
-        return .unverified("Gatekeeper could not assess it: \(message)")
+        return .local("Gatekeeper rejected it; it is unsigned, ad-hoc signed, or not notarized.")
     }
 }
 

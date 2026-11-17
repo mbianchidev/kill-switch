@@ -27,14 +27,26 @@ public enum NetworkAddress {
         return (String(endpoint[..<separator]), UInt16(endpoint[endpoint.index(after: separator)...]))
     }
 
-    /// Removes an IPv6 zone (`fe80::1%en0`) and unwraps IPv4-mapped IPv6 addresses.
+    /// Removes an IPv6 zone (`fe80::1%en0`) and unwraps IPv4-mapped IPv6 addresses. Use it for
+    /// scope classification and interface display, not to identify a remote endpoint.
     public static func normalized(_ host: String) -> String {
-        let withoutZone = host.split(separator: "%", maxSplits: 1).first.map(String.init) ?? host
-        let lowered = withoutZone.lowercased()
+        unmapped(host.split(separator: "%", maxSplits: 1).first.map(String.init) ?? host)
+    }
+
+    /// Unwraps IPv4-mapped IPv6 addresses but keeps an IPv6 zone, which is part of a link-local
+    /// endpoint's identity: `fe80::1%en0` and `fe80::1%en1` can be different machines.
+    public static func identity(_ host: String) -> String {
+        let parts = host.split(separator: "%", maxSplits: 1, omittingEmptySubsequences: false)
+        let address = unmapped(String(parts.first ?? ""))
+        return parts.count == 2 ? "\(address)%\(parts[1])" : address
+    }
+
+    private static func unmapped(_ host: String) -> String {
+        let lowered = host.lowercased()
         if lowered.hasPrefix("::ffff:"), isIPv4(String(lowered.dropFirst("::ffff:".count))) {
             return String(lowered.dropFirst("::ffff:".count))
         }
-        return withoutZone
+        return host
     }
 
     public static func isIPv4(_ host: String) -> Bool {
@@ -92,13 +104,13 @@ public struct NetworkDestination: Identifiable, Equatable, Sendable {
 }
 
 public enum NetworkDestinationGrouping {
-    /// Groups active IPv4/IPv6 connections by normalized remote address. Listeners, bound
+    /// Groups active IPv4/IPv6 connections by remote address identity. Listeners, bound
     /// sockets, and Unix sockets have no remote endpoint and are excluded.
     public static func group(_ records: [NetworkConnectionRecord], includeLoopback: Bool) -> [NetworkDestination] {
         var groups: [String: [NetworkConnectionRecord]] = [:]
         for record in records where record.isActive && record.family != "unix" {
             guard let remote = record.remote else { continue }
-            let host = NetworkAddress.normalized(NetworkAddress.split(remote).host)
+            let host = NetworkAddress.identity(NetworkAddress.split(remote).host)
             guard !host.isEmpty, host != "*" else { continue }
             if !includeLoopback, NetworkAddress.scope(of: host) == .loopback { continue }
             groups[host, default: []].append(record)
@@ -206,7 +218,7 @@ public enum ReverseDNS {
     /// Looks up the PTR name for a numeric address; blocks, so call it off the main thread.
     /// Returns nil when no name exists or the lookup fails.
     public static func hostname(for host: String) -> String? {
-        let address = NetworkAddress.normalized(host)
+        let address = NetworkAddress.identity(host)
         var hints = addrinfo(
             ai_flags: AI_NUMERICHOST, ai_family: AF_UNSPEC, ai_socktype: SOCK_STREAM,
             ai_protocol: 0, ai_addrlen: 0, ai_canonname: nil, ai_addr: nil, ai_next: nil

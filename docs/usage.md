@@ -135,7 +135,9 @@ visible to your account by remote address. Each row shows the address, its
 reverse DNS hostname when one exists, the scope (Public, Private, Carrier-grade
 NAT, Link-local, Loopback, or Multicast), remote ports, the connection count,
 and every process with a connection to that address. IPv4-mapped IPv6 addresses
-are merged with their IPv4 form. Loopback connections are hidden unless you
+are merged with their IPv4 form. Link-local IPv6 addresses keep their interface
+zone, such as `fe80::1%en0`, because the same address on another interface can
+be a different machine. Loopback connections are hidden unless you
 select **Include loopback**; listeners, bound sockets, and closed connections
 are not destinations.
 
@@ -575,8 +577,8 @@ bundle identifier, version, and modification date. Built-in apps in
 
 Use **Homebrew**, **Not Homebrew**, or **Local** to filter, or search fields such
 as `local = yes` and `homebrew = no`. Assessments run in small parallel batches
-when the page first opens and are cached until an app changes. The refresh
-button scans again. The page is read-only; **Reveal in Finder** shows an app.
+when the page first opens. The refresh button scans and assesses every app
+again. The page is read-only; **Reveal in Finder** shows an app.
 
 ## Security
 

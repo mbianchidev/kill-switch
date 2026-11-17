@@ -29,7 +29,11 @@ final class ReverseDNSCache: ObservableObject {
     func resolve(_ addresses: [String]) {
         let pending = addresses.filter { entries[$0] == nil }
         guard !pending.isEmpty else { return }
-        if entries.count + pending.count > Self.maximumEntries { entries.removeAll() }
+        if entries.count + pending.count > Self.maximumEntries {
+            // Keep the requested addresses so visible rows keep their names and in-flight lookups.
+            let requested = Set(addresses)
+            entries = entries.filter { requested.contains($0.key) }
+        }
         for address in pending {
             entries[address] = .resolving
             queue.addOperation { [weak self] in

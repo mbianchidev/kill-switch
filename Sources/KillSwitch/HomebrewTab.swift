@@ -189,7 +189,9 @@ struct HomebrewTab: View {
             }
             .overlay {
                 if rows.isEmpty && !monitor.isLoading {
-                    Text(monitor.packages.isEmpty ? "No Homebrew packages are installed." : "No matching packages. Change or reset the filters.")
+                    Text(!monitor.packages.isEmpty ? "No matching packages. Change or reset the filters."
+                         : monitor.inventoryLoaded ? "No Homebrew packages are installed."
+                         : "Homebrew packages could not be listed. Refresh to try again.")
                         .foregroundColor(.secondary)
                 }
             }
@@ -245,6 +247,12 @@ struct HomebrewTab: View {
                 Spacer()
                 Button("Dismiss") { monitor.dismissTranscript() }
                     .controlSize(.small)
+            }
+            if let failure = transcript.failure {
+                Text(failure)
+                    .font(.system(size: 11))
+                    .foregroundColor(.red)
+                    .textSelection(.enabled)
             }
             ScrollView {
                 Text(transcript.text.isEmpty ? "No output." : transcript.text)

@@ -45,7 +45,7 @@ enum Fixture {
             [
                 "image-path": image.path, "owner-uid": NSNumber(value: image.owner), "writeable": image.writeable,
                 "system-entities": [["dev-entry": image.device], ["dev-entry": image.device + "s1", "mount-point": image.mount ?? ""]]
-                    .map { entry in entry.filter { !($0.value as? String ?? "x").isEmpty } }
+                    .map { entry in entry.filter { !$0.value.isEmpty } }
             ] as [String: Any]
         }]
         let data = try! PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)

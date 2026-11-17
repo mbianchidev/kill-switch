@@ -24,10 +24,6 @@ final class SystemDetailsMonitor: ObservableObject {
 
     private init() {}
 
-    func loadIfNeeded() {
-        if snapshot == nil { refresh() }
-    }
-
     func refresh() {
         guard !isLoading else { return }
         isLoading = true
@@ -111,7 +107,7 @@ struct SystemDetailsCard: View {
         .padding(18)
         .background(RoundedRectangle(cornerRadius: 12).fill(Theme.panel))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.border))
-        .onAppear { if allowsOperations { monitor.loadIfNeeded() } }
+        .onAppear { if allowsOperations { monitor.refresh() } }
     }
 
     @ViewBuilder

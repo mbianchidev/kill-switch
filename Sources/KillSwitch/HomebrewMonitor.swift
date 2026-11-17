@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import SoftwareInventoryCore
 import os
@@ -18,7 +19,9 @@ final class HomebrewMonitor: ObservableObject {
 
     @Published private(set) var availability: Availability = .unknown
     @Published private(set) var packages: [HomebrewPackage] = []
-    @Published private(set) var lastLoaded: Date?
+    /// True only while the latest inventory listing succeeded; empty and all-clear states
+    /// must not be shown without it.
+    @Published private(set) var inventoryLoaded = false
     @Published private(set) var isLoading = false
     @Published private(set) var activeOperation: String?
     @Published private(set) var transcript: HomebrewTranscript?
@@ -46,7 +49,7 @@ final class HomebrewMonitor: ObservableObject {
     private init() {}
 
     func loadIfNeeded() {
-        guard lastLoaded == nil, availability != .notInstalled else { return }
+        guard !inventoryLoaded, availability != .notInstalled else { return }
         reload()
     }
 
@@ -55,7 +58,7 @@ final class HomebrewMonitor: ObservableObject {
         guard let installation = HomebrewInstallation.locate() else {
             availability = .notInstalled
             packages = []
-            lastLoaded = Date()
+            inventoryLoaded = false
             return
         }
         availability = .installed(installation)
@@ -72,13 +75,14 @@ final class HomebrewMonitor: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isLoading = false
-                self.lastLoaded = Date()
                 switch result {
                 case .success(let packages):
                     self.packages = packages
                     self.runningCasks = running
+                    self.inventoryLoaded = true
                     self.errorMessage = nil
                 case .failure(let error):
+                    self.inventoryLoaded = false
                     self.report("Homebrew packages could not be listed: \(error.localizedDescription)")
                 }
             }
@@ -198,7 +202,7 @@ extension HomebrewMonitor {
                             appPaths: ["/Applications/Synthetic Chat.app"])
         ]
         runningCasks = ["synthetic-chat"]
-        lastLoaded = Date()
+        inventoryLoaded = true
     }
 }
 #endif

@@ -109,11 +109,21 @@ struct SecurityTab: View {
             ForEach(monitor.updates?.warnings ?? [], id: \.self) { warning in
                 NoticeBanner(message: "softwareupdate reported: \(warning)")
             }
-            if monitor.updates != nil, items.isEmpty {
+            let listingIsClean = monitor.updatesError == nil && (monitor.updates?.warnings.isEmpty ?? false)
+            if monitor.updates != nil, items.isEmpty, listingIsClean {
                 Label("macOS and Apple software are up to date.", systemImage: "checkmark.circle.fill")
                     .font(.system(size: 12))
                     .foregroundColor(.green)
+            } else if monitor.updates != nil, items.isEmpty {
+                Text("The update status is unavailable until a listing completes without errors.")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
             } else if !items.isEmpty {
+                if monitor.updatesError != nil {
+                    Text("Showing the previous listing; it may be out of date.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
                 Text("\(security.count) security-relevant update(s) of \(items.count)")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(security.isEmpty ? .white.opacity(0.7) : .orange)
@@ -152,6 +162,12 @@ struct SecurityTab: View {
                 Text("Homebrew is not installed.").foregroundColor(.secondary)
             case .unknown:
                 Text("Listing Homebrew packages…").foregroundColor(.secondary)
+            case .installed where !homebrew.inventoryLoaded:
+                Text(homebrew.isLoading ? "Listing Homebrew packages…" : "Homebrew packages could not be listed, so their update status is unknown.")
+                    .foregroundColor(.secondary)
+                if let error = homebrew.errorMessage {
+                    NoticeBanner(message: error)
+                }
             case .installed:
                 let outdated = homebrew.outdated
                 let upgradable = homebrew.upgradable

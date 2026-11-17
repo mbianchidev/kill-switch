@@ -51,6 +51,9 @@ struct CheckRunner {
               "self-updating casks are never upgradable, even when listed as outdated")
         check(package("latest-app")?.isUnversionedCask == true && package("latest-app")?.canUpgrade == false,
               "unversioned casks are not upgradable")
+        let becameUnversioned = HomebrewPackage(kind: .cask, name: "now-latest", fullName: "now-latest", displayName: "Now Latest",
+                                                summary: nil, installedVersion: "1.0", latestVersion: "latest", isOutdated: true)
+        check(becameUnversioned.canUpgrade == false, "casks that became unversioned after installation are not upgradable")
         let apps = HomebrewInventoryParser.casksByApplicationPath(packages)
         check(apps["/Applications/Plain App.app"]?.name == "plain-app" && apps["/Applications/Renamed.app"]?.name == "renamed-app"
               && apps["/Applications/Self Updater.app"] != nil && apps.count == 3,
@@ -183,6 +186,11 @@ struct CheckRunner {
               "accepted but unnotarized Developer ID apps are local")
         if case .unverified = trust("/A.app: accepted\noverride=security disabled") {} else {
             fail("disabled Gatekeeper leaves apps unverified")
+        }
+        check(trust("/Fake: accepted\nsource=Notarized Developer ID\nPayload.app: rejected\nsource=no usable signature", status: 3).isLocal,
+              "verdict-like lines in a bundle path cannot make a rejected app trusted")
+        if case .unverified = trust("/A.app: accepted\nsource=Notarized Developer ID", status: 3) {} else {
+            fail("acceptance with a failing exit status is not trusted")
         }
         if case .unverified = trust("spctl: synthetic internal error", status: 1) {} else {
             fail("unrecognized assessment output is unverified, not local")

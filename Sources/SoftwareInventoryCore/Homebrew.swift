@@ -55,7 +55,8 @@ public struct HomebrewPackage: Identifiable, Equatable, Sendable {
     }
 
     /// Unversioned casks cannot be compared, so Homebrew only reinstalls them when forced.
-    public var isUnversionedCask: Bool { kind == .cask && installedVersion == "latest" }
+    /// A cask can also become unversioned after installation, so both versions are checked.
+    public var isUnversionedCask: Bool { kind == .cask && (installedVersion == "latest" || latestVersion == "latest") }
 
     /// Why this package is excluded from upgrades, or nil when KillSwitch may upgrade it.
     public var upgradeRestriction: String? {

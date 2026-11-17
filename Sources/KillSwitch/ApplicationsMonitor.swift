@@ -1,9 +1,11 @@
+import Combine
 import Foundation
 import SoftwareInventoryCore
 import os
 
 /// Lists installed applications and assesses each with Gatekeeper in small parallel batches.
-/// Assessments are cached per path and modification date for the app's lifetime.
+/// Every scan assesses again: editing files inside a bundle does not change its folder's
+/// modification date, and an earlier Unverified result may have been transient.
 @MainActor
 final class ApplicationsMonitor: ObservableObject {
     static let shared = ApplicationsMonitor()
@@ -16,12 +18,6 @@ final class ApplicationsMonitor: ObservableObject {
     @Published private(set) var pendingAssessments = 0
     @Published private(set) var lastScan: Date?
 
-    private struct CacheKey: Hashable {
-        let path: String
-        let modified: Date?
-    }
-
-    private var cache: [CacheKey: ApplicationTrust] = [:]
     private var generation = 0
     private let queue = DispatchQueue(label: "killswitch.applications", qos: .utility)
     private let logger = Logger(subsystem: "com.killswitch.app", category: "applications")
@@ -54,18 +50,9 @@ final class ApplicationsMonitor: ObservableObject {
         failures = result.failures
         for failure in result.failures { logger.error("Application scan: \(failure)") }
 
-        var known: [String: ApplicationTrust] = [:]
-        var unknown: [InstalledApplication] = []
-        for app in result.applications {
-            if let cached = cache[CacheKey(path: app.path, modified: app.modificationDate)] {
-                known[app.path] = cached
-            } else {
-                unknown.append(app)
-            }
-        }
-        trust = known
-        pendingAssessments = unknown.count
-        assess(unknown, generation: generation)
+        trust = [:]
+        pendingAssessments = result.applications.count
+        assess(result.applications, generation: generation)
     }
 
     private func assess(_ remaining: [InstalledApplication], generation: Int) {
@@ -87,7 +74,6 @@ final class ApplicationsMonitor: ObservableObject {
                 for (app, value) in zip(batch, results) {
                     guard let value else { continue }
                     self.trust[app.path] = value
-                    self.cache[CacheKey(path: app.path, modified: app.modificationDate)] = value
                 }
                 self.pendingAssessments = rest.count
                 self.assess(rest, generation: generation)
