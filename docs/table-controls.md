@@ -98,8 +98,8 @@ Multiword contains filters accept attached colons, such as
 | `size > 100MB repo:example` | Maintenance artifacts and scan candidates |
 | `mode = Automatic errors > 0` | Maintenance history |
 
-Homebrew's `status` field reports outdated casks whose apps are running as
-`Outdated`; the Status column labels them **Running**.
+Homebrew's `status` field matches its Status column, including **Running** for
+outdated casks whose apps are open, so `status = Running` lists them.
 | `date >= 2026-01-01` | Watchdog alerts |
 
 Use `=`, `==`, `!=`, `>`, `>=`, `<`, or `<=` for comparisons. Text `=` compares
