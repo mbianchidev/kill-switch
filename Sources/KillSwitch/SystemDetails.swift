@@ -2,7 +2,35 @@ import AppKit
 import InstallCore
 import SwiftUI
 import SystemMetricsCore
+import TableQueryCore
 import os
+
+private enum VolumeFields {
+    static let name = TableField<SystemVolume>.text("name", title: "Volume", aliases: ["volume"]) { $0.name }
+    static let path = TableField<SystemVolume>.text("path", title: "Mount point", aliases: ["mount"]) { $0.path }
+    static let format = TableField<SystemVolume>.text("format", title: "Format", aliases: ["filesystem"]) { $0.format }
+    static let used = TableField<SystemVolume>.number("used", title: "Used", unit: .percent) {
+        (volume: SystemVolume) -> Double? in volume.usedFraction.map { $0 * 100 }
+    }
+    static let available = TableField<SystemVolume>.number("available", title: "Available", aliases: ["free"], unit: .bytes) {
+        (volume: SystemVolume) -> Decimal? in volume.availableBytes.map { Decimal($0) }
+    }
+    static let total = TableField<SystemVolume>.number("total", title: "Capacity", aliases: ["size"], unit: .bytes) {
+        (volume: SystemVolume) -> Decimal? in volume.totalBytes.map { Decimal($0) }
+    }
+    static let isInternal = TableField<SystemVolume>.boolean("internal", title: "Internal") { $0.isInternal }
+    static let removable = TableField<SystemVolume>.boolean("removable", title: "Removable") { $0.isRemovable }
+    static let all = [name, path, format, used, available, total, isInternal, removable]
+}
+
+private enum DisplayFields {
+    static let name = TableField<SystemDisplay>.text("name", title: "Display") { $0.name }
+    static let resolution = TableField<SystemDisplay>.text("resolution", title: "Resolution") { $0.resolution }
+    static let pixels = TableField<SystemDisplay>.text("pixels", title: "Pixels") { $0.pixels }
+    static let main = TableField<SystemDisplay>.boolean("main", title: "Main") { $0.isMain }
+    static let builtIn = TableField<SystemDisplay>.boolean("builtIn", title: "Built-in", aliases: ["internal"]) { $0.isBuiltIn }
+    static let all = [name, resolution, pixels, main, builtIn]
+}
 
 struct SystemDetailsSnapshot: Equatable {
     var hardware: SystemProfilerHardware?
@@ -131,18 +159,65 @@ struct SystemDetailsCard: View {
         if snapshot.volumes.isEmpty {
             Text("No mounted volumes were reported.").foregroundColor(.secondary)
         }
-        ForEach(snapshot.volumes) { volume in
-            volumeRow(volume)
+        if !snapshot.volumes.isEmpty {
+            EmbeddedDataTable(
+                snapshot.volumes, fields: VolumeFields.all, sortedBy: TableComparator(field: VolumeFields.name),
+                identity: \.id, prompt: "Search volumes, or used > 90%"
+            ) {
+                TableColumn("Volume", sortUsing: TableComparator(field: VolumeFields.name)) { volume in
+                    Text(volume.name).font(.system(size: 12, weight: .medium)).copyOnClick(volume.name, label: "volume name")
+                }
+                .width(min: 100, ideal: 150)
+                TableColumn("Mount point", sortUsing: TableComparator(field: VolumeFields.path)) { volume in
+                    Text(volume.path).font(.system(size: 11, design: .monospaced)).lineLimit(1).truncationMode(.middle)
+                        .copyOnClick(volume.path, label: "mount point")
+                }
+                .width(min: 80, ideal: 160)
+                TableColumn("Format", sortUsing: TableComparator(field: VolumeFields.format)) { Text($0.format ?? "—") }
+                    .width(min: 50, ideal: 70)
+                TableColumn("Used", sortUsing: TableComparator(field: VolumeFields.used)) { usage($0) }
+                    .width(min: 80, ideal: 130)
+                TableColumn("Available", sortUsing: TableComparator(field: VolumeFields.available)) { volume in
+                    Text(volume.availableBytes.map(formatBytes) ?? "—").font(.system(size: 11, design: .monospaced))
+                }
+                .width(min: 60, ideal: 90)
+                TableColumn("Capacity", sortUsing: TableComparator(field: VolumeFields.total)) { volume in
+                    Text(volume.totalBytes.map(formatBytes) ?? "—").font(.system(size: 11, design: .monospaced))
+                }
+                .width(min: 60, ideal: 90)
+                TableColumn("Location", sortUsing: TableComparator(field: VolumeFields.isInternal)) { volume in
+                    Text(volume.isInternal.map { $0 ? "Internal" : "External" } ?? "—")
+                }
+                .width(min: 56, ideal: 75)
+            }
         }
         Divider()
         Text("Displays").font(.system(size: 12, weight: .semibold))
         if (hardware?.displays ?? []).isEmpty {
             Text("No online displays were reported.").foregroundColor(.secondary)
         }
-        ForEach(hardware?.displays ?? []) { display in
-            row(display.name + (display.isMain ? " (main)" : ""),
-                [display.resolution, display.pixels.map { "\($0) pixels" }, display.isBuiltIn ? "built-in" : "external"]
-                    .compactMap { $0 }.joined(separator: " · "))
+        if let displays = hardware?.displays, !displays.isEmpty {
+            EmbeddedDataTable(
+                displays, fields: DisplayFields.all, sortedBy: TableComparator(field: DisplayFields.main, order: .reverse),
+                identity: \.id, prompt: "Search displays, or builtIn = no"
+            ) {
+                TableColumn("Display", sortUsing: TableComparator(field: DisplayFields.name)) { display in
+                    Text(display.name + (display.isMain ? " (main)" : "")).copyOnClick(display.name, label: "display name")
+                }
+                .width(min: 100, ideal: 180)
+                TableColumn("Resolution", sortUsing: TableComparator(field: DisplayFields.resolution)) { display in
+                    Text(display.resolution ?? "—").font(.system(size: 11, design: .monospaced))
+                }
+                .width(min: 100, ideal: 180)
+                TableColumn("Pixels", sortUsing: TableComparator(field: DisplayFields.pixels)) { display in
+                    Text(display.pixels ?? "—").font(.system(size: 11, design: .monospaced))
+                }
+                .width(min: 80, ideal: 110)
+                TableColumn("Type", sortUsing: TableComparator(field: DisplayFields.builtIn)) { display in
+                    Text(display.isBuiltIn ? "Built-in" : "External")
+                }
+                .width(min: 56, ideal: 75)
+            }
         }
         Text("Read \(snapshot.date.formatted(date: .omitted, time: .standard)) from system_profiler, IOKit, and volume information. The serial number and hardware UUID identify this Mac; they stay hidden until you show them and are never stored.")
             .font(.system(size: 11))
@@ -185,29 +260,19 @@ struct SystemDetailsCard: View {
         .font(.system(size: 12))
     }
 
-    private func volumeRow(_ volume: SystemVolume) -> some View {
-        let fraction = volume.usedFraction
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(volume.name).font(.system(size: 12, weight: .medium))
-                Text([volume.path, volume.format, volume.isInternal == false ? "external" : nil].compactMap { $0 }.joined(separator: " · "))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                Spacer()
-                Text(capacityText(volume)).font(.system(size: 11, design: .monospaced))
-            }
-            if let fraction {
+    @ViewBuilder
+    private func usage(_ volume: SystemVolume) -> some View {
+        if let fraction = volume.usedFraction {
+            HStack(spacing: 6) {
                 ProgressView(value: min(1, max(0, fraction)))
                     .tint(fraction > 0.9 ? .orange : Theme.diskOccupied)
-                    .accessibilityLabel("\(volume.name) used space")
-                    .accessibilityValue(String(format: "%.0f%%", fraction * 100))
+                Text(String(format: "%.0f%%", fraction * 100)).font(.system(size: 11, design: .monospaced))
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(volume.name) used space")
+            .accessibilityValue(String(format: "%.0f%%", fraction * 100))
+        } else {
+            Text("Unavailable").foregroundColor(.secondary)
         }
-    }
-
-    private func capacityText(_ volume: SystemVolume) -> String {
-        guard let total = volume.totalBytes else { return "Capacity unavailable" }
-        guard let available = volume.availableBytes else { return "\(formatBytes(total)) total" }
-        return "\(formatBytes(available)) available of \(formatBytes(total))"
     }
 }

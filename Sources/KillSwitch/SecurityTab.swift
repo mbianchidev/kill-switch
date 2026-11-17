@@ -1,5 +1,63 @@
 import SoftwareInventoryCore
 import SwiftUI
+import TableQueryCore
+
+private enum SecurityCheckFields {
+    static let name = TableField<SecurityCheck>.text("protection", title: "Protection", aliases: ["name", "check"]) { $0.title }
+    static let state = TableField<SecurityCheck>.text(
+        "state", title: "State", values: ["On", "Off", "Unknown"], searchable: false
+    ) { $0.state.rawValue }
+    static let detail = TableField<SecurityCheck>.text("detail", title: "Detail") { $0.detail }
+    static let attention = TableField<SecurityCheck>.boolean("attention", title: "Needs attention") { $0.needsAttention }
+    static let recommended = TableField<SecurityCheck>.boolean("recommended", title: "Recommended on") { $0.recommendedOn }
+    static let all = [name, state, detail, attention, recommended]
+}
+
+private enum SoftwareUpdateFields {
+    static let title = TableField<SoftwareUpdateItem>.text("update", title: "Update", aliases: ["title", "name"]) {
+        SecurityTab.displayTitle($0)
+    }
+    static let label = TableField<SoftwareUpdateItem>.text("label", title: "Label") { $0.label }
+    static let category = TableField<SoftwareUpdateItem>.text(
+        "category", title: "Category", aliases: ["type"],
+        values: ["Security response", "macOS update", "macOS upgrade", "Safari update", "Other update"], searchable: false
+    ) { $0.category.rawValue }
+    static let security = TableField<SoftwareUpdateItem>.boolean("security", title: "Security relevant") {
+        $0.category.isSecurityRelevant
+    }
+    static let size = TableField<SoftwareUpdateItem>.number("size", title: "Size", unit: .bytes) {
+        (item: SoftwareUpdateItem) -> Decimal? in item.sizeBytes.map { Decimal($0) }
+    }
+    static let restart = TableField<SoftwareUpdateItem>.boolean("restart", title: "Restart required") { $0.requiresRestart }
+    static let recommended = TableField<SoftwareUpdateItem>.boolean("recommended", title: "Recommended") { $0.recommended }
+    static let all = [title, category, size, restart, recommended, security, label]
+}
+
+/// An outdated package with whether KillSwitch may upgrade it, read when the table is built.
+private struct OutdatedPackageRow: Identifiable {
+    let package: HomebrewPackage
+    let restriction: String?
+    var id: String { package.id }
+    var upgradeState: String { restriction == nil ? "Upgradable" : package.autoUpdates ? "Updates itself" : "Skipped" }
+}
+
+private enum OutdatedPackageFields {
+    static let name = TableField<OutdatedPackageRow>.text("name", title: "Package", aliases: ["token", "formula", "cask"]) {
+        $0.package.displayName
+    }
+    static let fullName = TableField<OutdatedPackageRow>.text("fullName", title: "Homebrew name") { $0.package.fullName }
+    static let kind = TableField<OutdatedPackageRow>.text(
+        "type", title: "Type", aliases: ["kind"], values: ["Formula", "Cask"], searchable: false
+    ) { $0.package.kind.title }
+    static let installed = TableField<OutdatedPackageRow>.text("installed", title: "Installed", searchable: false) {
+        $0.package.installedVersion
+    }
+    static let latest = TableField<OutdatedPackageRow>.text("latest", title: "Latest", searchable: false) { $0.package.latestVersion }
+    static let upgrade = TableField<OutdatedPackageRow>.text(
+        "upgrade", title: "Upgrade", aliases: ["status"], values: ["Upgradable", "Updates itself", "Skipped"], searchable: false
+    ) { $0.upgradeState }
+    static let all = [name, kind, installed, latest, upgrade, fullName]
+}
 
 struct SecurityTab: View {
     @ObservedObject var monitor: SecurityMonitor
@@ -59,23 +117,29 @@ struct SecurityTab: View {
                 Text(monitor.isCheckingPosture ? "Reading macOS protections…" : "Protections have not been checked yet.")
                     .foregroundColor(.secondary)
             }
-            ForEach(monitor.checks) { check in
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Image(systemName: icon(for: check))
-                        .foregroundColor(color(for: check))
-                        .frame(width: 18)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(check.title).font(.system(size: 12, weight: .medium))
-                        Text(check.detail)
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                            .textSelection(.enabled)
+            if !monitor.checks.isEmpty {
+                EmbeddedDataTable(
+                    monitor.checks, fields: SecurityCheckFields.all,
+                    sortedBy: TableComparator(field: SecurityCheckFields.attention, order: .reverse),
+                    identity: { $0.id.rawValue }, prompt: "Search protections, or state = Off"
+                ) {
+                    TableColumn("Protection", sortUsing: TableComparator(field: SecurityCheckFields.name)) { check in
+                        Label {
+                            Text(check.title).font(.system(size: 12, weight: .medium))
+                        } icon: {
+                            Image(systemName: icon(for: check)).foregroundColor(color(for: check))
+                        }
                     }
-                    Spacer()
-                    StatusBadge(title: check.state.rawValue, color: color(for: check))
+                    .width(min: 140, ideal: 200)
+                    TableColumn("State", sortUsing: TableComparator(field: SecurityCheckFields.state)) { check in
+                        StatusBadge(title: check.state.rawValue, color: color(for: check))
+                    }
+                    .width(min: 60, ideal: 80)
+                    TableColumn("Detail", sortUsing: TableComparator(field: SecurityCheckFields.detail)) { check in
+                        Text(check.detail).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1).help(check.detail)
+                    }
+                    .width(min: 200, ideal: 420)
                 }
-                .accessibilityElement(children: .combine)
             }
         }
     }
@@ -128,26 +192,39 @@ struct SecurityTab: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(security.isEmpty ? .white.opacity(0.7) : .orange)
             }
-            ForEach(items) { item in
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Image(systemName: item.category.isSecurityRelevant ? "exclamationmark.shield.fill" : "arrow.down.circle")
-                        .foregroundColor(item.category.isSecurityRelevant ? .orange : .secondary)
-                        .frame(width: 18)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.version.map { item.title.contains($0) ? item.title : "\(item.title) \($0)" } ?? item.title)
-                            .font(.system(size: 12, weight: .medium))
-                        Text(itemDetail(item))
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+            if !items.isEmpty {
+                EmbeddedDataTable(
+                    items, fields: SoftwareUpdateFields.all,
+                    sortedBy: TableComparator(field: SoftwareUpdateFields.security, order: .reverse),
+                    identity: \.id, prompt: "Search updates, or security = yes"
+                ) {
+                    TableColumn("Update", sortUsing: TableComparator(field: SoftwareUpdateFields.title)) { item in
+                        Label {
+                            Text(Self.displayTitle(item)).font(.system(size: 12, weight: .medium))
+                                .copyOnClick(item.label, label: "update label")
+                        } icon: {
+                            Image(systemName: item.category.isSecurityRelevant ? "exclamationmark.shield.fill" : "arrow.down.circle")
+                                .foregroundColor(item.category.isSecurityRelevant ? .orange : .secondary)
+                        }
                     }
-                    Spacer()
-                    StatusBadge(title: item.category.isSecurityRelevant ? "Security" : item.category.rawValue,
-                                color: item.category.isSecurityRelevant ? .orange : .secondary)
+                    .width(min: 180, ideal: 300)
+                    TableColumn("Category", sortUsing: TableComparator(field: SoftwareUpdateFields.category)) { item in
+                        StatusBadge(title: item.category.rawValue, color: item.category.isSecurityRelevant ? .orange : .secondary)
+                    }
+                    .width(min: 90, ideal: 130)
+                    TableColumn("Size", sortUsing: TableComparator(field: SoftwareUpdateFields.size)) { item in
+                        Text(item.sizeBytes.map(formatBytes) ?? "—").font(.system(size: 11, design: .monospaced))
+                    }
+                    .width(min: 60, ideal: 80)
+                    TableColumn("Restart", sortUsing: TableComparator(field: SoftwareUpdateFields.restart)) { item in
+                        Text(item.requiresRestart ? "Required" : "No")
+                    }
+                    .width(min: 50, ideal: 70)
+                    TableColumn("Recommended", sortUsing: TableComparator(field: SoftwareUpdateFields.recommended)) { item in
+                        Text(item.recommended ? "Yes" : "No")
+                    }
+                    .width(min: 60, ideal: 95)
                 }
-                .padding(8)
-                .background(RoundedRectangle(cornerRadius: 8).fill(item.category.isSecurityRelevant ? Color.orange.opacity(0.1) : Color.white.opacity(0.04)))
-                .accessibilityElement(children: .combine)
             }
             Text("Security responses, updates within your installed macOS version, and Safari updates are highlighted because Apple ships security fixes in them. Major upgrades and other software are listed without highlighting.")
                 .font(.system(size: 11))
@@ -184,24 +261,35 @@ struct SecurityTab: View {
                 if let error = homebrew.errorMessage {
                     NoticeBanner(message: error)
                 }
-                ForEach(outdated.prefix(12)) { package in
-                    HStack {
-                        Text(package.displayName).font(.system(size: 12))
-                        Text(package.kind.title).font(.system(size: 10)).foregroundColor(.secondary)
-                        Spacer()
-                        Text("\(package.installedVersion ?? "?") → \(package.latestVersion ?? "?")")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(.secondary)
-                        if let restriction = homebrew.restriction(for: package) {
-                            StatusBadge(title: package.autoUpdates ? "Updates itself" : "Skipped", color: .secondary)
-                                .help(restriction)
+                if !outdated.isEmpty {
+                    EmbeddedDataTable(
+                        outdated.map { OutdatedPackageRow(package: $0, restriction: homebrew.restriction(for: $0)) },
+                        fields: OutdatedPackageFields.all, sortedBy: TableComparator(field: OutdatedPackageFields.name),
+                        identity: \.id, prompt: "Search packages, or upgrade = Upgradable"
+                    ) {
+                        TableColumn("Package", sortUsing: TableComparator(field: OutdatedPackageFields.name)) { row in
+                            Text(row.package.displayName).font(.system(size: 12))
+                                .copyOnClick(row.package.fullName, label: "Homebrew name")
                         }
+                        .width(min: 120, ideal: 200)
+                        TableColumn("Type", sortUsing: TableComparator(field: OutdatedPackageFields.kind)) { row in
+                            Text(row.package.kind.title)
+                        }
+                        .width(min: 44, ideal: 60)
+                        TableColumn("Version", sortUsing: TableComparator(field: OutdatedPackageFields.installed)) { row in
+                            Text("\(row.package.installedVersion ?? "?") → \(row.package.latestVersion ?? "?")")
+                                .font(.system(size: 11, design: .monospaced))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .help("Installed \(row.package.installedVersion ?? "unknown"), latest \(row.package.latestVersion ?? "unknown")")
+                        }
+                        .width(min: 120, ideal: 210)
+                        TableColumn("Upgrade", sortUsing: TableComparator(field: OutdatedPackageFields.upgrade)) { row in
+                            StatusBadge(title: row.upgradeState, color: row.restriction == nil ? .orange : .secondary)
+                                .help(row.restriction ?? "KillSwitch can upgrade this package from the Homebrew page.")
+                        }
+                        .width(min: 80, ideal: 110)
                     }
-                }
-                if outdated.count > 12 {
-                    Text("And \(outdated.count - 12) more on the Homebrew page.")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
                 }
                 Text("Homebrew does not label which upgrades fix vulnerabilities, so every outdated package is listed. The list uses Homebrew's local definitions; Check for updates on the Homebrew page refreshes them.")
                     .font(.system(size: 11))
@@ -221,12 +309,9 @@ struct SecurityTab: View {
         return parts.isEmpty ? "Updates have not been listed yet." : parts.joined(separator: " · ")
     }
 
-    private func itemDetail(_ item: SoftwareUpdateItem) -> String {
-        var parts = [item.category.rawValue]
-        if let size = item.sizeBytes { parts.append(formatBytes(size)) }
-        if item.requiresRestart { parts.append("restart required") }
-        if !item.recommended { parts.append("not recommended by Apple") }
-        return parts.joined(separator: " · ")
+    /// The update's title with its version, unless the title already includes it.
+    static func displayTitle(_ item: SoftwareUpdateItem) -> String {
+        item.version.map { item.title.contains($0) ? item.title : "\(item.title) \($0)" } ?? item.title
     }
 
     private func color(for check: SecurityCheck) -> Color {

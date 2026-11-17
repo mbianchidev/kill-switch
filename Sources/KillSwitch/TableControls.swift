@@ -225,3 +225,56 @@ func tableSortOrder<Row>(_ sorting: Binding<TableComparator<Row>>) -> Binding<[T
         set: { if let first = $0.first { sorting.wrappedValue = first } }
     )
 }
+
+/// A table with its own search, filter, sort, and row count, for pages that scroll as a whole.
+/// It shows up to `maximumRows` rows before scrolling itself; columns sort by header and resize.
+struct EmbeddedDataTable<Row: Identifiable, Columns: TableColumnContent>: View
+where Columns.TableRowValue == Row, Columns.TableColumnSortComparator == TableComparator<Row> {
+    private let rows: [Row]
+    private let fields: [TableField<Row>]
+    private let identity: (Row) -> String
+    private let prompt: String
+    private let rowHeight: CGFloat
+    private let maximumRows: Int
+    private let columns: Columns
+    @State private var search = ""
+    @State private var sorting: TableComparator<Row>
+    @State private var selection: Row.ID?
+
+    init(
+        _ rows: [Row], fields: [TableField<Row>], sortedBy initialSorting: TableComparator<Row>,
+        identity: @escaping (Row) -> String, prompt: String = "Search text or field > value",
+        rowHeight: CGFloat = 24, maximumRows: Int = 12,
+        @TableColumnBuilder<Row, TableComparator<Row>> columns: () -> Columns
+    ) {
+        self.rows = rows
+        self.fields = fields
+        self.identity = identity
+        self.prompt = prompt
+        self.rowHeight = rowHeight
+        self.maximumRows = maximumRows
+        self.columns = columns()
+        _sorting = State(initialValue: initialSorting)
+    }
+
+    var body: some View {
+        let shown = TableQuery(search: search, fields: fields).apply(to: rows, sorting: sorting, identity: identity)
+        return VStack(alignment: .leading, spacing: 6) {
+            TableSearchControls(search: $search, fields: fields, prompt: prompt)
+            HStack {
+                TableSortControls(fields: fields, sorting: $sorting)
+                Spacer()
+                Text(verbatim: "\(shown.count) of \(rows.count)")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            Table(shown, selection: $selection, sortOrder: tableSortOrder($sorting)) { columns }
+                .frame(height: CGFloat(min(max(shown.count, 2), maximumRows)) * rowHeight + 30)
+                .overlay {
+                    if shown.isEmpty && !rows.isEmpty {
+                        Text("No matching rows. Change or reset the filters.").foregroundColor(.secondary)
+                    }
+                }
+        }
+    }
+}
