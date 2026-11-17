@@ -145,11 +145,9 @@ final class FolderSizeMonitor: ObservableObject {
     }
 
     func revealInFinder(_ watch: FolderSizeWatch) {
-        guard FileManager.default.fileExists(atPath: watch.path) else {
+        if !revealPathInFinder(watch.path) {
             report(FolderSizeWatchError.folderUnavailable(watch.path).localizedDescription)
-            return
         }
-        NSWorkspace.shared.activateFileViewerSelecting([watch.url])
     }
 
     func openFullDiskAccess() {

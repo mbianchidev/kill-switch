@@ -65,8 +65,7 @@ extension SystemDetailsMonitor {
     func publishPerformanceFixture() {
         snapshot = SystemDetailsSnapshot(
             hardware: SystemProfilerHardware(
-                modelName: "Synthetic Mac", modelIdentifier: "Synthetic1,1", modelNumber: "SYN001", chip: "Synthetic Chip",
-                memory: "16 GB", displays: [
+                modelName: "Synthetic Mac", modelIdentifier: "Synthetic1,1", modelNumber: "SYN001", displays: [
                     SystemDisplay(index: 0, name: "Built-in Display", resolution: "1512 x 982 @ 120.00Hz",
                                   pixels: "3024 x 1964", isMain: true, isBuiltIn: true)
                 ]
@@ -124,11 +123,8 @@ struct SystemDetailsCard: View {
         }
         let hardware = snapshot.hardware
         let identity = snapshot.identity
-        row("Model", [hardware?.modelName, hardware?.modelIdentifier].compactMap { $0 }.joined(separator: " · "))
+        row("Model name", [hardware?.modelName, hardware?.modelIdentifier].compactMap { $0 }.joined(separator: " · "))
         row("Model number", hardware?.modelNumber)
-        row("Chip", hardware?.chip)
-        row("Memory", hardware?.memory)
-        row("macOS", "\(ProcessInfo.processInfo.operatingSystemVersionString)")
         row("Computer name", identity?.computerName)
         row("Local hostname", identity?.localHostName)
         row("Booted", identity?.bootTime.map { $0.formatted(date: .abbreviated, time: .shortened) })

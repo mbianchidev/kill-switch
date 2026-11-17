@@ -193,6 +193,6 @@ struct ApplicationsTab: View {
     }
 
     private func reveal(_ path: String) {
-        revealError = revealInFinder(path) ? nil : "The application no longer exists: \(path)"
+        revealError = revealPathInFinder(path) ? nil : "The application no longer exists: \(path)"
     }
 }

@@ -70,8 +70,8 @@ extension SystemMetricsChecks {
         """#
         do {
             let hardware = try SystemDetailsParser.parseProfiler(Data(json.utf8))
-            check(hardware.modelName == "Synthetic Mac" && hardware.modelIdentifier == "Synthetic1,1" && hardware.modelNumber == "SYN001"
-                  && hardware.chip == "Synthetic Chip" && hardware.memory == "16 GB", "parses system_profiler hardware fields")
+            check(hardware.modelName == "Synthetic Mac" && hardware.modelIdentifier == "Synthetic1,1" && hardware.modelNumber == "SYN001",
+                  "parses system_profiler hardware fields")
             check(hardware.displays.map(\.name) == ["Built-in Display", "External Display"]
                   && hardware.displays[0].isMain && hardware.displays[0].isBuiltIn && !hardware.displays[1].isBuiltIn
                   && hardware.displays[1].resolution == "2560 x 1440 @ 60.00Hz", "lists online displays")

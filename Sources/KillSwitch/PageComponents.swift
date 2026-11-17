@@ -107,7 +107,7 @@ struct EmptyPageMessage: View {
     }
 }
 
-func revealInFinder(_ path: String) -> Bool {
+func revealPathInFinder(_ path: String) -> Bool {
     guard FileManager.default.fileExists(atPath: path) else { return false }
     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
     return true

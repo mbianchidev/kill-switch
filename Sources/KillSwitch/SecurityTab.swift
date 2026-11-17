@@ -125,7 +125,7 @@ struct SecurityTab: View {
                         .frame(width: 18)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("\(item.title)\(item.version.map { " \($0)" } ?? "")")
+                        Text(item.version.map { item.title.contains($0) ? item.title : "\(item.title) \($0)" } ?? item.title)
                             .font(.system(size: 12, weight: .medium))
                         Text(itemDetail(item))
                             .font(.system(size: 11))

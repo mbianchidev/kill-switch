@@ -43,7 +43,7 @@ enum PerformanceProbe {
         guard (3...5).contains(arguments.count),
               ["background", "dashboard", "cpu", "memory", "energy", "system", "battery", "thermal",
                "connections", "files", "servers", "inspector", "navigation", "cleanup-settings",
-               "folder-alerts"].contains(arguments[0]),
+               "folder-alerts", "homebrew", "applications", "security"].contains(arguments[0]),
               let duration = Double(arguments[1]), (3...600).contains(duration),
               let count = Int(arguments[2]), (1...5_000).contains(count) else {
             fputs("Usage: KillSwitch --performance-probe SCENARIO SECONDS(3...600) PROCESSES(1...5000) [OFFSCREEN.png [WIDTHxHEIGHT]]; or --performance-probe --interface-checks\n", stderr)
@@ -128,7 +128,9 @@ enum PerformanceProbe {
             } else {
                 let page: MainTab
                 switch scenario {
-                case "system": page = .system
+                case "system":
+                    SystemDetailsMonitor.shared.publishPerformanceFixture()
+                    page = .system
                 case "battery": page = .battery
                 case "thermal": page = .thermal
                 case "connections": page = .connections
@@ -137,6 +139,17 @@ enum PerformanceProbe {
                 case "folder-alerts":
                     FolderSizeMonitor.shared.publishPerformanceFixture()
                     page = .folderAlerts
+                case "homebrew":
+                    HomebrewMonitor.shared.publishPerformanceFixture()
+                    page = .homebrew
+                case "applications":
+                    HomebrewMonitor.shared.publishPerformanceFixture()
+                    ApplicationsMonitor.shared.publishPerformanceFixture()
+                    page = .applications
+                case "security":
+                    HomebrewMonitor.shared.publishPerformanceFixture()
+                    SecurityMonitor.shared.publishPerformanceFixture()
+                    page = .security
                 default:
                     fputs("The probe scenario could not be represented.\n", stderr)
                     return 2

@@ -13,6 +13,15 @@ public struct SystemDisplay: Identifiable, Equatable, Sendable {
     public let pixels: String?
     public let isMain: Bool
     public let isBuiltIn: Bool
+
+    public init(index: Int, name: String, resolution: String?, pixels: String?, isMain: Bool, isBuiltIn: Bool) {
+        self.index = index
+        self.name = name
+        self.resolution = resolution
+        self.pixels = pixels
+        self.isMain = isMain
+        self.isBuiltIn = isBuiltIn
+    }
 }
 
 public struct SystemVolume: Identifiable, Equatable, Sendable {
@@ -49,9 +58,14 @@ public struct SystemProfilerHardware: Equatable, Sendable {
     public let modelName: String?
     public let modelIdentifier: String?
     public let modelNumber: String?
-    public let chip: String?
-    public let memory: String?
     public let displays: [SystemDisplay]
+
+    public init(modelName: String?, modelIdentifier: String?, modelNumber: String?, displays: [SystemDisplay]) {
+        self.modelName = modelName
+        self.modelIdentifier = modelIdentifier
+        self.modelNumber = modelNumber
+        self.displays = displays
+    }
 }
 
 public struct SystemIdentity: Equatable, Sendable {
@@ -61,6 +75,18 @@ public struct SystemIdentity: Equatable, Sendable {
     public let serialNumber: String?
     public let hardwareUUID: String?
     public let warnings: [String]
+
+    public init(
+        computerName: String?, localHostName: String?, bootTime: Date?,
+        serialNumber: String?, hardwareUUID: String?, warnings: [String]
+    ) {
+        self.computerName = computerName
+        self.localHostName = localHostName
+        self.bootTime = bootTime
+        self.serialNumber = serialNumber
+        self.hardwareUUID = hardwareUUID
+        self.warnings = warnings
+    }
 }
 
 public enum SystemDetailsParser {
@@ -91,8 +117,7 @@ public enum SystemDetailsParser {
         }
         return SystemProfilerHardware(
             modelName: value("machine_name"), modelIdentifier: value("machine_model"),
-            modelNumber: value("model_number"), chip: value("chip_type") ?? value("cpu_type"),
-            memory: value("physical_memory"), displays: displays
+            modelNumber: value("model_number"), displays: displays
         )
     }
 

@@ -93,18 +93,7 @@ struct FolderSizeAlertsTab: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            Image(systemName: MainTab.folderAlerts.icon)
-                .foregroundColor(Theme.diskOccupied)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Folder size alerts")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.white)
-                Text("Get an alert in KillSwitch and from macOS when a folder reaches its size limit.")
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.45))
-            }
-            Spacer()
+        PageHeader(page: .folderAlerts, subtitle: "Get an alert in KillSwitch and from macOS when a folder reaches its size limit.") {
             Button(action: chooseFolders) {
                 Label("Add folder…", systemImage: "plus")
                     .font(.system(size: 12))
@@ -121,9 +110,6 @@ struct FolderSizeAlertsTab: View {
             .disabled(!monitor.watches.contains(where: \.isEnabled))
             .help("Measure every monitored folder now")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(Color.black.opacity(0.2))
     }
 
     private var settingsCard: some View {
