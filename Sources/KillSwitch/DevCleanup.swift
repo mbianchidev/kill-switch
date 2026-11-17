@@ -68,6 +68,8 @@ final class DevCleanupMonitor: ObservableObject {
     }
 
     var ageThresholdSeconds: Int { ageThresholdHours * 3600 }
+    /// The saved switch that background cleanup follows; `autoKillEnabled` is this page visit's authorization.
+    var savedAutoKillEnabled: Bool { preferences.loadAutoKillEnabled() }
 
     /// Picker options shared with the UI.
     static let intervalOptions = SamplingIntervals.standard
@@ -788,16 +790,19 @@ struct DevCleanupTab: View {
                 Spacer()
             }
 
+            let backgroundEnabled = monitor.savedAutoKillEnabled
             Label(
-                monitor.autoKillEnabled
-                    ? "Auto-kill runs in the background every \(monitor.cleanupIntervalLabel) while KillSwitch is running, on any page, even with the window hidden."
-                    : "Auto-kill is off, so background cleanup is off. Hidden windows pause read-only cleanup.",
-                systemImage: monitor.autoKillEnabled ? "clock.arrow.circlepath" : "pause.circle"
+                backgroundEnabled
+                    ? "Background cleanup runs every \(monitor.cleanupIntervalLabel) while KillSwitch is running, on any page, even with the window hidden."
+                    : "Saved auto-kill is off, so background cleanup is off.",
+                systemImage: backgroundEnabled ? "clock.arrow.circlepath" : "pause.circle"
             )
             .font(.system(size: 12))
             .foregroundColor(.white.opacity(0.7))
             .fixedSize(horizontal: false, vertical: true)
-            Text("Leaving this page stops only its own passes and port scans; background cleanup continues. Port scans pause while hidden. Sleep and quitting stop execution.")
+            Text(monitor.autoKillEnabled
+                ? "This page's own passes continue while it is selected, even hidden. Leaving stops them and its port scans\(backgroundEnabled ? "; background cleanup continues" : ""). Sleep and quitting stop execution."
+                : "This visit is read-only: it terminates nothing, and hidden windows pause its scans. Sleep and quitting stop execution.")
                 .font(.system(size: 11))
                 .foregroundColor(.white.opacity(0.6))
                 .fixedSize(horizontal: false, vertical: true)

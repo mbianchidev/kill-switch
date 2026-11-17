@@ -337,12 +337,16 @@ struct CheckRunner {
 
         var gatedTerminations: [Int32] = []
         var remainingAdmissions = 1
+        var portReads = 0
         let gatedService = DevCleanupService(
             username: "me",
             processProvider: {
                 [401, 402].map { DevCleanupProcess(pid: $0, user: "me", elapsedSeconds: 7_200, command: "node vite") }
             },
-            listeningPortsProvider: { [:] },
+            listeningPortsProvider: {
+                portReads += 1
+                return [:]
+            },
             terminator: { gatedTerminations.append($0); return true }
         )
         do {
@@ -351,6 +355,7 @@ struct CheckRunner {
                     autoKillEnabled: true, ageThresholdSeconds: 3_600, effectivePorts: [],
                     runtimes: ["node"], indicators: ["vite"], exclusions: []
                 ),
+                includingPorts: false,
                 shouldTerminate: {
                     defer { remainingAdmissions -= 1 }
                     return remainingAdmissions > 0
@@ -359,6 +364,7 @@ struct CheckRunner {
             check(gatedTerminations == [401] && result.killed.map(\.pid) == [401],
                   "stops terminating once the pass is revoked mid-way")
             check(result.candidateCount == 2, "still counts candidates after revocation")
+            check(portReads == 0 && result.portProcesses.isEmpty, "skips the port inventory when not requested")
         } catch {
             fail("runs a revocable cleanup pass: \(error.localizedDescription)")
         }

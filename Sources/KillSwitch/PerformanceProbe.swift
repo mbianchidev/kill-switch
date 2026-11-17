@@ -896,6 +896,34 @@ enum PerformanceProbe {
         check(reads.withLock { $0 } == 2 && !scheduler.performanceIsScheduled,
               "Stopping background cleanup must revoke future passes.")
 
+        let blockedStarted = DispatchSemaphore(value: 0)
+        let blockedReleased = DispatchSemaphore(value: 0)
+        let blockedTimedOut = OSAllocatedUnfairLock(initialState: false)
+        let blockedTerminated = OSAllocatedUnfairLock(initialState: [Int32]())
+        let blockedService = DevCleanupService(
+            username: "synthetic-owner",
+            processProvider: {
+                blockedStarted.signal()
+                if blockedReleased.wait(timeout: .now() + 5) != .success { blockedTimedOut.withLock { $0 = true } }
+                return [DevCleanupProcess(
+                    pid: 100_998, user: "synthetic-owner", elapsedSeconds: 1_000_000,
+                    command: "/synthetic/node /synthetic/vite/bin/vite.js"
+                )]
+            },
+            listeningPortsProvider: { [:] },
+            terminator: { pid in blockedTerminated.withLock { $0.append(pid) }; return true }
+        )
+        let running = DevCleanupScheduler(preferences: preferences, service: blockedService) { _, _ in }
+        defer { running.stop() }
+        running.start()
+        running.performanceRunPassAsync()
+        let admitted = blockedStarted.wait(timeout: .now() + 5) == .success
+        running.stop()
+        blockedReleased.signal()
+        running.performanceDrain()
+        check(admitted && !blockedTimedOut.withLock { $0 } && blockedTerminated.withLock { $0.isEmpty },
+              "Stopping background cleanup during a running pass must prevent its remaining terminations.")
+
         let savedInterval = preferences.load().cleanupIntervalSeconds
         defer { preferences.setCleanupIntervalSeconds(savedInterval) }
         preferences.setCleanupIntervalSeconds(5)

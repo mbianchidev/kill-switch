@@ -19,15 +19,19 @@ swift build -c release --product KillSwitch
 .build/release/KillSwitch
 ```
 
-The last command launches the GUI without creating a login item. Expect the
+The last command launches the GUI without creating a login item. Like an
+installed app, it runs background Dev cleanup while saved auto-kill is enabled
+(the default). Expect the
 activity dashboard and menu-bar icon. Local builds report `dev`, so the updater
 considers any published release newer. Do not enable automatic updates if you
 want to keep running your local development build.
 
 Headless calls require a `killswitchctl` symlink; arguments passed directly to
 a binary named `KillSwitch` do not select CLI mode. See [CLI setup](cli.md#setup).
-Do not open Dev cleanup or invoke `cleanup` as a build smoke test: it can
-terminate real processes.
+Do not launch the GUI, open Dev cleanup, or invoke `cleanup` as a build smoke
+test: with saved auto-kill enabled, the running app's background cleanup can
+terminate real processes without opening the page. Validate with the core checks
+and the synthetic probe build's `--interface-checks` instead.
 
 ## Tech stack
 

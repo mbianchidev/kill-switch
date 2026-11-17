@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import DevCleanupCore
 import os
@@ -107,8 +108,9 @@ final class DevCleanupScheduler: ObservableObject {
         }
         intervalStart = .now
         do {
-            let result = try service.cleanup(configuration: settings.configuration, shouldTerminate: { [self] in
-                isCurrent(current) && preferences.load().autoKillEnabled
+            // Background passes only terminate, so they skip the page's listening-port scan.
+            let result = try service.cleanup(configuration: settings.configuration, includingPorts: false, shouldTerminate: { [self] in
+                isCurrent(current) && preferences.loadAutoKillEnabled()
             })
             if !result.killed.isEmpty {
                 let summary = result.killed.map { "\($0.runtime) PID \($0.pid)" }.joined(separator: ", ")
@@ -146,6 +148,14 @@ extension DevCleanupScheduler {
         queue.sync {
             guard let current = session.withLock({ $0 }) else { return }
             evaluate(session: current, force: true)
+        }
+    }
+
+    /// Starts a forced pass without waiting, so a check can revoke it while it runs.
+    func performanceRunPassAsync() {
+        queue.async {
+            guard let current = self.session.withLock({ $0 }) else { return }
+            self.evaluate(session: current, force: true)
         }
     }
 

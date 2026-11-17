@@ -227,13 +227,16 @@ public final class DevCleanupService {
 
     /// Runs one pass. `shouldTerminate` is rechecked before every termination, so a revoked
     /// background session or later saved disablement stops further kills mid-pass.
+    /// Without `includingPorts`, the listening-port inventory is neither read nor returned;
+    /// termination never depends on it.
     public func cleanup(
-        configuration: DevCleanupConfiguration, shouldTerminate: () -> Bool = { true }
+        configuration: DevCleanupConfiguration, includingPorts: Bool = true, shouldTerminate: () -> Bool = { true }
     ) throws -> DevCleanupResult {
         let processes = try processProvider()
-        let ports = try listeningPortsProvider()
         let classifier = DevServerClassifier(configuration: configuration)
-        let portProcesses = portRows(processes: processes, ports: ports, classifier: classifier)
+        let portProcesses = includingPorts
+            ? portRows(processes: processes, ports: try listeningPortsProvider(), classifier: classifier)
+            : []
 
         var candidateCount = 0
         var killed: [CleanedProcess] = []
