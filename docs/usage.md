@@ -544,7 +544,9 @@ A configured Python runtime also matches when the script it executes is named
 `server.py`, `*_server.py`, or `*-server.py`, such as leaked `https_server.py`
 test fixtures on random ports. Only the script argument counts: `observer.py`,
 `-c`/`-m` invocations, and server-named paths passed as later arguments do not
-match.
+match. This rule reads the process's argument vector, so paths with spaces keep
+their boundaries. It does not apply when the arguments are unreadable (for
+example, another user's process) or differ from the listed command line.
 
 Default protected command-line substrings cover:
 

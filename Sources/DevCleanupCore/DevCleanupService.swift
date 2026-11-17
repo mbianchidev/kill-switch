@@ -84,11 +84,13 @@ public struct DevServerClassifier {
     }
 
     /// Returns the matched runtime when `command` is a non-system, non-excluded development server.
-    public func runtime(for command: String) -> String? {
+    /// `arguments` lazily supplies the process's argv; Python server scripts are recognized only from argv
+    /// that reproduces `command` exactly, never from boundaries guessed in flattened text.
+    public func runtime(for command: String, arguments: () -> [String]? = { nil }) -> String? {
         guard !Self.isSystemProcess(command) else { return nil }
         let lower = command.lowercased()
-        let tokens = command.split(whereSeparator: { $0.isWhitespace })
-        guard !exclusions.contains(where: { lower.contains($0) }), let firstToken = tokens.first else {
+        guard !exclusions.contains(where: { lower.contains($0) }),
+              let firstToken = command.split(whereSeparator: { $0.isWhitespace }).first else {
             return nil
         }
         let executable = firstToken.split(separator: "/").last.map(String.init)?.lowercased() ?? ""
@@ -96,8 +98,10 @@ public struct DevServerClassifier {
             return nil
         }
         if indicators.contains(where: { lower.contains($0) }) { return runtime }
+        // A joined-argv mismatch means a reused PID or a rewritten title, so the argv cannot describe `command`.
         guard executable.hasPrefix("python"),
-              let script = Self.pythonScriptArgument(tokens.dropFirst()),
+              let argv = arguments(), argv.joined(separator: " ") == command,
+              let script = Self.pythonScriptArgument(argv.dropFirst()),
               Self.isServerScript(script) else {
             return nil
         }
@@ -105,10 +109,10 @@ public struct DevServerClassifier {
     }
 
     /// Matches Dev cleanup's running dev servers and watched ports. A missing command matches by port only.
-    public func listsListener(command: String?, port: Int) -> Bool {
+    public func listsListener(command: String?, port: Int, arguments: () -> [String]? = { nil }) -> Bool {
         guard let command else { return notablePorts.contains(port) }
         guard !Self.isSystemProcess(command) else { return false }
-        return notablePorts.contains(port) || runtime(for: command) != nil
+        return notablePorts.contains(port) || runtime(for: command, arguments: arguments) != nil
     }
 
     private static func isSystemProcess(_ command: String) -> Bool {
@@ -116,7 +120,7 @@ public struct DevServerClassifier {
     }
 
     /// The script Python executes, skipping interpreter options. `-c` and `-m` run no script file.
-    private static func pythonScriptArgument(_ arguments: ArraySlice<Substring>) -> Substring? {
+    private static func pythonScriptArgument(_ arguments: ArraySlice<String>) -> String? {
         var index = arguments.startIndex
         while index < arguments.endIndex {
             let argument = arguments[index]
@@ -139,7 +143,7 @@ public struct DevServerClassifier {
         return nil
     }
 
-    private static func isServerScript(_ script: Substring) -> Bool {
+    private static func isServerScript(_ script: String) -> Bool {
         let name = script.split(separator: "/").last?.lowercased() ?? ""
         return name == "server.py" || name.hasSuffix("_server.py") || name.hasSuffix("-server.py")
     }
@@ -188,21 +192,26 @@ public final class DevCleanupService {
     public typealias ProcessProvider = () throws -> [DevCleanupProcess]
     public typealias ListeningPortsProvider = () throws -> [Int32: Set<Int>]
     public typealias Terminator = (Int32) -> Bool
+    /// Returns a process's argv, or nil when it is unavailable.
+    public typealias ArgumentsProvider = (Int32) -> [String]?
 
     private let username: String
     private let processProvider: ProcessProvider
     private let listeningPortsProvider: ListeningPortsProvider
+    private let argumentsProvider: ArgumentsProvider
     private let terminator: Terminator
 
     public init(
         username: String,
         processProvider: @escaping ProcessProvider,
         listeningPortsProvider: @escaping ListeningPortsProvider,
+        argumentsProvider: @escaping ArgumentsProvider = { _ in nil },
         terminator: @escaping Terminator
     ) {
         self.username = username
         self.processProvider = processProvider
         self.listeningPortsProvider = listeningPortsProvider
+        self.argumentsProvider = argumentsProvider
         self.terminator = terminator
     }
 
@@ -210,7 +219,7 @@ public final class DevCleanupService {
         let processes = try processProvider()
         let ports = try listeningPortsProvider()
         return DevCleanupScanResult(
-            portProcesses: Self.portRows(
+            portProcesses: portRows(
                 processes: processes, ports: ports, classifier: DevServerClassifier(configuration: configuration)
             )
         )
@@ -220,13 +229,13 @@ public final class DevCleanupService {
         let processes = try processProvider()
         let ports = try listeningPortsProvider()
         let classifier = DevServerClassifier(configuration: configuration)
-        let portProcesses = Self.portRows(processes: processes, ports: ports, classifier: classifier)
+        let portProcesses = portRows(processes: processes, ports: ports, classifier: classifier)
 
         var candidateCount = 0
         var killed: [CleanedProcess] = []
         for process in processes where process.user == username {
             guard
-                let runtime = classifier.runtime(for: process.command),
+                let runtime = classifier.runtime(for: process.command, arguments: { argumentsProvider(process.pid) }),
                 !ProcessTerminationPolicy.isProtected(command: process.command)
             else {
                 continue
@@ -254,7 +263,7 @@ public final class DevCleanupService {
         )
     }
 
-    private static func portRows(
+    private func portRows(
         processes: [DevCleanupProcess],
         ports: [Int32: Set<Int>],
         classifier: DevServerClassifier
@@ -266,7 +275,8 @@ public final class DevCleanupService {
         var rows: [PortProcess] = []
         for (pid, portSet) in ports {
             let command = commandByPID[pid]
-            for port in portSet where classifier.listsListener(command: command, port: port) {
+            for port in portSet
+            where classifier.listsListener(command: command, port: port, arguments: { argumentsProvider(pid) }) {
                 rows.append(
                     PortProcess(id: "\(pid)-\(port)", pid: pid, command: command ?? "pid \(pid)", port: port)
                 )

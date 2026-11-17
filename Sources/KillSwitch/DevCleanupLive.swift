@@ -18,6 +18,7 @@ extension DevCleanupService {
             listeningPortsProvider: {
                 try ProcessSampler.listeningPortsThrowing()
             },
+            argumentsProvider: ProcessArguments.read(pid:),
             terminator: {
                 ProcessSampler.terminate(pid: $0)
             }

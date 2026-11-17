@@ -357,7 +357,8 @@ final class ProcessInspectionMonitor: ObservableObject {
             // Only a lifetime-verified PID proves that the command line belongs to this listener.
             let command = verified[connection.pid] == nil ? nil : commands[connection.pid]
             if command == nil { detection.unclassifiedListenerIDs.insert(connection.id) }
-            if let port = connection.localPort, classifier.listsListener(command: command, port: Int(port)) {
+            if let port = connection.localPort,
+               classifier.listsListener(command: command, port: Int(port), arguments: { ProcessArguments.read(pid: connection.pid) }) {
                 detection.listenerIDs.insert(connection.id)
             }
         }
