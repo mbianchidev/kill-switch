@@ -22,14 +22,14 @@ struct OpenFilesTable: View {
                     pathColumn
                     TableColumn("Process", sortUsing: TableComparator(field: OpenFileTableFields.process)) { Text($0.process).copyProcessName($0.process) }
                         .width(min: 110, ideal: 150)
-                    TableColumn("PID", sortUsing: TableComparator(field: OpenFileTableFields.pid)) { Text(pidString($0.pid)).copyPID($0.pid) }.width(55)
-                    TableColumn("User", sortUsing: TableComparator(field: OpenFileTableFields.user)) { Text($0.user) }.width(95)
+                    TableColumn("PID", sortUsing: TableComparator(field: OpenFileTableFields.pid)) { Text(pidString($0.pid)).copyPID($0.pid) }.width(min: 36, ideal: 55)
+                    TableColumn("User", sortUsing: TableComparator(field: OpenFileTableFields.user)) { Text($0.user) }.width(min: 57, ideal: 95)
                     detailColumns
                     TableColumn("Inspect") { file in
                         InspectProcessButton(process: identities[file.pid].map {
                             ActivityProcessDescriptor(identity: $0, name: file.process, user: file.user)
                         })
-                    }.width(65)
+                    }.width(min: 39, ideal: 65)
                 }
             }
         }
@@ -45,11 +45,11 @@ struct OpenFilesTable: View {
 
     @TableColumnBuilder<OpenFileRecord, TableComparator<OpenFileRecord>>
     private var detailColumns: some TableColumnContent<OpenFileRecord, TableComparator<OpenFileRecord>> {
-        TableColumn("FD", sortUsing: TableComparator(field: OpenFileTableFields.descriptor)) { Text($0.descriptor) }.width(45)
-        TableColumn("Access", sortUsing: TableComparator(field: OpenFileTableFields.access)) { Text($0.accessDescription) }.width(85)
-        TableColumn("Lock", sortUsing: TableComparator(field: OpenFileTableFields.lock)) { Text($0.lockDescription) }.width(110)
-        TableColumn("Type", sortUsing: TableComparator(field: OpenFileTableFields.kind)) { Text($0.kind) }.width(55)
-        TableColumn("Size", sortUsing: TableComparator(field: OpenFileTableFields.size)) { Text($0.size.map(formatBytes) ?? "N/A") }.width(90)
+        TableColumn("FD", sortUsing: TableComparator(field: OpenFileTableFields.descriptor)) { Text($0.descriptor) }.width(min: 36, ideal: 45)
+        TableColumn("Access", sortUsing: TableComparator(field: OpenFileTableFields.access)) { Text($0.accessDescription) }.width(min: 51, ideal: 85)
+        TableColumn("Lock", sortUsing: TableComparator(field: OpenFileTableFields.lock)) { Text($0.lockDescription) }.width(min: 66, ideal: 110)
+        TableColumn("Type", sortUsing: TableComparator(field: OpenFileTableFields.kind)) { Text($0.kind) }.width(min: 36, ideal: 55)
+        TableColumn("Size", sortUsing: TableComparator(field: OpenFileTableFields.size)) { Text($0.size.map(formatBytes) ?? "N/A") }.width(min: 54, ideal: 90)
     }
 }
 
@@ -67,14 +67,14 @@ struct ConnectionsTable: View {
             } else {
                 Table(rows, selection: $selection, sortOrder: tableSortOrder($sorting)) {
                     TableColumn("Process", sortUsing: TableComparator(field: ConnectionTableFields.process)) { Text($0.process).copyProcessName($0.process) }.width(min: 110, ideal: 140)
-                    TableColumn("PID", sortUsing: TableComparator(field: ConnectionTableFields.pid)) { Text(pidString($0.pid)).copyPID($0.pid) }.width(55)
-                    TableColumn("User", sortUsing: TableComparator(field: ConnectionTableFields.user)) { Text($0.user) }.width(90)
+                    TableColumn("PID", sortUsing: TableComparator(field: ConnectionTableFields.pid)) { Text(pidString($0.pid)).copyPID($0.pid) }.width(min: 36, ideal: 55)
+                    TableColumn("User", sortUsing: TableComparator(field: ConnectionTableFields.user)) { Text($0.user) }.width(min: 54, ideal: 90)
                     connectionColumns
                     TableColumn("Inspect") { connection in
                         InspectProcessButton(process: identities[connection.pid].map {
                             ActivityProcessDescriptor(identity: $0, name: connection.process, user: connection.user)
                         })
-                    }.width(65)
+                    }.width(min: 39, ideal: 65)
                 }
             }
         }
@@ -84,12 +84,12 @@ struct ConnectionsTable: View {
 
     @TableColumnBuilder<NetworkConnectionRecord, TableComparator<NetworkConnectionRecord>>
     private var connectionColumns: some TableColumnContent<NetworkConnectionRecord, TableComparator<NetworkConnectionRecord>> {
-        TableColumn("Protocol", sortUsing: TableComparator(field: ConnectionTableFields.protocolDisplay)) { Text($0.protocolDescription) }.width(90)
+        TableColumn("Protocol", sortUsing: TableComparator(field: ConnectionTableFields.protocolDisplay)) { Text($0.protocolDescription) }.width(min: 54, ideal: 90)
         TableColumn("Local endpoint", sortUsing: TableComparator(field: ConnectionTableFields.local)) { Text($0.local).help($0.local) }.width(min: 150, ideal: 200)
         TableColumn("Remote endpoint", sortUsing: TableComparator(field: ConnectionTableFields.remote)) { Text($0.remote ?? "None").help($0.remote ?? "No remote endpoint") }
             .width(min: 150, ideal: 200)
-        TableColumn("State", sortUsing: TableComparator(field: ConnectionTableFields.state)) { Text($0.state) }.width(125)
-        TableColumn("HTTP") { OpenListenerButton(connection: $0) }.width(85)
+        TableColumn("State", sortUsing: TableComparator(field: ConnectionTableFields.state)) { Text($0.state) }.width(min: 75, ideal: 125)
+        TableColumn("HTTP") { OpenListenerButton(connection: $0) }.width(min: 51, ideal: 85)
     }
 }
 

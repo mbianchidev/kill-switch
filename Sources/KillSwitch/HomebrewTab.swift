@@ -17,8 +17,24 @@ private enum HomebrewTableFields {
     }
     static let pinned = TableField<HomebrewPackage>.boolean("pinned", title: "Pinned") { $0.isPinned }
     static let requested = TableField<HomebrewPackage>.boolean("requested", title: "Installed on request") { $0.installedOnRequest }
-    static let columns = [name, kind, installed, latest]
+    static let status = TableField<HomebrewPackage>.text(
+        "status", title: "Status", aliases: ["state"],
+        values: ["Disabled", "Deprecated", "Updates itself", "Pinned", "Outdated", "Up to date"], searchable: false
+    ) { $0.statusTitle }
+    static let columns = [name, kind, installed, latest, status]
     static let all = columns + [fullName, summary, outdated, selfUpdating, pinned, requested]
+}
+
+private extension HomebrewPackage {
+    /// The package's own state, most important first. The Status column shows outdated casks
+    /// whose apps are running as Running, a live detail this field reports as Outdated.
+    var statusTitle: String {
+        if isDisabled { return "Disabled" }
+        if isDeprecated { return "Deprecated" }
+        if autoUpdates { return "Updates itself" }
+        if isPinned { return "Pinned" }
+        return isOutdated ? "Outdated" : "Up to date"
+    }
 }
 
 private enum HomebrewScope: String, CaseIterable, Identifiable {
@@ -178,15 +194,16 @@ struct HomebrewTab: View {
                 // The name column takes the remaining width, so every column fits the smallest window.
                 .width(min: 150)
                 TableColumn("Type", sortUsing: TableComparator(field: HomebrewTableFields.kind)) { Text($0.kind.title) }
-                    .width(56)
+                    .width(min: 36, ideal: 56)
                 TableColumn("Version", sortUsing: TableComparator(field: HomebrewTableFields.installed)) { package in
                     versionText(package)
                 }
-                .width(100)
-                TableColumn("Status") { status(for: $0) }
-                    .width(120)
+                // Wide enough for `installed → latest`, including long cask versions; drag to resize.
+                .width(min: 120, ideal: 210)
+                TableColumn("Status", sortUsing: TableComparator(field: HomebrewTableFields.status)) { status(for: $0) }
+                    .width(min: 72, ideal: 115)
                 TableColumn("Actions") { actions(for: $0) }
-                    .width(140)
+                    .width(min: 140, ideal: 140)
             }
             .overlay {
                 if rows.isEmpty && !monitor.isLoading {

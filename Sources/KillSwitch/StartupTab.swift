@@ -184,9 +184,9 @@ struct StartupTab: View {
 
             Table(rows, selection: $selected, sortOrder: tableSortOrder($sorting)) {
                 TableColumn("Name / schedule", sortUsing: TableComparator(field: StartupTableFields.name)) { Text($0.name).help($0.name) }.width(min: 170, ideal: 220)
-                TableColumn("Type", sortUsing: TableComparator(field: StartupTableFields.kind)) { Text($0.kind.rawValue) }.width(135)
-                TableColumn("Scope", sortUsing: TableComparator(field: StartupTableFields.scope)) { Text($0.domain.label) }.width(90)
-                TableColumn("State", sortUsing: TableComparator(field: StartupTableFields.state)) { Text($0.state.rawValue) }.width(75)
+                TableColumn("Type", sortUsing: TableComparator(field: StartupTableFields.kind)) { Text($0.kind.rawValue) }.width(min: 81, ideal: 135)
+                TableColumn("Scope", sortUsing: TableComparator(field: StartupTableFields.scope)) { Text($0.domain.label) }.width(min: 54, ideal: 90)
+                TableColumn("State", sortUsing: TableComparator(field: StartupTableFields.state)) { Text($0.state.rawValue) }.width(min: 45, ideal: 75)
                 TableColumn("Command / app", sortUsing: TableComparator(field: StartupTableFields.command)) { Text($0.command).help($0.command) }.width(min: 180, ideal: 320)
                 TableColumn("Startup control") { item in
                     if case .managedBackgroundItem = item.source {
@@ -203,7 +203,7 @@ struct StartupTab: View {
                         .disabled(monitor.isWorking || item.state == .unknown)
                         .accessibilityLabel("\(item.state == .enabled ? "Disable" : "Enable") \(item.name)")
                     }
-                }.width(130)
+                }.width(min: 78, ideal: 130)
             }
             .font(.system(size: 11))
             .scrollContentBackground(.hidden)
