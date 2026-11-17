@@ -41,6 +41,11 @@ let package = Package(
             path: "Sources/ScreenTimeCore"
         ),
         .target(
+            name: "SoftwareInventoryCore",
+            dependencies: ["InstallCore"],
+            path: "Sources/SoftwareInventoryCore"
+        ),
+        .target(
             name: "StartupCore",
             dependencies: ["InstallCore", "TableQueryCore"],
             path: "Sources/StartupCore"
@@ -53,6 +58,7 @@ let package = Package(
                 "InstallCore",
                 "KeepAwakeCore",
                 "ScreenTimeCore",
+                "SoftwareInventoryCore",
                 "StartupCore",
                 "SystemMetricsCore",
                 "TableQueryCore"
@@ -88,6 +94,11 @@ let package = Package(
             name: "ScreenTimeCoreChecks",
             dependencies: ["ScreenTimeCore"],
             path: "Tests/ScreenTimeCoreChecks"
+        ),
+        .executableTarget(
+            name: "SoftwareInventoryCoreChecks",
+            dependencies: ["SoftwareInventoryCore"],
+            path: "Tests/SoftwareInventoryCoreChecks"
         ),
         .executableTarget(
             name: "StartupCoreChecks",
