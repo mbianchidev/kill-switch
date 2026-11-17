@@ -482,7 +482,10 @@ walk at most twelve ancestors, and read at most 4 KiB per metadata file without
 following a metadata-file symlink or running git. In listeners mode, one bounded
 `ps` read fetches command lines between the lifetime snapshot and verification;
 only verified commands reach `DevServerClassifier`, the DevCleanupCore rule
-shared with Dev cleanup scans, so both pages detect the same dev servers.
+shared with Dev cleanup scans, so both pages detect the same dev servers. For
+Python server scripts only, the classifier lazily reads argv through
+`ProcessArguments` (`KERN_PROCARGS2`) and uses it only when it joins back to
+the exact `ps` command line, which rejects reused PIDs and rewritten titles.
 
 ### Measure isolated UI footprint
 

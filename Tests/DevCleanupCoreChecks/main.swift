@@ -14,6 +14,7 @@ struct CheckRunner {
         checkProcessTerminationPolicy()
         checkCleanupService()
         checkDevServerClassifier()
+        checkProcessArguments()
         checkTableQueries()
 
         if failures == 0 {
@@ -335,6 +336,44 @@ struct CheckRunner {
         }
     }
 
+    private mutating func checkProcessArguments() {
+        var buffer = withUnsafeBytes(of: Int32(3)) { Array($0) }
+        buffer += Array("/usr/bin/python3\0\0\0\0python3\0/tmp/My Project/server.py\0\0HOME=/tmp\0".utf8)
+        check(
+            ProcessArguments.parse(procArgs2: buffer) == ["python3", "/tmp/My Project/server.py", ""],
+            "parses KERN_PROCARGS2 argv with spaces and empty arguments"
+        )
+        check(ProcessArguments.parse(procArgs2: buffer.prefix(30)) == nil, "rejects truncated KERN_PROCARGS2 buffers")
+        check(ProcessArguments.read(pid: getpid()) == CommandLine.arguments, "reads this process's argv")
+
+        let argv = ["/usr/bin/python3", "/tmp/My Project/server.py", "--port", "41500"]
+        var requestedPIDs: [Int32] = []
+        let service = DevCleanupService(
+            username: "me",
+            processProvider: {
+                [DevCleanupProcess(pid: 301, user: "me", elapsedSeconds: 7_200, command: argv.joined(separator: " "))]
+            },
+            listeningPortsProvider: { [301: [41500]] },
+            argumentsProvider: {
+                requestedPIDs.append($0)
+                return $0 == 301 ? argv : nil
+            },
+            terminator: { _ in false }
+        )
+        do {
+            let result = try service.cleanup(configuration: DevCleanupConfiguration(
+                autoKillEnabled: false, ageThresholdSeconds: 3_600, effectivePorts: [],
+                runtimes: DevCleanupDefaults.runtimes, indicators: DevCleanupDefaults.indicators,
+                exclusions: DevCleanupDefaults.exclusions
+            ))
+            check(result.candidateCount == 1, "counts Python server scripts from argv as cleanup candidates")
+            check(result.portProcesses.map(\.pid) == [301], "lists Python server script listeners from argv")
+            check(Set(requestedPIDs) == [301], "reads argv only for the Python fallback")
+        } catch {
+            fail("classifies Python server scripts in cleanup: \(error.localizedDescription)")
+        }
+    }
+
     private mutating func checkDevServerClassifier() {
         let classifier = DevServerClassifier(configuration: DevCleanupConfiguration(
             autoKillEnabled: false, ageThresholdSeconds: 0, effectivePorts: [41000],
@@ -350,6 +389,56 @@ struct CheckRunner {
             classifier.listsListener(command: nil, port: 41000) && !classifier.listsListener(command: nil, port: 41500),
             "matches listeners without command lines by watched port only"
         )
+
+        let builtIn = DevServerClassifier(configuration: DevCleanupConfiguration(
+            autoKillEnabled: false, ageThresholdSeconds: 0, effectivePorts: DevCleanupDefaults.ports,
+            runtimes: DevCleanupDefaults.runtimes, indicators: DevCleanupDefaults.indicators,
+            exclusions: DevCleanupDefaults.exclusions
+        ))
+        let fixtureServer = [
+            "/Users/example/Library/Caches/Example/python-bin/../bootstrap/python3/bin/python3",
+            "/Users/example/workspace/copilot-worktrees/demo/session-a/tests/fixtures/https_server.py",
+            "--port", "61962", "--certificate", "/var/folders/xx/T/.tmpA1/cert.pem", "--key", "/var/folders/xx/T/.tmpA1/key.pem"
+        ]
+        let fixtureCommand = fixtureServer.joined(separator: " ")
+        check(
+            builtIn.runtime(for: fixtureCommand, arguments: { fixtureServer }) == "python",
+            "detects Python server scripts in agent worktrees"
+        )
+        check(
+            builtIn.listsListener(command: fixtureCommand, port: 61962, arguments: { fixtureServer }),
+            "lists Python server scripts on random ports"
+        )
+        check(builtIn.runtime(for: fixtureCommand) == nil, "requires argv boundaries for Python server scripts")
+        check(
+            builtIn.runtime(for: fixtureCommand, arguments: { ["/usr/bin/python3", "/tmp/other.py"] }) == nil,
+            "rejects argv that does not reproduce the command line"
+        )
+        for (argv, expected) in [
+            (["/usr/bin/python3", "-u", "-X", "pycache_prefix=/tmp/My Cache", "/tmp/My Project/mock-server.py"], "python"),
+            (["/usr/bin/python3", "/tmp/server.py files/worker.py"], nil),
+            (["/usr/bin/python3", "/Users/example/jobs/observer.py"], nil),
+            (["/usr/bin/python3", "worker.py", "--input", "/tmp/server.py"], nil),
+            (["/usr/bin/python3", "-c", "print(1)", "/tmp/https_server.py"], nil)
+        ] as [([String], String?)] {
+            check(
+                builtIn.runtime(for: argv.joined(separator: " "), arguments: { argv }) == expected,
+                "classifies Python script argument: \(argv)"
+            )
+        }
+        check(
+            builtIn.runtime(for: "/usr/local/bin/node /Users/example/workspace/copilot-worktrees/demo/session-a/node_modules/.bin/vite") == "node",
+            "detects dev servers in agent worktrees"
+        )
+        for copilot in [
+            "/usr/local/bin/npx -y @github/copilot",
+            "/usr/local/bin/node /usr/local/bin/copilot --acp npx",
+            "/usr/local/bin/node /Users/example/.copilot/extensions/demo/vite.mjs",
+            "/usr/local/bin/node /Users/example/Library/Caches/github-copilot-sdk/runtime/npm run",
+            "/usr/local/bin/node /Applications/GitHub Copilot.app/Contents/Resources/vite.mjs"
+        ] {
+            check(builtIn.runtime(for: copilot) == nil, "protects Copilot process: \(copilot)")
+        }
     }
 
     private mutating func check(_ condition: Bool, _ name: String) {

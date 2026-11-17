@@ -476,8 +476,9 @@ enablement, and saved disablement blocks the ensuing cleanup pass.
 
 The table shows PID, command, and port for watched listeners and recognized dev
 servers, with manual kill buttons. Automatic cleanup requires current-user
-ownership, a matching runtime and dev-server indicator, age beyond the saved
-threshold, and no applicable protection. Commands under `/System/` are skipped.
+ownership, a matching runtime and dev-server indicator (or Python server
+script), age beyond the saved threshold, and no applicable protection. Commands
+under `/System/` are skipped.
 Other users' processes are not automatic-cleanup candidates.
 
 ### Settings and persistence
@@ -539,9 +540,21 @@ flask run, uvicorn, gunicorn, manage.py runserver, runserver,
 http.server, deno run, deno task
 ```
 
+A configured Python runtime also matches when the script it executes is named
+`server.py`, `*_server.py`, or `*-server.py`, such as leaked `https_server.py`
+test fixtures on random ports. Only the script argument counts: `observer.py`,
+`-c`/`-m` invocations, and server-named paths passed as later arguments do not
+match. This rule reads the process's argument vector, so paths with spaces keep
+their boundaries. It does not apply when the arguments are unreadable (for
+example, another user's process) or differ from the listed command line.
+
 Default protected command-line substrings cover:
 
-- **Copilot CLI / SDK:** `copilot`.
+- **Copilot app, CLI, and SDK:** `@github/copilot`, `bin/copilot`,
+  `github copilot`, `github-copilot`, and `/.copilot/`. These name Copilot
+  itself, so dev servers started from agent checkouts such as
+  `~/workspace/copilot-worktrees` remain detectable. Saved lists keep their
+  entries; **Reset to defaults** applies these.
 - **MCP servers**, including GitHub, Context7, Work IQ, Fabric, Seismic, Azure,
   Kusto, and Revenue examples: `mcp`, `modelcontextprotocol`, `context7`,
   `work_iq`, `work-iq`, `workiq`, `fabric`, `seismic`, `azure`, `kusto`,
