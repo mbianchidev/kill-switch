@@ -379,11 +379,35 @@ struct CheckRunner {
         check(history.load(now: now).map(\.task) == ["recent"], "keeps only the last 24 hours of run summaries")
         let settingsStore = MaintenanceSettingsStore(defaults: defaults, home: home.home)
         var settings = settingsStore.load().settings
-        check(settings.artifactRoots == MaintenanceSettings.defaultArtifactRoots(home: home.home) && !settings.scheduleEnabled,
-              "defaults to the session-state and worktree roots with the schedule off")
+        check(settings.artifactRoots == MaintenanceSettings.defaultArtifactRoots(home: home.home) && !settings.scheduleEnabled
+              && !settings.trashScheduleEnabled && settings.nextTrashEmpty == nil,
+              "defaults to the session-state and worktree roots with both schedules off")
         settings.artifactRoots.append(home.path("src"))
         try settingsStore.save(settings)
         check(settingsStore.load().settings.artifactRoots.count == 3, "persists added roots")
+        let legacy = #"{"artifactRoots":["/a"],"repositoryRoots":[],"scheduleEnabled":true,"scheduleIntervalHours":6,"archiveIdleHours":24,"buildIdleDays":14}"#
+        defaults.set(Data(legacy.utf8), forKey: "maintenance.settings")
+        let upgraded = settingsStore.load()
+        check(upgraded.warning == nil && upgraded.settings.scheduleIntervalHours == 6 && !upgraded.settings.trashScheduleEnabled
+              && upgraded.settings.trashScheduleIntervalDays == 7, "settings saved before automatic emptying keep their values with it off")
+
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        var trash = MaintenanceSettings(artifactRoots: [], repositoryRoots: [], trashScheduleEnabled: true,
+                                        trashScheduleIntervalDays: 7, trashScheduleAnchor: start)
+        check(!trash.isTrashEmptyDue(now: start.addingTimeInterval(6 * 86_400)) && trash.isTrashEmptyDue(now: start.addingTimeInterval(7 * 86_400)),
+              "automatic emptying is due one interval after it started")
+        trash.trashScheduleEnabled = false
+        check(!trash.isTrashEmptyDue(now: start.addingTimeInterval(30 * 86_400)), "automatic emptying never runs while off")
+        let clockStore = MaintenanceSettingsStore(defaults: defaults, home: home.home, now: { start })
+        try clockStore.save(MaintenanceSettings(artifactRoots: [], repositoryRoots: [], trashScheduleEnabled: true,
+                                                trashScheduleIntervalDays: 5, trashScheduleAnchor: nil))
+        let restored = clockStore.load().settings
+        check(restored.trashScheduleAnchor == start && restored.trashScheduleIntervalDays == 7 && !restored.isTrashEmptyDue(now: start),
+              "a missing start begins a new interval instead of emptying at once, and unknown intervals reset to weekly")
+        try clockStore.save(MaintenanceSettings(artifactRoots: [], repositoryRoots: [], trashScheduleEnabled: true,
+                                                trashScheduleIntervalDays: 1, trashScheduleAnchor: start.addingTimeInterval(86_400 * 40)))
+        check(clockStore.load().settings.trashScheduleAnchor == start, "a start in the future after a clock change restarts the interval now")
+
         defaults.set(Data("bad".utf8), forKey: "maintenance.settings")
         check(settingsStore.load().warning != nil, "reports unreadable saved settings")
     }

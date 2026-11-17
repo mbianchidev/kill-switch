@@ -100,8 +100,8 @@ See [architecture and development](docs/development.md).
   launches. System-wide changes require administrator approval.
 - **Disk cleanup > Maintenance:** move merged-PR build artifacts, idle archives,
   installed DMGs, and idle build output to the Trash, clear tool caches, and
-  review merged worktrees for removal. Always previewed and confirmed; an
-  optional schedule is off by default.
+  review merged worktrees for removal. Always previewed and confirmed; optional
+  automatic cleanup and automatic Empty Trash are off by default.
 - **Folder alerts:** add folders and per-folder size limits; KillSwitch alerts
   in the app and through macOS notifications when a folder reaches its limit.
 - **Dev cleanup:** understand the age-based safety rules before opening the tab;

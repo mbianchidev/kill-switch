@@ -264,7 +264,13 @@ default; it runs merged-artifact cleanup only), and serialized work. Turning the
 schedule off or stopping the monitor revokes a token that `apply` checks before
 each move, so an unattended run stops; confirmed manual runs do not use it.
 Changing roots discards plans and scans, including ones still running. Empty
-Trash records an unreadable volume capacity as unavailable, never as zero. Probe
+Trash records an unreadable volume capacity as unavailable, never as zero.
+Automatic Empty Trash stores the start of its interval in
+`MaintenanceSettings.trashScheduleAnchor`; a 15-minute check runs it once
+`isTrashEmptyDue` is true, resetting the anchor before the attempt so failures
+wait a full interval. The automatic run skips an empty Trash and checks a
+revocable token immediately before asking Finder, so turning it off or quitting
+stops a pending run. Probe builds never start the monitor. Probe
 builds back it with an isolated defaults suite and fixture data.
 
 ## Run checks

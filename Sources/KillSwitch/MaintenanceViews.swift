@@ -8,6 +8,7 @@ private enum MaintenanceConfirmation: Identifiable {
     case removeWorktree(WorktreeCandidate)
     case clearCache(ToolCacheStatus)
     case emptyTrash(Int?)
+    case enableTrashSchedule(days: Int)
 
     var id: String {
         switch self {
@@ -16,6 +17,7 @@ private enum MaintenanceConfirmation: Identifiable {
         case .removeWorktree(let candidate): return "worktree-\(candidate.path)"
         case .clearCache(let cache): return "cache-\(cache.id)"
         case .emptyTrash: return "trash"
+        case .enableTrashSchedule: return "trash-schedule"
         }
     }
 }
@@ -274,6 +276,44 @@ struct MaintenanceView: View {
                     Text("\(count) item(s) in the Trash").font(.system(size: 11)).foregroundColor(.secondary)
                 }
             }
+            HStack(spacing: 8) {
+                Toggle("Empty automatically", isOn: Binding(
+                    get: { monitor.settings.trashScheduleEnabled },
+                    set: { enabled in
+                        if enabled {
+                            confirmation = .enableTrashSchedule(days: monitor.settings.trashScheduleIntervalDays)
+                        } else {
+                            monitor.setTrashSchedule(enabled: false, intervalDays: monitor.settings.trashScheduleIntervalDays)
+                        }
+                    }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .help("Off by default. When on, everything in the Trash is permanently deleted every interval while KillSwitch runs.")
+                Picker("Every", selection: Binding(
+                    get: { monitor.settings.trashScheduleIntervalDays },
+                    set: { monitor.setTrashSchedule(enabled: monitor.settings.trashScheduleEnabled, intervalDays: $0) }
+                )) {
+                    ForEach(MaintenanceSettings.trashScheduleOptions, id: \.self) { Text(Self.trashIntervalTitle($0)).tag($0) }
+                }
+                .labelsHidden()
+                .frame(width: 130)
+                Spacer()
+                if let next = monitor.settings.nextTrashEmpty {
+                    Text("Next: \(next.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.system(size: 11)).foregroundColor(.secondary)
+                }
+            }
+            Text("Automatic emptying permanently deletes everything in the Trash, including items you moved there yourself. If KillSwitch was closed when it was due, it runs shortly after KillSwitch starts. Finder can also remove items after 30 days in its own settings.")
+                .font(.system(size: 10)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    static func trashIntervalTitle(_ days: Int) -> String {
+        switch days {
+        case 1: return "Daily"
+        case 7: return "Weekly"
+        default: return "Every \(days) days"
         }
     }
 
@@ -477,6 +517,17 @@ struct MaintenanceView: View {
                 title: Text("Empty the Trash?"),
                 message: Text("\(count.map { "\($0) item(s) will be permanently deleted" } ?? "Everything in the Trash will be permanently deleted"), including items you moved there yourself. This cannot be undone."),
                 primaryButton: .destructive(Text("Empty Trash")) { monitor.emptyTrash() },
+                secondaryButton: .cancel()
+            )
+        case .enableTrashSchedule(let days):
+            return Alert(
+                title: Text("Empty the Trash automatically?"),
+                message: Text("\(Self.trashIntervalTitle(days)), KillSwitch will permanently delete everything in the Trash, including items you moved there yourself, without asking. The first automatic empty is \(days == 1 ? "in a day" : "in \(days) days"). Finder may ask now for permission to let KillSwitch control it."),
+                primaryButton: .destructive(Text("Turn On")) {
+                    monitor.setTrashSchedule(enabled: true, intervalDays: days)
+                    // Counting asks for Finder Automation permission now, while you are here.
+                    if allowsOperations { monitor.scan(.trash) }
+                },
                 secondaryButton: .cancel()
             )
         }

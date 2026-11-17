@@ -56,7 +56,8 @@ workaround are covered in [troubleshooting](docs/troubleshooting.md#source-build
 - Maintenance checks use synthetic homes, temporary Git repositories, and
   scripted `lsof`, `hdiutil`, `gh`, `ps`, and `osascript` runners. Never run
   Disk cleanup Maintenance actions (Move to Trash, scheduled cleanup, Empty
-  Trash, cache clearing, worktree removal) on a workstation as validation.
+  Trash or automatic emptying, cache clearing, worktree removal) on a
+  workstation as validation.
 - `install.sh`, `update.sh`, and `uninstall.sh` change the user's installation
   and login agent. Do not run them on a normal workstation as validation.
 - Prefer package verification: it mounts/ejects its own DMG, uses a disposable

@@ -7,7 +7,8 @@ import os
 
 /// Coordinates the Disk cleanup maintenance tools. Every scan builds an exact manifest; nothing is
 /// moved until the user confirms, except merged-PR artifacts when the optional schedule is on.
-/// Items go to the Trash, and only a separately confirmed Empty Trash frees their space.
+/// Items go to the Trash; only Empty Trash frees their space, after confirmation or on the
+/// optional automatic schedule the user confirmed turning on.
 @MainActor
 final class MaintenanceMonitor: ObservableObject {
 #if KILLSWITCH_PERFORMANCE_PROBE
@@ -64,6 +65,10 @@ final class MaintenanceMonitor: ObservableObject {
     /// Turning the schedule off or stopping revokes this, which stops a running unattended
     /// cleanup before its next move. Explicitly confirmed runs do not use it.
     private let scheduleAuthorization = RunAuthorization()
+    /// Revoked when automatic emptying is turned off or the monitor stops.
+    private let trashScheduleAuthorization = RunAuthorization()
+    private var trashTimer: DispatchSourceTimer?
+    private static let trashCheckInterval = 15 * 60
     /// Bumped when roots change, so scans and plans built for the old roots are discarded.
     private var artifactRootsGeneration = 0
     private var repositoryRootsGeneration = 0
@@ -79,16 +84,23 @@ final class MaintenanceMonitor: ObservableObject {
 
     /// Starts the optional schedule; it never runs while the schedule is off.
     func start() {
+#if !KILLSWITCH_PERFORMANCE_PROBE
+        // Probe builds never run unattended maintenance.
         guard !started else { return }
         started = true
         reschedule()
+        startTrashChecks()
+#endif
     }
 
     func stop() {
         started = false
         scheduleAuthorization.revoke()
+        trashScheduleAuthorization.revoke()
         timer?.cancel()
         timer = nil
+        trashTimer?.cancel()
+        trashTimer = nil
     }
 
     func clearMessages() {
@@ -136,6 +148,21 @@ final class MaintenanceMonitor: ObservableObject {
         if !enabled { scheduleAuthorization.revoke() }
         save(updated)
         if started { reschedule() }
+    }
+
+    /// Turning it on starts a new interval, so the first automatic empty is one interval later.
+    /// Changing the interval keeps the current start.
+    func setTrashSchedule(enabled: Bool, intervalDays: Int) {
+        var updated = settings
+        if enabled, !settings.trashScheduleEnabled { updated.trashScheduleAnchor = Date() }
+        if !enabled {
+            trashScheduleAuthorization.revoke()
+            updated.trashScheduleAnchor = nil
+        }
+        updated.trashScheduleEnabled = enabled
+        updated.trashScheduleIntervalDays = MaintenanceSettings.trashScheduleOptions.contains(intervalDays)
+            ? intervalDays : MaintenanceSettings.defaultTrashScheduleDays
+        save(updated)
     }
 
     func setIdle(archiveHours: Int? = nil, buildDays: Int? = nil) {
@@ -364,30 +391,87 @@ final class MaintenanceMonitor: ObservableObject {
     }
 
     func emptyTrash() {
+        emptyTrash(automatic: false)
+    }
+
+    private enum TrashEmptyOutcome {
+        case emptied(remaining: Int, before: Int64?, after: Int64?)
+        case failed(String)
+        /// Automatic runs skip an empty Trash and stop if emptying was turned off meanwhile.
+        case skipped
+    }
+
+    private func emptyTrash(automatic: Bool) {
         let runner = NativeSoftwareCommandRunner()
         let homePath = home.path
-        perform(.trash) {
+        let authorization = trashScheduleAuthorization
+        let token = authorization.current()
+        let mode = automatic ? "scheduled" : "apply"
+        perform(.trash) { () -> TrashEmptyOutcome in
+            if automatic {
+                do {
+                    guard try TrashBin.itemCount(runner: runner) > 0 else { return .skipped }
+                } catch {
+                    return .failed(error.localizedDescription)
+                }
+                guard authorization.isValid(token) else { return .skipped }
+            }
             let before = ArtifactInspector.availableBytes(at: homePath)
-            let result = Result { try TrashBin.empty(runner: runner) }
-            return (result, before, ArtifactInspector.availableBytes(at: homePath))
-        } finish: { monitor, output in
-            let (result, before, after) = output
-            switch result {
-            case .success(let remaining):
+            do {
+                let remaining = try TrashBin.empty(runner: runner)
+                return .emptied(remaining: remaining, before: before, after: ArtifactInspector.availableBytes(at: homePath))
+            } catch {
+                return .failed(error.localizedDescription)
+            }
+        } finish: { monitor, outcome in
+            switch outcome {
+            case .skipped:
+                if automatic { monitor.trashItemCount = nil }
+            case let .emptied(remaining, before, after):
                 monitor.trashItemCount = remaining
                 // An unreadable volume capacity is unavailable, not a measured zero.
                 let freed: Int64? = before.flatMap { before in after.map { max(0, $0 - before) } }
                 let change = freed.map { "Free space changed by \(formatBytes(UInt64($0)))." } ?? "The free-space change could not be measured."
+                let prefix = automatic ? "The Trash was emptied automatically." : "The Trash is empty."
                 monitor.message = remaining == 0
-                    ? "The Trash is empty. \(change)"
+                    ? "\(prefix) \(change)"
                     : "Finder is still emptying the Trash; \(remaining) item(s) remain. \(change)"
-                monitor.record(MaintenanceRunSummary(date: Date(), task: Step.trash.title, mode: "apply", trashedCount: 0,
+                monitor.record(MaintenanceRunSummary(date: Date(), task: Step.trash.title, mode: mode, trashedCount: 0,
                                                      trashedBytes: UInt64(freed ?? 0), protectedCount: 0, errorCount: remaining == 0 ? 0 : 1,
                                                      note: freed == nil ? MaintenanceRunSummary.spaceUnavailableNote : MaintenanceRunSummary.spaceFreedNote))
-            case .failure(let error):
-                monitor.report(error.localizedDescription)
+            case .failed(let error):
+                if automatic {
+                    monitor.record(MaintenanceRunSummary(date: Date(), task: Step.trash.title, mode: mode, trashedCount: 0,
+                                                         trashedBytes: 0, protectedCount: 0, errorCount: 1,
+                                                         note: MaintenanceRunSummary.spaceUnavailableNote))
+                    monitor.report("Automatic Empty Trash failed: \(error)")
+                } else {
+                    monitor.report(error)
+                }
             }
         }
+    }
+
+    /// Checks every 15 minutes, and soon after launch, whether automatic emptying is due.
+    private func startTrashChecks() {
+        trashTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + .seconds(60), repeating: .seconds(Self.trashCheckInterval), leeway: .seconds(60))
+        timer.setEventHandler { [weak self] in
+            MainActor.assumeIsolated { self?.runTrashScheduleIfDue() }
+        }
+        timer.resume()
+        trashTimer = timer
+    }
+
+    private func runTrashScheduleIfDue() {
+        guard started, !isBusy, settings.isTrashEmptyDue(now: Date()) else { return }
+        // A new interval starts with this attempt, so a failure is retried next interval, not every check.
+        var updated = settings
+        updated.trashScheduleAnchor = Date()
+        save(updated)
+        guard settings.trashScheduleAnchor == updated.trashScheduleAnchor else { return }
+        emptyTrash(automatic: true)
     }
 
     // MARK: Plumbing
@@ -507,10 +591,14 @@ extension MaintenanceMonitor {
         history = [
             MaintenanceRunSummary(date: now.addingTimeInterval(-3_600), task: Step.mergedArtifacts.title, mode: "scheduled",
                                   trashedCount: 4, trashedBytes: 2_300_000_000, protectedCount: 3, errorCount: 0),
-            MaintenanceRunSummary(date: now.addingTimeInterval(-7_200), task: Step.trash.title, mode: "apply",
+            MaintenanceRunSummary(date: now.addingTimeInterval(-7_200), task: Step.trash.title, mode: "scheduled",
                                   trashedCount: 0, trashedBytes: 2_100_000_000, protectedCount: 0, errorCount: 0,
                                   note: MaintenanceRunSummary.spaceFreedNote)
         ]
+        // In memory only: probe builds never start the monitor, so nothing is emptied.
+        settings.trashScheduleEnabled = true
+        settings.trashScheduleAnchor = now.addingTimeInterval(-7_200)
+        trashItemCount = 12
     }
 }
 #endif

@@ -4,6 +4,9 @@ import Foundation
 /// worktrees; users can add more roots of either kind.
 public struct MaintenanceSettings: Codable, Equatable, Sendable {
     public static let scheduleOptions = [1, 6, 12, 24]
+    /// Days between automatic Empty Trash runs.
+    public static let trashScheduleOptions = [1, 7, 30]
+    public static let defaultTrashScheduleDays = 7
 
     public var artifactRoots: [String]
     public var repositoryRoots: [String]
@@ -11,10 +14,18 @@ public struct MaintenanceSettings: Codable, Equatable, Sendable {
     public var scheduleIntervalHours: Int
     public var archiveIdleHours: Int
     public var buildIdleDays: Int
+    /// Off by default. When on, the whole Trash is permanently emptied every interval.
+    public var trashScheduleEnabled: Bool
+    public var trashScheduleIntervalDays: Int
+    /// When the current interval started: when automatic emptying was turned on or last ran.
+    /// Persisted so an interval that ends while KillSwitch is closed runs at the next check.
+    public var trashScheduleAnchor: Date?
 
     public init(
         artifactRoots: [String], repositoryRoots: [String], scheduleEnabled: Bool = false,
-        scheduleIntervalHours: Int = 24, archiveIdleHours: Int = 24, buildIdleDays: Int = 14
+        scheduleIntervalHours: Int = 24, archiveIdleHours: Int = 24, buildIdleDays: Int = 14,
+        trashScheduleEnabled: Bool = false, trashScheduleIntervalDays: Int = MaintenanceSettings.defaultTrashScheduleDays,
+        trashScheduleAnchor: Date? = nil
     ) {
         self.artifactRoots = artifactRoots
         self.repositoryRoots = repositoryRoots
@@ -22,6 +33,41 @@ public struct MaintenanceSettings: Codable, Equatable, Sendable {
         self.scheduleIntervalHours = scheduleIntervalHours
         self.archiveIdleHours = archiveIdleHours
         self.buildIdleDays = buildIdleDays
+        self.trashScheduleEnabled = trashScheduleEnabled
+        self.trashScheduleIntervalDays = trashScheduleIntervalDays
+        self.trashScheduleAnchor = trashScheduleAnchor
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case artifactRoots, repositoryRoots, scheduleEnabled, scheduleIntervalHours, archiveIdleHours, buildIdleDays
+        case trashScheduleEnabled, trashScheduleIntervalDays, trashScheduleAnchor
+    }
+
+    /// Settings saved before automatic emptying existed decode with it off.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            artifactRoots: try container.decode([String].self, forKey: .artifactRoots),
+            repositoryRoots: try container.decode([String].self, forKey: .repositoryRoots),
+            scheduleEnabled: try container.decode(Bool.self, forKey: .scheduleEnabled),
+            scheduleIntervalHours: try container.decode(Int.self, forKey: .scheduleIntervalHours),
+            archiveIdleHours: try container.decode(Int.self, forKey: .archiveIdleHours),
+            buildIdleDays: try container.decode(Int.self, forKey: .buildIdleDays),
+            trashScheduleEnabled: try container.decodeIfPresent(Bool.self, forKey: .trashScheduleEnabled) ?? false,
+            trashScheduleIntervalDays: try container.decodeIfPresent(Int.self, forKey: .trashScheduleIntervalDays)
+                ?? MaintenanceSettings.defaultTrashScheduleDays,
+            trashScheduleAnchor: try container.decodeIfPresent(Date.self, forKey: .trashScheduleAnchor)
+        )
+    }
+
+    /// When the next automatic Empty Trash is due, or nil while it is off.
+    public var nextTrashEmpty: Date? {
+        guard trashScheduleEnabled, let anchor = trashScheduleAnchor else { return nil }
+        return anchor.addingTimeInterval(TimeInterval(trashScheduleIntervalDays) * 86_400)
+    }
+
+    public func isTrashEmptyDue(now: Date) -> Bool {
+        nextTrashEmpty.map { now >= $0 } ?? false
     }
 
     public static func defaultArtifactRoots(home: URL) -> [String] {
@@ -83,9 +129,13 @@ public final class MaintenanceSettingsStore {
     private let defaults: UserDefaults
     private let home: URL
 
-    public init(defaults: UserDefaults = .standard, home: URL = FileManager.default.homeDirectoryForCurrentUser) {
+    private let now: () -> Date
+
+    public init(defaults: UserDefaults = .standard, home: URL = FileManager.default.homeDirectoryForCurrentUser,
+                now: @escaping () -> Date = Date.init) {
         self.defaults = defaults
         self.home = home
+        self.now = now
     }
 
     /// Unreadable saved settings fall back to the defaults and report why.
@@ -96,6 +146,14 @@ public final class MaintenanceSettingsStore {
             if !MaintenanceSettings.scheduleOptions.contains(settings.scheduleIntervalHours) { settings.scheduleIntervalHours = 24 }
             settings.archiveIdleHours = max(1, settings.archiveIdleHours)
             settings.buildIdleDays = max(1, settings.buildIdleDays)
+            if !MaintenanceSettings.trashScheduleOptions.contains(settings.trashScheduleIntervalDays) {
+                settings.trashScheduleIntervalDays = MaintenanceSettings.defaultTrashScheduleDays
+            }
+            // Without a recorded start, or with one in the future after a clock change, a new
+            // interval starts now rather than emptying immediately.
+            if settings.trashScheduleEnabled, settings.trashScheduleAnchor.map({ $0 > now() }) ?? true {
+                settings.trashScheduleAnchor = now()
+            }
             return (settings, nil)
         } catch {
             return (.defaults(home: home), "Saved maintenance settings could not be read (\(error.localizedDescription)); defaults are shown.")

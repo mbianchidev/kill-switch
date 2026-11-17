@@ -348,6 +348,13 @@ before acting. Everything moves to the Trash unless stated otherwise.
 - **Trash:** counts items and empties the Trash through Finder after a separate
   confirmation. This deletes everything there, including items you moved
   yourself. Finder may ask for Automation permission.
+- **Empty automatically** (off by default, confirmed when turned on) empties the
+  whole Trash daily, weekly (default), or every 30 days, without asking. The
+  first automatic empty is one interval after you turn it on, and the card shows
+  the next one. If KillSwitch was closed when it was due, it runs within about
+  15 minutes of KillSwitch starting. A failed run, for example without Finder
+  Automation permission, is retried at the next interval. Turning it off stops
+  a pending run. Finder's own settings can instead remove items after 30 days.
 - **Last 24 hours** shows run counts, space moved and freed, and errors. Only
   counts and sizes are kept, for 24 hours.
 - **Maintenance roots:** agent session and worktree roots default to
@@ -677,8 +684,8 @@ These preferences persist. See [update controls](auto-update.md#using-updates),
   undone by KillSwitch. Review the confirmation; self-updating and running
   casks are never upgraded.
 - Maintenance moves only verified generated files to the Trash and fails closed
-  when activity, ownership, or PR state cannot be confirmed. Emptying the Trash
-  and removing a worktree are permanent.
+  when activity, ownership, or PR state cannot be confirmed. Emptying the Trash,
+  including automatic emptying, and removing a worktree are permanent.
 - Applications, Security, Destinations, and System details are read-only.
   KillSwitch does not change security settings or install macOS updates.
 - Monitoring and keep-awake sessions stop when the app quits.
