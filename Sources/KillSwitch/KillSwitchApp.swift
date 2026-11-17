@@ -39,6 +39,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         ResourceMonitor.shared.start()
         FolderSizeMonitor.shared.start()
         MaintenanceMonitor.shared.start()
+#if !KILLSWITCH_PERFORMANCE_PROBE
+        DevCleanupScheduler.shared.start()
+#endif
         keepAwakeManager.onStateChange = { [weak self] _ in
             self?.updateStatusItem()
         }
@@ -206,6 +209,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         screenTimeMonitor.stop()
         FolderSizeMonitor.shared.stop()
         MaintenanceMonitor.shared.stop()
+#if !KILLSWITCH_PERFORMANCE_PROBE
+        DevCleanupScheduler.shared.stop()
+#endif
         SystemHealthMonitor.shared.shutdown()
         ResourceMonitor.shared.shutdown()
         keepAwakeManager.deactivate()

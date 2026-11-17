@@ -349,6 +349,17 @@ plus health visibility, operation permissions, and continued automatic polling.
 Native window visibility includes occlusion: minimizing or fully covering the
 window pauses optional health/inspection work, just like hiding. Confirmed Dev
 cleanup follows its selected-page execution lease instead of window visibility.
+Separately, the app-lifetime `DevCleanupScheduler` runs background Dev cleanup
+regardless of page or visibility: `AppDelegate` starts it at launch and stops it
+at quit (never in probe builds, where it requires an injected service). A
+one-minute check runs a pass on its own serial queue once the saved interval has
+elapsed and saved auto-kill is enabled. `DevCleanupService.cleanup` takes a
+`shouldTerminate` gate that the scheduler binds to its session and the current
+saved auto-kill, rechecked before every termination, so stopping or disabling
+halts a pass mid-way. Kills are logged and announced with a native notification;
+`BackgroundCleanupStatus` is the only view observing it. The preview's
+**Turn off auto-kill** always saves the safer setting and, for the current visit
+only, opens read-only cleanup without a pass.
 Metric leases and window visibility are updated synchronously in one locked
 selection, rather than waiting behind already-queued samples. The native reader
 rechecks that selection before starting Energy or memory-pressure phases;

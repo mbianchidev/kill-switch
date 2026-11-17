@@ -334,6 +334,34 @@ struct CheckRunner {
         } catch {
             fail("respects disabled auto-kill: \(error.localizedDescription)")
         }
+
+        var gatedTerminations: [Int32] = []
+        var remainingAdmissions = 1
+        let gatedService = DevCleanupService(
+            username: "me",
+            processProvider: {
+                [401, 402].map { DevCleanupProcess(pid: $0, user: "me", elapsedSeconds: 7_200, command: "node vite") }
+            },
+            listeningPortsProvider: { [:] },
+            terminator: { gatedTerminations.append($0); return true }
+        )
+        do {
+            let result = try gatedService.cleanup(
+                configuration: DevCleanupConfiguration(
+                    autoKillEnabled: true, ageThresholdSeconds: 3_600, effectivePorts: [],
+                    runtimes: ["node"], indicators: ["vite"], exclusions: []
+                ),
+                shouldTerminate: {
+                    defer { remainingAdmissions -= 1 }
+                    return remainingAdmissions > 0
+                }
+            )
+            check(gatedTerminations == [401] && result.killed.map(\.pid) == [401],
+                  "stops terminating once the pass is revoked mid-way")
+            check(result.candidateCount == 2, "still counts candidates after revocation")
+        } catch {
+            fail("runs a revocable cleanup pass: \(error.localizedDescription)")
+        }
     }
 
     private mutating func checkProcessArguments() {

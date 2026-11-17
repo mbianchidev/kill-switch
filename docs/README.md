@@ -18,7 +18,9 @@ complete setup, configuration, and development instructions.
 | [Troubleshooting](troubleshooting.md) | Opening an unnotarized app, permissions, duplicate installs, CLI issues, and SDK errors |
 
 **Before using Dev cleanup:** automatic termination starts enabled for qualifying
-servers older than 12 hours. Confirming entry to the page runs a cleanup immediately.
+servers older than 12 hours and runs in the background every 10 minutes while
+KillSwitch runs, without opening the page. **Turn off auto-kill** on the page's
+preview disables it without a pass; confirming entry runs a cleanup immediately.
 The separate Dev servers page is read-only. Review
 the [safety notes](usage.md#safety-and-limitations); process age is not inactivity.
 

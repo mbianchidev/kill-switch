@@ -225,7 +225,11 @@ public final class DevCleanupService {
         )
     }
 
-    public func cleanup(configuration: DevCleanupConfiguration) throws -> DevCleanupResult {
+    /// Runs one pass. `shouldTerminate` is rechecked before every termination, so a revoked
+    /// background session or later saved disablement stops further kills mid-pass.
+    public func cleanup(
+        configuration: DevCleanupConfiguration, shouldTerminate: () -> Bool = { true }
+    ) throws -> DevCleanupResult {
         let processes = try processProvider()
         let ports = try listeningPortsProvider()
         let classifier = DevServerClassifier(configuration: configuration)
@@ -244,6 +248,7 @@ public final class DevCleanupService {
             candidateCount += 1
             if configuration.autoKillEnabled,
                process.elapsedSeconds > configuration.ageThresholdSeconds,
+               shouldTerminate(),
                terminator(process.pid) {
                 killed.append(
                     CleanedProcess(

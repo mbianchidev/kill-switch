@@ -49,10 +49,12 @@ trusted download, try opening it, then use **System Settings > Privacy & Securit
 Open Anyway** where offered. Do not bypass malware warnings or managed-device
 policy. See [opening precautions and troubleshooting](docs/troubleshooting.md).
 
-**Dev cleanup starts with auto-kill enabled for qualifying servers older than
-12 hours. Confirming entry to that page runs a cleanup immediately.** Use the
-separate, read-only **Dev servers** page for discovery. Review cleanup's
-[settings and safety rules](docs/usage.md#dev-cleanup) first.
+**Auto-kill starts enabled: while KillSwitch runs, background Dev cleanup
+terminates qualifying dev servers older than 12 hours every 10 minutes, on any
+page and with the window hidden.** Turn it off from the Dev cleanup preview
+without running a pass. Use the separate, read-only **Dev servers** page for
+discovery. Review cleanup's [settings and safety rules](docs/usage.md#dev-cleanup)
+first.
 
 Closing the window leaves KillSwitch running in the menu bar. Choose
 **Quit KillSwitch** there to exit. For CLI/standalone installs, login startup,
@@ -104,8 +106,9 @@ See [architecture and development](docs/development.md).
   automatic cleanup and automatic Empty Trash are off by default.
 - **Folder alerts:** add folders and per-folder size limits; KillSwitch alerts
   in the app and through macOS notifications when a folder reaches its limit.
-- **Dev cleanup:** understand the age-based safety rules before opening the tab;
-  its Settings card controls auto-kill, age, detection, and exclusions.
+- **Dev cleanup:** understand the age-based safety rules; background cleanup
+  runs without opening the tab. Its Settings card controls auto-kill, age,
+  interval, detection, and exclusions.
 - **Screen time / Keep awake:** enable optional reminders or sleep prevention.
 - **Updates:** installation is opt-in; checks run at launch and hourly by default.
 

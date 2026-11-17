@@ -319,6 +319,7 @@ enum PerformanceProbe {
         check(!cleanup.cleanupConfiguration().autoKillEnabled, "Later saved disablement must block the ensuing cleanup.")
         cleanupStateChecks(preferences: preferences, check)
         queuedCleanupChecks(preferences: preferences, check)
+        backgroundSchedulerChecks(preferences: preferences, check)
         resetAuthorizationChecks(preferences: preferences, check)
         cleanupEntryCancellationChecks(preferences: preferences, check)
         backgroundCleanupChecks(preferences: preferences, check)
@@ -844,6 +845,75 @@ enum PerformanceProbe {
         check(currentMonitor?.lastRun == nil, "The isolated cleanup-state check must never start a live cleanup pass.")
     }
 
+    private static func backgroundSchedulerChecks(preferences: DevCleanupPreferences, _ check: (Bool, String) -> Void) {
+        let savedAutoKill = preferences.load().autoKillEnabled
+        defer { preferences.setAutoKillEnabled(savedAutoKill) }
+        let reads = OSAllocatedUnfairLock(initialState: 0)
+        let terminated = OSAllocatedUnfairLock(initialState: [Int32]())
+        let notified = OSAllocatedUnfairLock(initialState: [Int32]())
+        let disableDuringRead = OSAllocatedUnfairLock(initialState: false)
+        let service = DevCleanupService(
+            username: "synthetic-owner",
+            processProvider: {
+                reads.withLock { $0 += 1 }
+                if disableDuringRead.withLock({ $0 }) { preferences.setAutoKillEnabled(false) }
+                return [DevCleanupProcess(
+                    pid: 100_997, user: "synthetic-owner", elapsedSeconds: 1_000_000,
+                    command: "/synthetic/node /synthetic/vite/bin/vite.js"
+                )]
+            },
+            listeningPortsProvider: { [:] },
+            terminator: { pid in terminated.withLock { $0.append(pid) }; return true }
+        )
+        let scheduler = DevCleanupScheduler(preferences: preferences, service: service) { killed, _ in
+            notified.withLock { $0 += killed.map(\.pid) }
+        }
+        defer { scheduler.stop() }
+        preferences.setAutoKillEnabled(true)
+        scheduler.performanceRunPass()
+        check(reads.withLock { $0 } == 0, "Background cleanup must not run before it is started.")
+        scheduler.start()
+        scheduler.start()
+        check(scheduler.performanceIsScheduled, "Starting background cleanup must schedule its checks.")
+        scheduler.performanceRunPass()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(terminated.withLock { $0 } == [100_997] && notified.withLock { $0 } == [100_997],
+              "Background cleanup must terminate and report qualifying servers without a page visit.")
+        check(scheduler.lastKilled.map(\.pid) == [100_997] && scheduler.lastRun != nil,
+              "Background cleanup must publish its last pass.")
+        preferences.setAutoKillEnabled(false)
+        scheduler.performanceRunPass()
+        check(reads.withLock { $0 } == 1, "Saved disablement must stop background passes before any process read.")
+        preferences.setAutoKillEnabled(true)
+        disableDuringRead.withLock { $0 = true }
+        terminated.withLock { $0 = [] }
+        scheduler.performanceRunPass()
+        check(reads.withLock { $0 } == 2 && terminated.withLock { $0.isEmpty },
+              "Saved disablement during a background pass must prevent its terminations.")
+        preferences.setAutoKillEnabled(true)
+        scheduler.stop()
+        scheduler.performanceRunPass()
+        check(reads.withLock { $0 } == 2 && !scheduler.performanceIsScheduled,
+              "Stopping background cleanup must revoke future passes.")
+
+        let savedInterval = preferences.load().cleanupIntervalSeconds
+        defer { preferences.setCleanupIntervalSeconds(savedInterval) }
+        preferences.setCleanupIntervalSeconds(5)
+        disableDuringRead.withLock { $0 = false }
+        terminated.withLock { $0 = [] }
+        let timed = DevCleanupScheduler(preferences: preferences, service: service) { _, _ in }
+        defer { timed.stop() }
+        let started = ContinuousClock.now
+        timed.start()
+        let deadline = Date().addingTimeInterval(10)
+        while terminated.withLock({ $0.isEmpty }) && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        let elapsed = ContinuousClock.now - started
+        check(terminated.withLock { $0 } == [100_997] && elapsed >= .seconds(5) && elapsed < .seconds(8),
+              "The background timer must run its first pass one saved interval after starting, without a page visit.")
+    }
+
     private static func queuedCleanupChecks(preferences: DevCleanupPreferences, _ check: (Bool, String) -> Void) {
         let savedAutoKill = preferences.load().autoKillEnabled
         defer { preferences.setAutoKillEnabled(savedAutoKill) }
@@ -1031,6 +1101,25 @@ enum PerformanceProbe {
         controls.open(firstRequest.visit)
         check(controls.request() == nil, "A delayed preview button must not request confirmation for an expired visit.")
         check(!timedOut.withLock { $0 }, "The window-cancellation mock queue must not time out.")
+
+        monitor.stop()
+        terminated.withLock { $0 = [] }
+        controls.navigation.wrappedValue = .devServers
+        controls.navigation.wrappedValue = .cleanup
+        controls.open(controls.visit.wrappedValue)
+        controls.turnOff(controls.visit.wrappedValue)
+        check(!preferences.load().autoKillEnabled && !controls.pending.wrappedValue && !controls.authorized.wrappedValue
+              && controls.request() == nil,
+              "Turning off auto-kill from the preview must save it and open read-only cleanup without confirmation.")
+        monitor.performanceDrainWorkQueue()
+        check(terminated.withLock { $0.isEmpty }, "Turning off auto-kill from the preview must not run a terminating pass.")
+        preferences.setAutoKillEnabled(true)
+        controls.navigation.wrappedValue = .devServers
+        controls.navigation.wrappedValue = .cleanup
+        let expiredVisit = controls.visit.wrappedValue
+        controls.navigation.wrappedValue = .devServers
+        controls.turnOff(expiredVisit)
+        check(!preferences.load().autoKillEnabled, "A delayed turn-off request must still save the safer setting.")
     }
 
     private static func backgroundCleanupChecks(preferences: DevCleanupPreferences, _ check: (Bool, String) -> Void) {
