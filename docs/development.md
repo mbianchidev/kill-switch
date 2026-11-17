@@ -230,8 +230,9 @@ Repository, session, and PR text is data only.
   `node_modules`, `dist`, `dist-electron`, `coverage`, `test-results`, Rust
   `target` (next to `Cargo.toml`) and CMake `build` (with `CMakeCache.txt`).
   Links, other owners' items, nested `.git`, tracked files, unreadable entries,
-  local configuration or secrets, and anything under `.git` or `~/Downloads`
-  are rejected.
+  local configuration or secrets, and anything under `.git` are rejected, as is
+  anything `MaintenancePath.protectedReason` refuses: outside the home folder,
+  the home folder itself, `~/Library`, the Trash, or `~/Downloads`.
 - Attached images are ejected only with a normal `hdiutil detach` when they are
   read-only, user-owned, unused, and their backing file (resolved through the
   `diskimages-helper` PID when `hdiutil` reports a stale path) is eligible.
@@ -253,10 +254,17 @@ untracked, unopened archives in agent worktrees), `InstalledDiskImageFinder`
 -nobrowse` and always detached, compared with installed app versions),
 `IdleBuildOutputFinder`, `ToolCacheManager` (each tool's own clean command,
 skipped while that tool runs), and `TrashBin` (Finder through `osascript`).
-Repository pulls from the routine are intentionally not included.
+Repository pulls from the routine are intentionally not included. Every scan
+revalidates its roots with `MaintenanceSettings.validRoots`, and
+`MaintenanceStepEnvironment.trash` applies the same protected-path boundary
+(allowing only installed DMGs in `~/Downloads`) immediately before each move.
 
 `MaintenanceMonitor.shared` owns settings, the optional schedule (off by
-default; it runs merged-artifact cleanup only), and serialized work. Probe
+default; it runs merged-artifact cleanup only), and serialized work. Turning the
+schedule off or stopping the monitor revokes a token that `apply` checks before
+each move, so an unattended run stops; confirmed manual runs do not use it.
+Changing roots discards plans and scans, including ones still running. Empty
+Trash records an unreadable volume capacity as unavailable, never as zero. Probe
 builds back it with an isolated defaults suite and fixture data.
 
 ## Run checks

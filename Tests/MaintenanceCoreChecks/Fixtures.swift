@@ -23,7 +23,17 @@ final class ScriptedRunner: SoftwareCommandRunning, @unchecked Sendable {
         recorded.append(command)
         lock.unlock()
         if let answer = handler(command) { return answer }
+        // Only the read-only tools fixtures inspect real temporary files with run natively; an
+        // unmocked Finder, hdiutil, cache, or other command fails instead of touching the Mac.
+        guard Self.nativeTools.contains(command.executable) else { throw UnmockedCommand(command: command.displayString) }
         return try NativeSoftwareCommandRunner().run(command)
+    }
+
+    static let nativeTools: Set<String> = ["/usr/bin/git", "/usr/bin/zipinfo", "/usr/bin/tar"]
+
+    struct UnmockedCommand: LocalizedError {
+        let command: String
+        var errorDescription: String? { "Unmocked command in a check: \(command)" }
     }
 
     static func ok(_ output: String = "") -> SoftwareCommandResult { SoftwareCommandResult(status: 0, output: output, error: "") }

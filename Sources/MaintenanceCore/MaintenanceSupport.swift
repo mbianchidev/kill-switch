@@ -32,6 +32,21 @@ public enum MaintenancePath {
         isDescendant(resolved(path), of: resolved(home.appendingPathComponent("Downloads").path))
     }
 
+    /// Why maintenance must never move a path: it resolves outside the home folder, to the home
+    /// folder itself, or into `~/Library`, the Trash, or `~/Downloads`. Only the installed disk
+    /// image step may move a `.dmg` from `~/Downloads`.
+    public static func protectedReason(_ path: String, home: URL, allowsDownloadsDiskImages: Bool = false) -> String? {
+        let target = resolved(path)
+        guard isDescendant(target, of: resolved(home.path), orEqual: false) else { return "it is outside your home folder" }
+        for protected in ["Library", ".Trash"] where isDescendant(target, of: resolved(home.appendingPathComponent(protected).path)) {
+            return "~/\(protected) is never cleaned here"
+        }
+        if isInDownloads(target, home: home), !(allowsDownloadsDiskImages && target.lowercased().hasSuffix(".dmg")) {
+            return "~/Downloads is never cleaned here"
+        }
+        return nil
+    }
+
     public static func relative(_ path: String, to root: String) -> String? {
         let child = URL(fileURLWithPath: path).standardizedFileURL.pathComponents
         let parent = URL(fileURLWithPath: root).standardizedFileURL.pathComponents

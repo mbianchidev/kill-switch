@@ -61,6 +61,12 @@ final class MaintenanceMonitor: ObservableObject {
     private let logger = Logger(subsystem: "com.killswitch.app", category: "maintenance")
     private var timer: DispatchSourceTimer?
     private var started = false
+    /// Turning the schedule off or stopping revokes this, which stops a running unattended
+    /// cleanup before its next move. Explicitly confirmed runs do not use it.
+    private let scheduleAuthorization = RunAuthorization()
+    /// Bumped when roots change, so scans and plans built for the old roots are discarded.
+    private var artifactRootsGeneration = 0
+    private var repositoryRootsGeneration = 0
 
     private init(defaults: UserDefaults = .standard) {
         settingsStore = MaintenanceSettingsStore(defaults: defaults)
@@ -80,6 +86,7 @@ final class MaintenanceMonitor: ObservableObject {
 
     func stop() {
         started = false
+        scheduleAuthorization.revoke()
         timer?.cancel()
         timer = nil
     }
@@ -126,6 +133,7 @@ final class MaintenanceMonitor: ObservableObject {
         var updated = settings
         updated.scheduleEnabled = enabled
         updated.scheduleIntervalHours = MaintenanceSettings.scheduleOptions.contains(intervalHours) ? intervalHours : 24
+        if !enabled { scheduleAuthorization.revoke() }
         save(updated)
         if started { reschedule() }
     }
@@ -140,6 +148,16 @@ final class MaintenanceMonitor: ObservableObject {
     private func save(_ updated: MaintenanceSettings) {
         do {
             try settingsStore.save(updated)
+            if updated.artifactRoots != settings.artifactRoots {
+                artifactRootsGeneration += 1
+                mergedPlan = nil
+                mergedResult = nil
+                archiveScan = nil
+            }
+            if updated.repositoryRoots != settings.repositoryRoots {
+                repositoryRootsGeneration += 1
+                buildScan = nil
+            }
             settings = updated
             settingsWarning = nil
         } catch {
@@ -151,9 +169,14 @@ final class MaintenanceMonitor: ObservableObject {
 
     func previewMergedArtifacts() {
         let roots = settings.artifactRoots
+        let generation = artifactRootsGeneration
         perform(.mergedArtifacts) {
             MergedArtifactPlanner(roots: roots).plan()
         } finish: { monitor, plan in
+            guard monitor.artifactRootsGeneration == generation else {
+                monitor.message = "Maintenance roots changed during the preview. Preview again."
+                return
+            }
             monitor.mergedPlan = plan
             monitor.mergedResult = nil
             monitor.message = plan.artifacts.isEmpty
@@ -170,10 +193,14 @@ final class MaintenanceMonitor: ObservableObject {
     private func runMergedCleanup(plan existing: MergedArtifactPlan?, mode: String) {
         let roots = settings.artifactRoots
         let auditURL = auditLogURL
+        let generation = artifactRootsGeneration
+        let authorization = scheduleAuthorization
+        let token = authorization.current()
+        let unattended = mode == "scheduled"
         perform(.mergedArtifacts) {
             let planner = MergedArtifactPlanner(roots: roots)
             let plan = existing ?? planner.plan()
-            let result = planner.apply(plan)
+            let result = planner.apply(plan, shouldContinue: { !unattended || authorization.isValid(token) })
             let auditError: String?
             do {
                 try MaintenanceAuditLog(url: auditURL).append(MergedArtifactAuditRecord(mode: mode, plan: plan, result: result))
@@ -184,8 +211,10 @@ final class MaintenanceMonitor: ObservableObject {
             return (plan, result, auditError)
         } finish: { monitor, output in
             let (plan, result, auditError) = output
-            monitor.mergedPlan = plan
-            monitor.mergedResult = result
+            if monitor.artifactRootsGeneration == generation {
+                monitor.mergedPlan = plan
+                monitor.mergedResult = result
+            }
             if mode == "scheduled" { monitor.lastScheduledRun = result.finishedAt }
             monitor.record(MaintenanceRunSummary(
                 date: result.finishedAt, task: Step.mergedArtifacts.title, mode: mode, trashedCount: result.trashed.count,
@@ -215,11 +244,19 @@ final class MaintenanceMonitor: ObservableObject {
             case .success(let text): description = text
             case .failure(let error): description = "kept: \(error.localizedDescription)"
             }
-            try? MaintenanceAuditLog(url: auditURL).append(Record(
-                timestamp: Date(), repository: candidate.repository, pullRequest: candidate.pullRequest, path: candidate.path, result: description
-            ))
-            return outcome
-        } finish: { monitor, outcome in
+            let auditError: String?
+            do {
+                try MaintenanceAuditLog(url: auditURL).append(Record(
+                    timestamp: Date(), repository: candidate.repository, pullRequest: candidate.pullRequest, path: candidate.path, result: description
+                ))
+                auditError = nil
+            } catch {
+                auditError = "The audit record for this worktree could not be written: \(error.localizedDescription)"
+            }
+            return (outcome, auditError)
+        } finish: { monitor, output in
+            let (outcome, auditError) = output
+            if let auditError { monitor.report(auditError) }
             switch outcome {
             case .success(let text):
                 monitor.message = text
@@ -236,16 +273,26 @@ final class MaintenanceMonitor: ObservableObject {
     func scan(_ step: Step) {
         let settings = settings
         let environment = MaintenanceStepEnvironment()
+        let artifactGeneration = artifactRootsGeneration
+        let repositoryGeneration = repositoryRootsGeneration
         switch step {
         case .archives:
             perform(step) { ArchiveSweeper.scan(roots: settings.artifactRoots, minimumIdleHours: settings.archiveIdleHours, environment: environment) }
-                finish: { $0.archiveScan = $1; $0.describe($1, step: step) }
+                finish: { monitor, scan in
+                    guard monitor.artifactRootsGeneration == artifactGeneration else { return monitor.rootsChanged(step) }
+                    monitor.archiveScan = scan
+                    monitor.describe(scan, step: step)
+                }
         case .diskImages:
             perform(step) { InstalledDiskImageFinder.scan(environment: environment) }
                 finish: { $0.diskImageScan = $1; $0.describe($1, step: step) }
         case .buildOutput:
             perform(step) { IdleBuildOutputFinder.scan(repositoryRoots: settings.repositoryRoots, idleDays: settings.buildIdleDays, environment: environment) }
-                finish: { $0.buildScan = $1; $0.describe($1, step: step) }
+                finish: { monitor, scan in
+                    guard monitor.repositoryRootsGeneration == repositoryGeneration else { return monitor.rootsChanged(step) }
+                    monitor.buildScan = scan
+                    monitor.describe(scan, step: step)
+                }
         case .caches:
             perform(step) { ToolCacheManager.status(environment: environment) } finish: { $0.caches = $1 }
         case .trash:
@@ -295,17 +342,22 @@ final class MaintenanceMonitor: ObservableObject {
     func clearCache(_ cache: ToolCacheStatus) {
         let environment = MaintenanceStepEnvironment()
         let before = cache.sizeBytes
-        perform(.caches) {
-            (ToolCacheManager.clear(cache.id, environment: environment), ToolCacheManager.status(environment: environment))
+        perform(.caches) { () -> (Result<[ToolCacheStatus], MaintenanceError>, [ToolCacheStatus]?) in
+            let result = ToolCacheManager.clear(cache.id, environment: environment)
+            // A successful clear already measured every cache; only a failure needs a fresh read.
+            if case .success = result { return (result, nil) }
+            return (result, ToolCacheManager.status(environment: environment))
         } finish: { monitor, output in
-            monitor.caches = output.1
             switch output.0 {
-            case .success(let after):
+            case .success(let statuses):
+                monitor.caches = statuses
+                let after = statuses.first { $0.cache.id == cache.cache.id }?.sizeBytes ?? 0
                 let freed = before > after ? before - after : 0
                 monitor.message = "\(cache.cache.title): \(formatBytes(freed)) cleared."
                 monitor.record(MaintenanceRunSummary(date: Date(), task: cache.cache.title, mode: "apply", trashedCount: 1,
                                                      trashedBytes: freed, protectedCount: 0, errorCount: 0))
             case .failure(let error):
+                monitor.caches = output.1
                 monitor.report("\(cache.cache.title) was kept: \(error.localizedDescription)")
             }
         }
@@ -323,13 +375,15 @@ final class MaintenanceMonitor: ObservableObject {
             switch result {
             case .success(let remaining):
                 monitor.trashItemCount = remaining
-                let freed = (before != nil && after != nil) ? max(0, after! - before!) : 0
+                // An unreadable volume capacity is unavailable, not a measured zero.
+                let freed: Int64? = before.flatMap { before in after.map { max(0, $0 - before) } }
+                let change = freed.map { "Free space changed by \(formatBytes(UInt64($0)))." } ?? "The free-space change could not be measured."
                 monitor.message = remaining == 0
-                    ? "The Trash is empty. Free space changed by \(formatBytes(UInt64(freed)))."
-                    : "Finder is still emptying the Trash; \(remaining) item(s) remain."
+                    ? "The Trash is empty. \(change)"
+                    : "Finder is still emptying the Trash; \(remaining) item(s) remain. \(change)"
                 monitor.record(MaintenanceRunSummary(date: Date(), task: Step.trash.title, mode: "apply", trashedCount: 0,
-                                                     trashedBytes: UInt64(freed), protectedCount: 0, errorCount: remaining == 0 ? 0 : 1,
-                                                     note: "Space freed"))
+                                                     trashedBytes: UInt64(freed ?? 0), protectedCount: 0, errorCount: remaining == 0 ? 0 : 1,
+                                                     note: freed == nil ? MaintenanceRunSummary.spaceUnavailableNote : MaintenanceRunSummary.spaceFreedNote))
             case .failure(let error):
                 monitor.report(error.localizedDescription)
             }
@@ -351,6 +405,10 @@ final class MaintenanceMonitor: ObservableObject {
                 finish(self, output)
             }
         }
+    }
+
+    private func rootsChanged(_ step: Step) {
+        message = "\(step.title): maintenance roots changed during the scan. Scan again."
     }
 
     private func describe(_ scan: TrashScan, step: Step) {
@@ -398,6 +456,27 @@ final class MaintenanceMonitor: ObservableObject {
     }
 }
 
+/// A revocable authorization shared with background work; revoking it invalidates every token
+/// issued before.
+private final class RunAuthorization: @unchecked Sendable {
+    private let lock = NSLock()
+    private var generation = 0
+
+    func current() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return generation
+    }
+
+    func revoke() {
+        lock.lock()
+        generation += 1
+        lock.unlock()
+    }
+
+    func isValid(_ token: Int) -> Bool { current() == token }
+}
+
 #if KILLSWITCH_PERFORMANCE_PROBE
 extension MaintenanceMonitor {
     /// Publishes fictional plans in memory only; nothing is inspected, moved, or logged.
@@ -429,7 +508,8 @@ extension MaintenanceMonitor {
             MaintenanceRunSummary(date: now.addingTimeInterval(-3_600), task: Step.mergedArtifacts.title, mode: "scheduled",
                                   trashedCount: 4, trashedBytes: 2_300_000_000, protectedCount: 3, errorCount: 0),
             MaintenanceRunSummary(date: now.addingTimeInterval(-7_200), task: Step.trash.title, mode: "apply",
-                                  trashedCount: 0, trashedBytes: 2_100_000_000, protectedCount: 0, errorCount: 0, note: "Space freed")
+                                  trashedCount: 0, trashedBytes: 2_100_000_000, protectedCount: 0, errorCount: 0,
+                                  note: MaintenanceRunSummary.spaceFreedNote)
         ]
     }
 }

@@ -279,8 +279,9 @@ struct MaintenanceView: View {
 
     private var historyCard: some View {
         let entries = monitor.history
-        let moved = entries.reduce(UInt64(0)) { $0 + ($1.note == "Space freed" ? 0 : $1.trashedBytes) }
-        let freed = entries.filter { $0.note == "Space freed" }.reduce(UInt64(0)) { $0 + $1.trashedBytes }
+        let spaceNotes: Set<String?> = [MaintenanceRunSummary.spaceFreedNote, MaintenanceRunSummary.spaceUnavailableNote]
+        let moved = entries.reduce(UInt64(0)) { $0 + (spaceNotes.contains($1.note) ? 0 : $1.trashedBytes) }
+        let freed = entries.filter { $0.note == MaintenanceRunSummary.spaceFreedNote }.reduce(UInt64(0)) { $0 + $1.trashedBytes }
         return VStack(alignment: .leading, spacing: 8) {
             Label("Last 24 hours", systemImage: "clock.arrow.circlepath")
                 .font(.system(size: 13, weight: .semibold)).foregroundColor(Theme.accent)
@@ -296,7 +297,8 @@ struct MaintenanceView: View {
                         Text(entry.task).font(.system(size: 11))
                         if entry.mode == "scheduled" { StatusBadge(title: "Automatic", color: Theme.accent) }
                         Spacer()
-                        Text(entry.note == "Space freed" ? "\(formatBytes(entry.trashedBytes)) freed"
+                        Text(entry.note == MaintenanceRunSummary.spaceFreedNote ? "\(formatBytes(entry.trashedBytes)) freed"
+                             : entry.note == MaintenanceRunSummary.spaceUnavailableNote ? "space change unavailable"
                              : "\(entry.trashedCount) item(s), \(formatBytes(entry.trashedBytes))")
                             .font(.system(size: 11, design: .monospaced))
                         if entry.errorCount > 0 { StatusBadge(title: "\(entry.errorCount) error(s)", color: .orange) }

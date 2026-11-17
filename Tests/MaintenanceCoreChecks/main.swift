@@ -39,6 +39,15 @@ struct CheckRunner {
         check(MaintenancePath.isDescendant("/a/b/c", of: "/a/b") && !MaintenancePath.isDescendant("/a/bc", of: "/a/b")
               && !MaintenancePath.isDescendant("/a/b", of: "/a/b", orEqual: false), "compares path components, not string prefixes")
         check(MaintenancePath.relative("/a/b/c/d", to: "/a/b") == "c/d", "derives relative paths")
+        check(MaintenancePath.protectedReason("/Users/synthetic/Library/Caches/x", home: home) != nil
+              && MaintenancePath.protectedReason("/Users/synthetic/.Trash/x", home: home) != nil
+              && MaintenancePath.protectedReason("/Users/synthetic", home: home) != nil
+              && MaintenancePath.protectedReason("/private/tmp/x", home: home) != nil
+              && MaintenancePath.protectedReason("/Users/synthetic/Downloads/a.dmg", home: home) != nil
+              && MaintenancePath.protectedReason("/Users/synthetic/Downloads/a.dmg", home: home, allowsDownloadsDiskImages: true) == nil
+              && MaintenancePath.protectedReason("/Users/synthetic/Downloads/a.zip", home: home, allowsDownloadsDiskImages: true) != nil
+              && MaintenancePath.protectedReason("/Users/synthetic/workspace/x/node_modules", home: home) == nil,
+              "never moves items outside home, in Library, the Trash, or Downloads except installed DMGs")
         check(GitHubRepository(remoteURL: "git@github.com:synthetic-owner/demo.git")?.description == "synthetic-owner/demo"
               && GitHubRepository(remoteURL: "https://github.com/synthetic-owner/demo")?.description == "synthetic-owner/demo"
               && GitHubRepository(remoteURL: "https://gitlab.com/synthetic-owner/demo.git") == nil
@@ -246,6 +255,9 @@ struct CheckRunner {
         let busy = planner.apply(plan)
         check(busy.trashed.isEmpty && busy.kept.count == plan.artifacts.count, "a file opened in the worktree after the preview keeps every artifact")
         openPath.value = nil
+        let stopped = planner.apply(plan, shouldContinue: { false })
+        check(stopped.trashed.isEmpty && stopped.kept.count == plan.artifacts.count && stopped.kept.allSatisfy { $0.reason.contains("stopped") },
+              "a withdrawn schedule stops the run before any move")
         try home.write("workspace/copilot-worktrees/demo/session-a/dist/new.js", "changed after preview")
         let result = planner.apply(plan)
         let removed = Set(result.trashed.map { ($0.path as NSString).lastPathComponent })
@@ -421,6 +433,10 @@ struct CheckRunner {
         check(dirtyBuilds.candidates.isEmpty && dirtyBuilds.kept.contains { $0.reason.contains("uncommitted") }, "skips dirty checkouts")
         let stale = environment.trash(builds.candidates)
         check(stale.trashed.isEmpty && stale.kept.first?.reason.contains("changes") == true, "rechecks the checkout before trashing build output: \(stale)")
+        try FileManager.default.createSymbolicLink(atPath: home.path("linked-library"), withDestinationPath: home.path("Library"))
+        let linkedRoot = IdleBuildOutputFinder.scan(repositoryRoots: [home.path("linked-library")], idleDays: 14, environment: environment)
+        check(linkedRoot.candidates.isEmpty && linkedRoot.kept.contains { $0.reason.contains("Library") },
+              "revalidates roots at scan time, so a root linked into ~/Library is refused")
 
         environment.now = { Date() }
         try home.write("Library/Caches/go-build/a", String(repeating: "x", count: 5_000))

@@ -327,7 +327,8 @@ before acting. Everything moves to the Trash unless stated otherwise.
   Read-only installer images that are mounted and unused are ejected normally;
   busy images stay mounted.
 - **Run automatically** (off by default) repeats the merged-artifact cleanup
-  every 1, 6, 12, or 24 hours while KillSwitch runs, without asking.
+  every 1, 6, 12, or 24 hours while KillSwitch runs, without asking. Turning it
+  off stops an automatic run that is in progress before its next move.
 - **Need your approval** lists whole worktrees and sessions whose PRs are
   merged. Sessions are never removed. **Remove…** on a worktree runs
   `git worktree remove` without `--force`, after a fresh check; Git refuses
@@ -354,6 +355,9 @@ before acting. Everything moves to the Trash unless stated otherwise.
   roots default to existing `~/Projects`, `~/workspace`, `~/Developer`, `~/src`,
   and `~/code`. Add or remove roots inside your home folder; `~/Downloads`,
   `~/Library`, and the Trash are refused. **Reset to defaults** restores them.
+  Roots are checked again at every scan, so a root that later links into a
+  refused location is skipped. Changing roots discards earlier previews and
+  scans.
 
 Every merged-artifact run appends paths, sizes, PRs, protected and skipped
 reasons, and errors to `~/.copilot/logs/merged-artifact-cleanup.jsonl`. The log
@@ -585,7 +589,8 @@ again. The page is read-only; **Reveal in Finder** shows an app.
 **Security** under **Your Mac** reads, without administrator access:
 
 - **Protections:** FileVault, the firewall and its stealth mode, Gatekeeper,
-  System Integrity Protection, the XProtect definitions version, and whether
+  System Integrity Protection, the active XProtect definitions version (from
+  `xprotect version` on macOS 15 and later, otherwise the XProtect bundle), and whether
   security responses install automatically. A protection that is off is
   highlighted; stealth mode is informational. An unrecognized or failed read is
   shown as Unknown with the raw output, never assumed.

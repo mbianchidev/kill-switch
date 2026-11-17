@@ -85,10 +85,21 @@ public enum SecurityPostureParser {
     public static func xprotectVersion(_ info: [String: Any]?) -> String? {
         (info?["CFBundleShortVersionString"] as? String) ?? (info?["CFBundleVersion"] as? String)
     }
+
+    /// Reads `xprotect version` output such as `Version: 5372 Installed: 2026-01-01 ...`.
+    public static func xprotectCommandVersion(_ output: String) -> String? {
+        let words = output.split(whereSeparator: \.isWhitespace)
+        guard let index = words.firstIndex(of: "Version:"), words.indices.contains(index + 1) else { return nil }
+        let version = words[index + 1]
+        return version.allSatisfy { $0.isNumber || $0 == "." } ? String(version) : nil
+    }
 }
 
 public struct SecurityPostureService: Sendable {
     public static let xprotectInfo = URL(fileURLWithPath: "/Library/Apple/System/Library/CoreServices/XProtect.bundle/Contents/Info.plist")
+    /// On macOS 15 and later the active rules live outside the CoreServices bundle, which can lag;
+    /// this command reports the active version. Older systems lack it and use the bundle.
+    public static let xprotectExecutable = "/usr/bin/xprotect"
     public static let softwareUpdatePreferences = URL(fileURLWithPath: "/Library/Preferences/com.apple.SoftwareUpdate.plist")
 
     private let runner: SoftwareCommandRunning
@@ -120,9 +131,13 @@ public struct SecurityPostureService: Sendable {
             check(.systemIntegrity, "System Integrity Protection", SoftwareCommand("/usr/bin/csrutil", arguments: ["status"]),
                   parse: SecurityPostureParser.systemIntegrity)
         ]
-        if let version = SecurityPostureParser.xprotectVersion(Self.plist(at: xprotectInfo)) {
+        if let result = try? runner.run(SoftwareCommand(Self.xprotectExecutable, arguments: ["version"])), result.succeeded,
+           let version = SecurityPostureParser.xprotectCommandVersion(result.output + "\n" + result.error) {
             checks.append(SecurityCheck(id: .xprotect, title: "XProtect malware definitions", state: .enabled,
                                         detail: "Version \(version)"))
+        } else if let version = SecurityPostureParser.xprotectVersion(Self.plist(at: xprotectInfo)) {
+            checks.append(SecurityCheck(id: .xprotect, title: "XProtect malware definitions", state: .enabled,
+                                        detail: "Version \(version), from the XProtect bundle"))
         } else {
             checks.append(SecurityCheck(id: .xprotect, title: "XProtect malware definitions", state: .unknown,
                                         detail: "The XProtect bundle version could not be read."))

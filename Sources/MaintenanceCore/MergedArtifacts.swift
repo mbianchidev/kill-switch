@@ -225,14 +225,9 @@ public final class MergedArtifactPlanner {
         var plan = MergedArtifactPlan(createdAt: environment.now())
         pullRequestCache.removeAll()
         githubFailure = nil
-        var validRoots: [String] = []
-        for root in roots {
-            do {
-                validRoots.append(try MaintenanceSettings.validateRoot(root, home: environment.home, fileManager: environment.fileManager))
-            } catch {
-                plan.skipped.append(MaintenanceFinding(path: root, reason: error.localizedDescription))
-            }
-        }
+        let validated = MaintenanceSettings.validRoots(roots, home: environment.home, fileManager: environment.fileManager)
+        plan.skipped.append(contentsOf: validated.rejected)
+        let validRoots = validated.roots
         plan.roots = validRoots
         let usage: ProcessUsageSnapshot
         let images: [AttachedDiskImage]
@@ -484,7 +479,7 @@ public final class MergedArtifactPlanner {
         guard let identity = FileIdentity.read(path) else { return "it disappeared during inspection" }
         if identity.isSymbolicLink { return "it is a symbolic link" }
         if identity.owner != environment.userID { return "it is owned by another user" }
-        if MaintenancePath.isInDownloads(path, home: environment.home) { return "~/Downloads is never cleaned here" }
+        if let reason = MaintenancePath.protectedReason(path, home: environment.home) { return reason }
         let resolved = MaintenancePath.resolved(path)
         guard MaintenancePath.isDescendant(resolved, of: MaintenancePath.resolved(root), orEqual: false) else {
             return "its resolved path escapes \(root)"
@@ -584,8 +579,9 @@ public final class MergedArtifactPlanner {
 
     // MARK: Apply
 
-    /// Rechecks every manifest entry immediately before moving it to the Trash.
-    public func apply(_ plan: MergedArtifactPlan) -> MaintenanceApplyResult {
+    /// Rechecks every manifest entry immediately before moving it to the Trash. `shouldContinue`
+    /// is asked before each entry, so a withdrawn schedule stops an unattended run between moves.
+    public func apply(_ plan: MergedArtifactPlan, shouldContinue: () -> Bool = { true }) -> MaintenanceApplyResult {
         var result = MaintenanceApplyResult(startedAt: environment.now(), finishedAt: environment.now())
         result.freeBytesBefore = ArtifactInspector.availableBytes(at: environment.home.path)
         let usage: ProcessUsageSnapshot
@@ -602,7 +598,13 @@ public final class MergedArtifactPlanner {
             return result
         }
         var verifiedOwners: [String: String?] = [:]
-        for artifact in plan.artifacts {
+        for (index, artifact) in plan.artifacts.enumerated() {
+            guard shouldContinue() else {
+                result.kept.append(contentsOf: plan.artifacts[index...].map {
+                    MaintenanceFinding(path: $0.path, reason: "the run was stopped before it was moved")
+                })
+                break
+            }
             let ownerPath = artifact.owner.path
             if verifiedOwners[ownerPath] == nil {
                 verifiedOwners[ownerPath] = .some(ownerRecheck(artifact.owner, sessions: sessions, usage: usage))

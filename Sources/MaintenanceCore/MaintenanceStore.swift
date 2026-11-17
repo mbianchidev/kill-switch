@@ -38,6 +38,23 @@ public struct MaintenanceSettings: Codable, Equatable, Sendable {
         MaintenanceSettings(artifactRoots: defaultArtifactRoots(home: home), repositoryRoots: defaultRepositoryRoots(home: home))
     }
 
+    /// Validates and resolves roots when an operation starts, because a saved or default root can
+    /// later become a link into a protected location. Rejected roots are returned with reasons.
+    public static func validRoots(_ roots: [String], home: URL, fileManager: FileManager = .default)
+        -> (roots: [String], rejected: [MaintenanceFinding]) {
+        var valid: [String] = []
+        var rejected: [MaintenanceFinding] = []
+        for root in roots {
+            do {
+                let path = try validateRoot(root, home: home, fileManager: fileManager)
+                if !valid.contains(path) { valid.append(path) }
+            } catch {
+                rejected.append(MaintenanceFinding(path: root, reason: error.localizedDescription))
+            }
+        }
+        return (valid, rejected)
+    }
+
     /// A root must be an existing folder inside the home folder, not the home folder itself,
     /// `~/Downloads`, `~/Library`, or the Trash.
     public static func validateRoot(_ path: String, home: URL, fileManager: FileManager = .default) throws -> String {
@@ -151,6 +168,10 @@ public struct MaintenanceAuditLog: Sendable {
 
 public struct MaintenanceRunSummary: Codable, Equatable, Identifiable, Sendable {
     public var id: Date { date }
+    /// Marks an Empty Trash run whose bytes are measured free space, not moved items.
+    public static let spaceFreedNote = "Space freed"
+    /// Marks an Empty Trash run whose free-space change could not be measured.
+    public static let spaceUnavailableNote = "Space change unavailable"
 
     public let date: Date
     public let task: String

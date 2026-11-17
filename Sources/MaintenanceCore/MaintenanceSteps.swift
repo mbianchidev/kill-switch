@@ -154,8 +154,8 @@ public struct MaintenanceStepEnvironment {
                 result.kept.append(MaintenanceFinding(path: candidate.path, reason: "it changed after inspection"))
                 continue
             }
-            if MaintenancePath.isInDownloads(candidate.path, home: home), !candidate.path.lowercased().hasSuffix(".dmg") {
-                result.kept.append(MaintenanceFinding(path: candidate.path, reason: "~/Downloads is never cleaned here"))
+            if let reason = MaintenancePath.protectedReason(candidate.path, home: home, allowsDownloadsDiskImages: true) {
+                result.kept.append(MaintenanceFinding(path: candidate.path, reason: reason))
                 continue
             }
             if usage.isOpen(candidate.path) {
@@ -215,10 +215,16 @@ public enum ArchiveSweeper {
             return scan
         }
         let sessions = environment.activeSessions()
-        let worktreeRoots = roots.filter { !CheckoutDiscovery.isSessionRoot($0, fileManager: environment.fileManager) }
+        let validated = MaintenanceSettings.validRoots(roots, home: environment.home, fileManager: environment.fileManager)
+        scan.kept.append(contentsOf: validated.rejected)
+        let worktreeRoots = validated.roots.filter { !CheckoutDiscovery.isSessionRoot($0, fileManager: environment.fileManager) }
         let checkouts = CheckoutDiscovery.find(roots: worktreeRoots, fileManager: environment.fileManager)
         let idle = TimeInterval(max(1, minimumIdleHours)) * 3_600
         for checkout in checkouts {
+            if let reason = MaintenancePath.protectedReason(checkout, home: environment.home) {
+                scan.kept.append(MaintenanceFinding(path: checkout, reason: reason))
+                continue
+            }
             if let reason = environment.checkoutActivity(checkout, usage: usage, sessions: sessions) {
                 scan.kept.append(MaintenanceFinding(path: checkout, reason: reason))
                 continue
@@ -489,19 +495,25 @@ public enum IdleBuildOutputFinder {
         let sessions = environment.activeSessions()
         let idle = TimeInterval(max(1, idleDays)) * 86_400
         var checkouts = Set<String>()
-        for root in repositoryRoots {
+        let validated = MaintenanceSettings.validRoots(repositoryRoots, home: environment.home, fileManager: environment.fileManager)
+        scan.kept.append(contentsOf: validated.rejected)
+        for root in validated.roots {
             for child in (try? environment.fileManager.contentsOfDirectory(atPath: root)) ?? [] where !child.hasPrefix(".") {
                 let path = (root as NSString).appendingPathComponent(child)
                 var isDirectory: ObjCBool = false
                 guard environment.fileManager.fileExists(atPath: (path as NSString).appendingPathComponent(".git"), isDirectory: &isDirectory),
                       isDirectory.boolValue else { continue }
                 checkouts.insert(path)
-                for worktree in (try? environment.git.linkedWorktrees(of: path)) ?? [] where !MaintenancePath.isInDownloads(worktree, home: environment.home) {
+                for worktree in (try? environment.git.linkedWorktrees(of: path)) ?? [] {
                     checkouts.insert(worktree)
                 }
             }
         }
         for checkout in checkouts.sorted() where environment.fileManager.fileExists(atPath: checkout) {
+            if let reason = MaintenancePath.protectedReason(checkout, home: environment.home) {
+                scan.kept.append(MaintenanceFinding(path: checkout, reason: reason))
+                continue
+            }
             if let reason = environment.checkoutActivity(checkout, usage: usage, sessions: sessions) {
                 scan.kept.append(MaintenanceFinding(path: checkout, reason: reason))
                 continue
@@ -665,8 +677,9 @@ public enum ToolCacheManager {
         }
     }
 
-    /// Clears one cache after rechecking that nothing using it runs. Returns the measured size after.
-    public static func clear(_ cacheID: String, environment: MaintenanceStepEnvironment) -> Result<UInt64, MaintenanceError> {
+    /// Clears one cache after rechecking that nothing using it runs. Returns every cache's status
+    /// measured afterwards, so callers need not walk the caches again.
+    public static func clear(_ cacheID: String, environment: MaintenanceStepEnvironment) -> Result<[ToolCacheStatus], MaintenanceError> {
         guard let current = status(environment: environment).first(where: { $0.cache.id == cacheID }) else {
             return .failure(.inspectionFailed("the cache no longer exists"))
         }
@@ -700,8 +713,7 @@ public enum ToolCacheManager {
                 }
             }
         }
-        let after = status(environment: environment).first { $0.cache.id == cacheID }?.sizeBytes ?? 0
-        return .success(after)
+        return .success(status(environment: environment))
     }
 
     /// `chromium-1140` and `chromium-1155` are revisions of one browser; all but the newest go.

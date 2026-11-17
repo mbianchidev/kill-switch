@@ -285,6 +285,8 @@ struct CheckRunner {
             case "/usr/bin/fdesetup": return SoftwareCommandResult(status: 0, output: "FileVault is On.\n", error: "")
             case "/usr/sbin/spctl": return SoftwareCommandResult(status: 0, output: "", error: "assessments enabled\n")
             case "/usr/bin/csrutil": throw SyntheticFailure()
+            case "/usr/bin/xprotect":
+                return SoftwareCommandResult(status: 0, output: "Version: 10001 Installed: 2026-01-01 00:00:00 +0000\n", error: "")
             default:
                 return command.arguments == ["--getglobalstate"]
                     ? SoftwareCommandResult(status: 0, output: "Firewall is disabled. (State = 0)\n", error: "")
@@ -302,10 +304,18 @@ struct CheckRunner {
               "reports unrecognized output as unknown with the raw text")
         check(checks[.systemIntegrity]?.state == .unknown && checks[.systemIntegrity]?.detail == "synthetic launch failure",
               "reports commands that cannot run")
-        check(checks[.xprotect]?.detail == "Version 9999" && checks[.securityResponses]?.state == .enabled,
-              "reads XProtect and automatic security response settings")
+        check(checks[.xprotect]?.detail == "Version 10001" && checks[.securityResponses]?.state == .enabled,
+              "reads the active XProtect version and automatic security response settings")
+        let olderSystem = MockRunner { command in
+            if command.executable == "/usr/bin/xprotect" { throw SyntheticFailure() }
+            return try runner.run(command)
+        }
+        let bundled = SecurityPostureService(runner: olderSystem, xprotectInfo: xprotect, softwareUpdatePreferences: preferences)
+            .checks().first { $0.id == .xprotect }
+        check(bundled?.detail == "Version 9999, from the XProtect bundle", "falls back to the XProtect bundle without the xprotect command")
+        check(SecurityPostureParser.xprotectCommandVersion("unexpected") == nil, "ignores unrecognized xprotect output")
         let missing = SecurityPostureService(
-            runner: runner, xprotectInfo: root.appendingPathComponent("missing.plist"),
+            runner: olderSystem, xprotectInfo: root.appendingPathComponent("missing.plist"),
             softwareUpdatePreferences: root.appendingPathComponent("missing.plist")
         ).checks()
         check(missing.first { $0.id == .xprotect }?.state == .unknown && missing.first { $0.id == .securityResponses }?.state == .unknown,
