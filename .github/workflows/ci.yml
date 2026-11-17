@@ -53,6 +53,9 @@ jobs:
       - name: Test Homebrew, application, update, and security parsing
         run: swift run SoftwareInventoryCoreChecks
 
+      - name: Test merged-artifact and maintenance safety
+        run: swift run MaintenanceCoreChecks
+
       - name: Package universal app and DMG
         run: bash scripts/package-macos.sh --universal-build
 

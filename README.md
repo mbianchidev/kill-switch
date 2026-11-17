@@ -95,9 +95,13 @@ See [architecture and development](docs/development.md).
 - **Applications / Security:** see which apps came from Homebrew or are local
   (not notarized), macOS protections, and security updates.
 - **Homebrew:** upgrade or uninstall formulae and casks when Homebrew is
-  installed; self-updating casks are always skipped.
+  installed; self-updating and running casks are always skipped.
 - **Startup:** review apps, services, and cron jobs before disabling future
   launches. System-wide changes require administrator approval.
+- **Disk cleanup > Maintenance:** move merged-PR build artifacts, idle archives,
+  installed DMGs, and idle build output to the Trash, clear tool caches, and
+  review merged worktrees for removal. Always previewed and confirmed; an
+  optional schedule is off by default.
 - **Folder alerts:** add folders and per-folder size limits; KillSwitch alerts
   in the app and through macOS notifications when a folder reaches its limit.
 - **Dev cleanup:** understand the age-based safety rules before opening the tab;
@@ -119,7 +123,7 @@ the read-only [status command](docs/cli.md#read-saved-status).
 | System health | CPU/hardware details, system details with storage, displays, and masked identifiers, awake time since restart, load averages, public battery readings, Low Power Mode, and macOS thermal pressure |
 | Software and security | Homebrew upgrades/removals, installed apps marked Homebrew or local, macOS protections, and security updates |
 | Startup | Reversible login app, service, and cron controls, with protected macOS entries kept read-only |
-| Disk cleanup | Large files, temporary data, caches, and folders with confirmation and Trash |
+| Disk cleanup | Large files, temporary data, caches, and folders with confirmation and Trash; merged-PR artifact and Mac maintenance steps |
 | Folder size alerts | Background size checks for chosen folders, with per-folder limits, in-app alerts, and macOS notifications |
 | Developer tools | Configurable dev cleanup, protected-process rules, CPU alerts, and JSON port syncing |
 | Screen time | Local active-time totals, continuous stretches, and optional break reminders |

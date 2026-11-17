@@ -269,6 +269,9 @@ empty: KillSwitch never installs, repairs, or configures Homebrew.
 - **Uninstall** runs `brew uninstall` after confirmation, without `--force`,
   `--zap`, or `--ignore-dependencies`. Homebrew refuses to remove a formula that
   another package needs. A cask uninstall removes its app but keeps its settings.
+- Casks whose apps are running show **Running** and are skipped by **Upgrade**
+  and **Upgrade all**; quit the app, then upgrade. KillSwitch checks again
+  before each cask, and skips every cask if running apps cannot be listed.
 - **Check for updates** runs `brew update`; the refresh button relists packages.
 
 Every action runs `brew` in the background as your user, one at a time, with
@@ -281,7 +284,7 @@ KillSwitch; run those in Terminal. Filter by **Outdated**, **Formulae**, or
 ## Disk cleanup
 
 - Opens on **Largest files**, sorted by occupied disk space. Switch to
-  **Temporary**, **Caches**, or **Large folders**.
+  **Temporary**, **Caches**, **Large folders**, or [**Maintenance**](#maintenance).
 - Browse with breadcrumbs, filter by name or path, reveal items in Finder, and
   select one or more candidates.
 - Sort by item, contents, modification date, or space used; the Sort picker
@@ -292,7 +295,8 @@ KillSwitch; run those in Terminal. Filter by **Outdated**, **Formulae**, or
   are cached; **Rescan** applies added, updated, and removed items without
   clearing visible rows first.
 - Every removal requires confirmation and moves items to macOS Trash.
-  KillSwitch never permanently deletes an item.
+  Only **Empty Trash** and **Remove worktree** in Maintenance delete permanently,
+  each after its own confirmation.
 - Standard home folders such as Documents, Downloads, Pictures, and Movies
   must be opened before their contents can be selected. Cleanup roots,
   `~/Library` outside the designated cleanup areas, and hidden home
@@ -302,6 +306,57 @@ KillSwitch; run those in Terminal. Filter by **Outdated**, **Formulae**, or
 - Partial scans report permission problems and link to **Full Disk Access**.
   Desktop, Documents, Downloads, and other protected locations may need access.
   Updating an ad-hoc-signed app or binary may require granting it again.
+
+### Maintenance
+
+**Maintenance** collects the disk steps of a periodic Mac cleanup. Each card
+scans first, lists what it would move with reasons for anything kept, and asks
+before acting. Everything moves to the Trash unless stated otherwise.
+
+- **Merged PR artifacts:** **Preview** finds generated installers (`.dmg`,
+  `.pkg`, app installer `.zip`/`.tar.gz`), staged apps in packaging folders, and
+  ignored `node_modules`, `dist`, `dist-electron`, `target`, CMake `build`,
+  `coverage`, and `test-results` folders in agent sessions and worktrees whose
+  pull request is merged. GitHub is read with your existing `gh` login; a
+  closed-but-unmerged PR is not eligible. A worktree must be clean, idle, and
+  at the merged PR's head commit. Running, recently active, or unreadable
+  sessions, open files, and Git metadata, tracked files, or local
+  configuration are protected. **Move to Trash** rechecks every item first.
+  Read-only installer images that are mounted and unused are ejected normally;
+  busy images stay mounted.
+- **Run automatically** (off by default) repeats the merged-artifact cleanup
+  every 1, 6, 12, or 24 hours while KillSwitch runs, without asking.
+- **Need your approval** lists whole worktrees and sessions whose PRs are
+  merged. Sessions are never removed. **Remove…** on a worktree runs
+  `git worktree remove` without `--force`, after a fresh check; Git refuses
+  worktrees with changes or untracked files. This deletes the folder, including
+  its ignored files, and keeps the branch.
+- **Archives in agent worktrees:** untracked archives idle for the chosen hours
+  (24 by default) and not open.
+- **Installed disk images:** DMGs at the top level of `~/Downloads` and
+  `~/Desktop` whose apps are already installed at the same or a newer version.
+  Nothing else in those folders is opened or moved.
+- **Idle build output:** ignored `target`, `node_modules`, and `build` folders
+  in clean checkouts under the repository roots, unused for the chosen days
+  (14 by default).
+- **Tool caches:** clears Homebrew, Go, npm, uv, pnpm, Yarn, pip, Playwright,
+  and Cargo caches with each tool's own command. A cache is kept while a
+  program that uses it runs.
+- **Trash:** counts items and empties the Trash through Finder after a separate
+  confirmation. This deletes everything there, including items you moved
+  yourself. Finder may ask for Automation permission.
+- **Last 24 hours** shows run counts, space moved and freed, and errors. Only
+  counts and sizes are kept, for 24 hours.
+- **Maintenance roots:** agent session and worktree roots default to
+  `~/.copilot/session-state` and `~/workspace/copilot-worktrees`; repository
+  roots default to existing `~/Projects`, `~/workspace`, `~/Developer`, `~/src`,
+  and `~/code`. Add or remove roots inside your home folder; `~/Downloads`,
+  `~/Library`, and the Trash are refused. **Reset to defaults** restores them.
+
+Every merged-artifact run appends paths, sizes, PRs, protected and skipped
+reasons, and errors to `~/.copilot/logs/merged-artifact-cleanup.jsonl`. The log
+rotates at 5 MB and keeps two older copies. Repository pulls are not part of
+Maintenance.
 
 ## Folder size alerts
 
@@ -612,8 +667,11 @@ These preferences persist. See [update controls](auto-update.md#using-updates),
 - Releases are ad-hoc signed, not Apple-notarized. Checksums verify integrity
   against the published release, not an Apple-verified publisher identity.
 - Homebrew upgrades and uninstalls run `brew` as your user and cannot be
-  undone by KillSwitch. Review the confirmation; self-updating casks are never
-  upgraded.
+  undone by KillSwitch. Review the confirmation; self-updating and running
+  casks are never upgraded.
+- Maintenance moves only verified generated files to the Trash and fails closed
+  when activity, ownership, or PR state cannot be confirmed. Emptying the Trash
+  and removing a worktree are permanent.
 - Applications, Security, Destinations, and System details are read-only.
   KillSwitch does not change security settings or install macOS updates.
 - Monitoring and keep-awake sessions stop when the app quits.

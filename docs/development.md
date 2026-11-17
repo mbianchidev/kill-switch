@@ -83,6 +83,7 @@ keep working, and no extra control is added.
 | [`DiskCleanupCore`](../Sources/DiskCleanupCore) | Parallel file scanning, cleanup candidates, protected-path checks, Trash operations, and folder size measurement, alert thresholds, and watched-folder persistence |
 | [`KeepAwakeCore`](../Sources/KeepAwakeCore) | IOKit power assertions, timed sessions, and resource cleanup |
 | [`InstallCore`](../Sources/InstallCore) | Binary/symlink path safety, native command execution, whole-app validation, staging, startup confirmation, and rollback |
+| [`MaintenanceCore`](../Sources/MaintenanceCore) | Merged-PR artifact planning, verification, Trash moves and audit log; agent session/worktree discovery; mac maintenance steps (archives, installed DMGs, idle build output, tool caches, Trash), settings and 24-hour summaries |
 | [`ScreenTimeCore`](../Sources/ScreenTimeCore) | Active-time tracking, idle breaks, daily rollover, and reminder boundaries |
 | [`SoftwareInventoryCore`](../Sources/SoftwareInventoryCore) | Homebrew inventory parsing and upgrade/uninstall plans, application scanning and Gatekeeper classification, macOS update parsing, and security posture reads behind a mockable command runner |
 | [`SystemMetricsCore`](../Sources/SystemMetricsCore) | Resource/system-health parsing, continuous sampling policy, PID-safe history/rates and inspection, network destination grouping and interface addresses, system details, bounded project discovery, and private SQLite storage |
@@ -175,7 +176,10 @@ and pinned packages are never named, and validates names before they become
 arguments. Uninstall plans never add `--force`, `--zap`, or
 `--ignore-dependencies`. Commands set `HOMEBREW_NO_AUTO_UPDATE` and a fixed
 `PATH`; `HomebrewService.perform` stops at the first failure and returns the
-transcript so far.
+transcript so far. Casks are upgraded one per command. `RunningCaskDetector`
+matches each cask's app bundles and uninstall `quit` bundle IDs against running
+applications; a running cask is never named, and if running applications cannot
+be listed every cask is skipped. The monitor rechecks before each cask command.
 
 `HomebrewMonitor.shared` serializes Homebrew work and is shared by the Homebrew,
 Applications, and Security pages. `ApplicationsMonitor` assesses apps in batches
@@ -193,6 +197,63 @@ app's lifetime. System details load once per System page visit through
 `SystemDetailsMonitor`. All of these pages load on demand, only while visible,
 and skip live reads when live operations are disabled, as in the probe.
 
+## Maintenance model
+
+[`MaintenanceCore`](../Sources/MaintenanceCore) formalizes the disk steps of
+the mac maintenance routine and the merged-PR artifact cleanup. Every external
+command (`git`, `gh`, `lsof`, `hdiutil`, `ps`, `osascript`, tool cache commands)
+goes through `SoftwareCommandRunning` with argument lists, never a shell.
+Repository, session, and PR text is data only.
+
+`MergedArtifactPlanner` fails closed:
+
+- An `lsof` or `hdiutil info` failure produces no plan. A GitHub failure stops
+  further verification and marks the plan incomplete; it never reuses older
+  PR state or switches accounts.
+- Sessions come from `workspace.yaml` under the artifact roots. KillSwitch has
+  no access to the Copilot app's status API, so a session is active if its
+  `inuse.<pid>.lock` PID is alive, any of its history files changed in the last
+  15 minutes, or its activity cannot be read. Active sessions, their
+  workspaces, worktrees with Git activity in the last hour, prewarm worktrees,
+  and any worktree with an open file or process working directory are protected.
+- PRs are read with `gh api -X GET repos/OWNER/REPO/pulls` for the branch. An
+  open PR wins; closed-unmerged is ineligible. Worktrees must be clean, with
+  `HEAD` equal to the merged PR's head SHA. Archived session artifacts must
+  predate `merged_at` plus one hour.
+- Eligible items: `.dmg`/`.pkg` installers, `.zip`/`.tar.gz` archives whose top
+  level is an `.app`, staged apps in packaging folders, and wholly ignored
+  `node_modules`, `dist`, `dist-electron`, `coverage`, `test-results`, Rust
+  `target` (next to `Cargo.toml`) and CMake `build` (with `CMakeCache.txt`).
+  Links, other owners' items, nested `.git`, tracked files, unreadable entries,
+  local configuration or secrets, and anything under `.git` or `~/Downloads`
+  are rejected.
+- Attached images are ejected only with a normal `hdiutil detach` when they are
+  read-only, user-owned, unused, and their backing file (resolved through the
+  `diskimages-helper` PID when `hdiutil` reports a stale path) is eligible.
+- Apply rechecks activity, tracking, identity and modification time per item,
+  moves it with `FileManager.trashItem`, and verifies the owning checkout and
+  session history afterwards. Whole worktrees and sessions are only listed;
+  worktree removal is a separate confirmed `git worktree remove` without
+  `--force`.
+
+`MaintenanceAuditLog` appends one JSON line per run to
+`~/.copilot/logs/merged-artifact-cleanup.jsonl`, rotating at 5 MB with two older
+copies; it records paths, sizes, and reasons, never file contents, credentials,
+or full process arguments. `MaintenanceHistoryStore` keeps only counts and
+sizes for 24 hours.
+
+The mac maintenance steps reuse the same protections: `ArchiveSweeper` (idle,
+untracked, unopened archives in agent worktrees), `InstalledDiskImageFinder`
+(top-level DMGs in `~/Downloads` and `~/Desktop`, attached `-readonly
+-nobrowse` and always detached, compared with installed app versions),
+`IdleBuildOutputFinder`, `ToolCacheManager` (each tool's own clean command,
+skipped while that tool runs), and `TrashBin` (Finder through `osascript`).
+Repository pulls from the routine are intentionally not included.
+
+`MaintenanceMonitor.shared` owns settings, the optional schedule (off by
+default; it runs merged-artifact cleanup only), and serialized work. Probe
+builds back it with an isolated defaults suite and fixture data.
+
 ## Run checks
 
 The regression targets are executable checks, not an XCTest suite. Run the same
@@ -202,6 +263,7 @@ core checks as [CI](../.github/workflows/ci.yml):
 swift run DevCleanupCoreChecks
 swift run DiskCleanupCoreChecks
 swift run InstallCoreChecks
+swift run MaintenanceCoreChecks
 swift run SystemMetricsChecks
 swift run ScreenTimeCoreChecks
 swift run SoftwareInventoryCoreChecks
@@ -221,6 +283,9 @@ Isolated launch-directory fixtures cover updater placeholders, configuration
 plists, read-only links, duplicate labels per domain, and source revalidation.
 They never change live startup entries, request administrator access, or control
 a desktop application.
+Maintenance checks build a synthetic home and temporary Git repositories and
+script `lsof`, `hdiutil`, `gh`, `ps`, and `osascript`; they never touch real
+sessions, worktrees, disk images, caches, or the Trash.
 
 For table-query changes, `swift run SystemMetricsChecks --table-query-checks`
 runs only the shared query, measurement-availability, and activity-field checks.
@@ -470,10 +535,10 @@ The optional PNG is the probe's own unshown window, never a desktop capture.
 explicit synthetic providers/termination results. It is a GUI fixture, not a
 live-cleanup measurement; synthetic cleanup startup rejects a missing injected
 service. The other navigation scenarios still exclude cleanup.
-`folder-alerts`, `homebrew`, `applications`, and `security` are also GUI
-fixtures rather than footprint scenarios: they render their pages with fictional
-in-memory data and never measure folders, run `brew`, `spctl`, or
-`softwareupdate`, persist, or notify. The `system` scenario also renders
+`folder-alerts`, `homebrew`, `applications`, `security`, and `maintenance` are
+also GUI fixtures rather than footprint scenarios: they render their pages with
+fictional in-memory data and never measure folders, run `brew`, `spctl`,
+`softwareupdate`, `git`, `gh`, or `hdiutil`, move files, persist, or notify. The `system` scenario also renders
 fictional system details and identifiers.
 `--performance-probe --native-health-check` separately verifies public native health interfaces
 without identifiers, UI interaction, or privileged diagnostics; it is not a
