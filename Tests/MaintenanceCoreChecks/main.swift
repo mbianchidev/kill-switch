@@ -404,6 +404,8 @@ struct CheckRunner {
         let restored = clockStore.load().settings
         check(restored.trashScheduleAnchor == start && restored.trashScheduleIntervalDays == 7 && !restored.isTrashEmptyDue(now: start),
               "a missing start begins a new interval instead of emptying at once, and unknown intervals reset to weekly")
+        let relaunched = MaintenanceSettingsStore(defaults: defaults, home: home.home, now: { start.addingTimeInterval(3 * 86_400) }).load().settings
+        check(relaunched.trashScheduleAnchor == start, "the repaired start is saved, so relaunching does not postpone automatic emptying")
         try clockStore.save(MaintenanceSettings(artifactRoots: [], repositoryRoots: [], trashScheduleEnabled: true,
                                                 trashScheduleIntervalDays: 1, trashScheduleAnchor: start.addingTimeInterval(86_400 * 40)))
         check(clockStore.load().settings.trashScheduleAnchor == start, "a start in the future after a clock change restarts the interval now")

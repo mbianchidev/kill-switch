@@ -150,9 +150,15 @@ public final class MaintenanceSettingsStore {
                 settings.trashScheduleIntervalDays = MaintenanceSettings.defaultTrashScheduleDays
             }
             // Without a recorded start, or with one in the future after a clock change, a new
-            // interval starts now rather than emptying immediately.
+            // interval starts now rather than emptying immediately. The repair is saved, so
+            // relaunching cannot keep postponing automatic emptying.
             if settings.trashScheduleEnabled, settings.trashScheduleAnchor.map({ $0 > now() }) ?? true {
                 settings.trashScheduleAnchor = now()
+                do {
+                    try save(settings)
+                } catch {
+                    return (settings, "The automatic Empty Trash schedule could not be saved (\(error.localizedDescription)); its next run may be postponed.")
+                }
             }
             return (settings, nil)
         } catch {
