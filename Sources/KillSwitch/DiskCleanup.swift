@@ -12,6 +12,15 @@ private final class DiskCleanupServiceBox: @unchecked Sendable {
     }
 }
 
+/// Opens the Privacy & Security pane that grants Full Disk Access; returns false if macOS refused.
+@MainActor
+func openFullDiskAccessPane() -> Bool {
+    guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else {
+        return false
+    }
+    return NSWorkspace.shared.open(url)
+}
+
 @MainActor
 final class DiskCleanupMonitor: ObservableObject {
     @Published private(set) var category: DiskCleanupCategory = .largestFiles
@@ -196,9 +205,7 @@ final class DiskCleanupMonitor: ObservableObject {
     }
 
     func openFullDiskAccessSettings() {
-        guard let url = URL(
-            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
-        ), NSWorkspace.shared.open(url) else {
+        guard openFullDiskAccessPane() else {
             var state = state(for: currentScanKey)
             state.errorMessage = "Could not open Full Disk Access settings."
             setState(state, for: currentScanKey)

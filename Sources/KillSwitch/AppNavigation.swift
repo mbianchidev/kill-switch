@@ -12,7 +12,7 @@ enum AppWindowVisibility {
 enum MainTab: String, CaseIterable, Identifiable {
     case dashboard, resources, memory, disk, network, energy
     case system, battery, thermal, devServers, connections, openFiles
-    case startup, diskCleanup, cleanup, watchdog, screenTime, diagnostics, keepAwake, updates
+    case startup, diskCleanup, folderAlerts, cleanup, watchdog, screenTime, diagnostics, keepAwake, updates
 
     var id: Self { self }
 
@@ -20,7 +20,7 @@ enum MainTab: String, CaseIterable, Identifiable {
         ("Overview", [.dashboard, .system]),
         ("Performance", [.resources, .memory, .disk, .network, .energy]),
         ("Investigate", [.devServers, .connections, .openFiles]),
-        ("Manage", [.startup, .diskCleanup, .cleanup, .watchdog]),
+        ("Manage", [.startup, .diskCleanup, .folderAlerts, .cleanup, .watchdog]),
         ("Your Mac", [.battery, .thermal, .screenTime, .keepAwake]),
         ("KillSwitch", [.diagnostics, .updates])
     ]
@@ -41,6 +41,7 @@ enum MainTab: String, CaseIterable, Identifiable {
         case .openFiles: return "Open files"
         case .startup: return "Startup"
         case .diskCleanup: return "Disk cleanup"
+        case .folderAlerts: return "Folder alerts"
         case .cleanup: return "Dev cleanup"
         case .watchdog: return "CPU watchdog"
         case .screenTime: return "Screen time"
@@ -56,6 +57,7 @@ enum MainTab: String, CaseIterable, Identifiable {
         case .resources: return "cpu"
         case .memory: return "memorychip"
         case .disk, .diskCleanup: return "internaldrive"
+        case .folderAlerts: return "folder.badge.gearshape"
         case .network: return "network"
         case .energy: return "bolt"
         case .system: return "desktopcomputer"
@@ -79,7 +81,7 @@ enum MainTab: String, CaseIterable, Identifiable {
         case .resources, .network, .connections, .devServers: return Theme.cpuUser
         case .memory, .battery, .screenTime, .keepAwake: return Theme.memory
         case .energy, .thermal, .watchdog: return Theme.energy
-        case .disk, .diskCleanup: return Theme.diskOccupied
+        case .disk, .diskCleanup, .folderAlerts: return Theme.diskOccupied
         default: return Theme.accent
         }
     }

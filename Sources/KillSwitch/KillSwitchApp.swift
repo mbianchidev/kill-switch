@@ -35,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         screenTimeMonitor.start()
         ResourceMonitor.shared.start()
+        FolderSizeMonitor.shared.start()
         keepAwakeManager.onStateChange = { [weak self] _ in
             self?.updateStatusItem()
         }
@@ -192,6 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         screenTimeMonitor.stop()
+        FolderSizeMonitor.shared.stop()
         SystemHealthMonitor.shared.shutdown()
         ResourceMonitor.shared.shutdown()
         keepAwakeManager.deactivate()

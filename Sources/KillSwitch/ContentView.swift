@@ -15,6 +15,7 @@ struct ContentView: View {
     private let updater = UpdateChecker.shared
     private let startsServices: Bool
     private let systemHealth = SystemHealthMonitor.shared
+    private let folderSizes = FolderSizeMonitor.shared
     @State private var windowVisible = true
     @State private var confirmCleanup = false
     @State private var cleanupAuthorized = false
@@ -101,7 +102,12 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
         .tint(Theme.accent)
         .background(Theme.background)
-        .safeAreaInset(edge: .top) { UpdateBanner(updater: updater) }
+        .safeAreaInset(edge: .top) {
+            VStack(spacing: 0) {
+                UpdateBanner(updater: updater)
+                FolderSizeAlertBanner(monitor: folderSizes) { navigationSelection.wrappedValue = .folderAlerts }
+            }
+        }
         .alert("Open Dev cleanup?", isPresented: Binding(
             get: { startsServices && confirmCleanup && currentCleanupConfirmation != nil },
             set: { confirmCleanup = $0 }
@@ -268,6 +274,8 @@ struct ContentView: View {
             StartupTab()
         case .diskCleanup:
             DiskCleanupTab(monitor: diskCleanupMonitor)
+        case .folderAlerts:
+            FolderSizeAlertsTab(monitor: folderSizes)
         case .cleanup:
             cleanupPage
         case .watchdog:
