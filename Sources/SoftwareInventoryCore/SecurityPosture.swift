@@ -133,6 +133,11 @@ public struct SecurityPostureService: Sendable {
         return checks
     }
 
+    /// The last time macOS completed a Software Update check, when recorded.
+    public func lastSuccessfulUpdateCheck() -> Date? {
+        Self.plist(at: softwareUpdatePreferences)?["LastSuccessfulDate"] as? Date
+    }
+
     private func check(
         _ id: SecurityCheckID, _ title: String, _ command: SoftwareCommand,
         parse: (String) -> SecurityCheckState, recommendedOn: Bool = true

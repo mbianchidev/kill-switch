@@ -16,6 +16,7 @@ struct ContentView: View {
     private let startsServices: Bool
     private let systemHealth = SystemHealthMonitor.shared
     private let folderSizes = FolderSizeMonitor.shared
+    private let homebrew = HomebrewMonitor.shared
     @State private var windowVisible = true
     @State private var confirmCleanup = false
     @State private var cleanupAuthorized = false
@@ -267,10 +268,18 @@ struct ContentView: View {
             DevServersTab(resourceMonitor: resourceMonitor)
         case .connections:
             ConnectionsTab(resourceMonitor: resourceMonitor)
+        case .destinations:
+            DestinationsTab(resourceMonitor: resourceMonitor)
         case .openFiles:
             OpenFilesTab(resourceMonitor: resourceMonitor)
         case .startup:
             StartupTab()
+        case .homebrew:
+            HomebrewTab(monitor: homebrew)
+        case .applications:
+            ApplicationsTab(monitor: ApplicationsMonitor.shared, homebrew: homebrew)
+        case .security:
+            SecurityTab(monitor: SecurityMonitor.shared, homebrew: homebrew)
         case .diskCleanup:
             DiskCleanupTab(monitor: diskCleanupMonitor)
         case .folderAlerts:
