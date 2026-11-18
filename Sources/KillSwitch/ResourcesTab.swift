@@ -12,6 +12,7 @@ struct ResourcesTab: View {
     @Environment(\.navigatePage) private var navigate
     @Environment(\.isKillSwitchPageVisible) private var pageVisible
     @State private var historySearch = ""
+    @State private var columnWidths = ResourceColumnWidths()
 
     init(monitor: ResourceMonitor, initialMetric: ResourceMetric = .cpu) {
         self.monitor = monitor
@@ -122,6 +123,7 @@ struct ResourcesTab: View {
                             metric: metric,
                             isSelected: process.identity != nil && monitor.focusedProcess == process.identity,
                             isAlternate: index.isMultiple(of: 2) == false,
+                            widths: columnWidths,
                             onSelect: {
                                 if let identity = process.identity { monitor.focusedProcess = identity }
                             },
@@ -129,7 +131,7 @@ struct ResourcesTab: View {
                         )
                     }
                 } header: {
-                    ResourceTableHeader(metric: metric, sorting: $sorting)
+                    ResourceTableHeader(metric: metric, sorting: $sorting, widths: $columnWidths)
                 }
             }
             .frame(minWidth: tableWidth, alignment: .leading)
@@ -264,15 +266,7 @@ struct ResourcesTab: View {
         return "\(metric.rawValue.uppercased()) · \(monitor.historyRange.rawValue.uppercased())"
     }
 
-    private var tableWidth: CGFloat {
-        switch metric {
-        case .cpu: return 1_086
-        case .memory: return 762
-        case .energy: return 922
-        case .disk: return 792
-        case .network: return 1_012
-        }
-    }
+    private var tableWidth: CGFloat { columnWidths.tableWidth(for: metric) }
 
     private var memoryPressureColor: Color {
         guard let pressure = monitor.memory.pressurePercent else { return .secondary }
@@ -286,63 +280,107 @@ struct ResourcesTab: View {
     }
 }
 
+/// Column widths for the custom process table. Header handles resize them and rows follow;
+/// widths are kept per page while the app runs.
+struct ResourceColumnWidths: Equatable {
+    static let minimum: CGFloat = 40
+    static let maximum: CGFloat = 640
+    /// Horizontal padding around each metric cell, matching `ResourceTableCell`.
+    static let cellPadding: CGFloat = 12
+    static let actionsWidth: CGFloat = 84
+    private static let defaults: [String: CGFloat] = [
+        "name": 250, "cpu": 72, "cpuTime": 98, "threads": 74, "wakeups": 104, "kind": 72,
+        "memory": 100, "openFiles": 86, "energy": 110, "power12h": 100, "appNap": 82, "preventsSleep": 120,
+        "written": 118, "read": 118, "sent": 110, "received": 110, "sentPackets": 110, "receivedPackets": 110,
+        "pid": 72, "user": 140
+    ]
+    private var custom: [String: CGFloat] = [:]
+
+    subscript(field: TableField<ResourceProcess>) -> CGFloat {
+        custom[field.id] ?? Self.defaults[field.id] ?? 100
+    }
+
+    mutating func set(_ field: TableField<ResourceProcess>, to width: CGFloat) {
+        custom[field.id] = min(max(width.rounded(), Self.minimum), Self.maximum)
+    }
+
+    mutating func reset(_ field: TableField<ResourceProcess>) { custom[field.id] = nil }
+
+    func tableWidth(for metric: ResourceMetric) -> CGFloat {
+        ResourceTableFields.columns(for: metric).reduce(Self.actionsWidth) { total, field in
+            total + self[field] + (field.id == ResourceTableFields.name.id ? 0 : Self.cellPadding)
+        }
+    }
+}
+
+/// A drag handle on a header cell's trailing edge. Double-click restores the default width;
+/// VoiceOver adjusts it in 10-point steps.
+private struct ColumnResizeHandle: View {
+    let field: TableField<ResourceProcess>
+    @Binding var widths: ResourceColumnWidths
+    @State private var startWidth: CGFloat?
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.14))
+            .frame(width: 1, height: 16)
+            .frame(width: 7, height: 30)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                // Global translation stays stable while the handle moves with the column edge.
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { value in
+                        let start = startWidth ?? widths[field]
+                        startWidth = start
+                        widths.set(field, to: start + value.translation.width)
+                    }
+                    .onEnded { _ in startWidth = nil }
+            )
+            .onTapGesture(count: 2) { widths.reset(field) }
+            .help("Drag to resize \(field.title); double-click to restore its width")
+            .accessibilityElement()
+            .accessibilityLabel("Resize \(field.title) column")
+            .accessibilityValue("\(Int(widths[field])) points")
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: widths.set(field, to: widths[field] + 10)
+                case .decrement: widths.set(field, to: widths[field] - 10)
+                @unknown default: break
+                }
+            }
+    }
+}
+
 private struct ResourceTableHeader: View {
     let metric: ResourceMetric
     @Binding var sorting: TableComparator<ResourceProcess>
+    @Binding var widths: ResourceColumnWidths
 
     var body: some View {
         HStack(spacing: 0) {
             TableSortHeader(field: ResourceTableFields.name, sorting: $sorting)
                 .padding(.horizontal, 10)
-                .frame(width: 250)
-            switch metric {
-            case .cpu:
-                header(ResourceTableFields.cpu, width: 72)
-                header(ResourceTableFields.cpuTime, width: 98)
-                header(ResourceTableFields.threads, width: 72)
-                header(ResourceTableFields.wakeups, width: 104)
-                header(ResourceTableFields.kind, width: 72)
-                header(ResourceTableFields.pid, width: 72)
-                header(ResourceTableFields.user, width: 140, alignment: .leading)
-            case .memory:
-                header(ResourceTableFields.memory, width: 100)
-                header(ResourceTableFields.threads, width: 76)
-                header(ResourceTableFields.openFiles, width: 86)
-                header(ResourceTableFields.pid, width: 72)
-                header(ResourceTableFields.user, width: 140, alignment: .leading)
-            case .energy:
-                header(ResourceTableFields.energy, width: 110)
-                header(ResourceTableFields.power12Hour, width: 100)
-                header(ResourceTableFields.appNap, width: 82)
-                header(ResourceTableFields.preventsSleep, width: 120)
-                header(ResourceTableFields.pid, width: 72)
-                header(ResourceTableFields.user, width: 140, alignment: .leading)
-            case .disk:
-                header(ResourceTableFields.diskWritten, width: 118)
-                header(ResourceTableFields.diskRead, width: 118)
-                header(ResourceTableFields.pid, width: 72)
-                header(ResourceTableFields.user, width: 140, alignment: .leading)
-            case .network:
-                header(ResourceTableFields.networkSent, width: 110)
-                header(ResourceTableFields.networkReceived, width: 110)
-                header(ResourceTableFields.sentPackets, width: 110)
-                header(ResourceTableFields.receivedPackets, width: 110)
-                header(ResourceTableFields.pid, width: 72)
-                header(ResourceTableFields.user, width: 140, alignment: .leading)
+                .frame(width: widths[ResourceTableFields.name])
+                .overlay(alignment: .trailing) { ColumnResizeHandle(field: ResourceTableFields.name, widths: $widths) }
+            ForEach(ResourceTableFields.columns(for: metric).dropFirst(), id: \.id) { field in
+                TableSortHeader(
+                    field: field, sorting: $sorting,
+                    alignment: field.id == ResourceTableFields.user.id ? .leading : .trailing
+                )
+                .frame(width: widths[field])
+                .padding(.horizontal, ResourceColumnWidths.cellPadding / 2)
+                .overlay(alignment: .trailing) { ColumnResizeHandle(field: field, widths: $widths) }
             }
-            Text("Inspect / Kill").frame(width: 84)
+            Text("Inspect / Kill").frame(width: ResourceColumnWidths.actionsWidth)
         }
         .font(.system(size: 10, weight: .semibold, design: .monospaced))
         .foregroundColor(.white.opacity(0.52))
         .frame(height: 30)
         .background(Color(red: 0.105, green: 0.075, blue: 0.16))
         .overlay(alignment: .bottom) { Divider() }
-    }
-
-    private func header(_ field: TableField<ResourceProcess>, width: CGFloat, alignment: Alignment = .trailing) -> some View {
-        TableSortHeader(field: field, sorting: $sorting, alignment: alignment)
-            .frame(width: width)
-            .padding(.horizontal, 6)
     }
 }
 
@@ -351,6 +389,7 @@ private struct ResourceProcessRow: View {
     let metric: ResourceMetric
     let isSelected: Bool
     let isAlternate: Bool
+    let widths: ResourceColumnWidths
     let onSelect: () -> Void
     let onKill: () -> Void
 
@@ -363,68 +402,68 @@ private struct ResourceProcessRow: View {
             switch metric {
             case .cpu:
                 value(
-                    process.cpu.map { String(format: "%.1f", $0) } ?? "N/A", width: 72, color: Theme.cpuUser,
+                    process.cpu.map { String(format: "%.1f", $0) } ?? "N/A", width: widths[ResourceTableFields.cpu], color: Theme.cpuUser,
                     help: process.cpu == nil ? "CPU rates need two readable lifetime-matched samples." : nil
                 )
-                value(formatDuration(process.cpuTimeSeconds), width: 98)
+                value(formatDuration(process.cpuTimeSeconds), width: widths[ResourceTableFields.cpuTime])
                 value(
                     process.threads.map(String.init) ?? "—",
-                    width: 72,
+                    width: widths[ResourceTableFields.threads],
                     help: unavailableHelp(process.threads)
                 )
-                value(process.idleWakeUps.map(formatNumber) ?? "—", width: 104)
-                value(process.kind ?? "—", width: 72, help: unavailableHelp(process.kind))
-                value(pidString(process.pid), width: 72).copyPID(process.pid)
-                value(process.user, width: 140, alignment: .leading)
+                value(process.idleWakeUps.map(formatNumber) ?? "—", width: widths[ResourceTableFields.wakeups])
+                value(process.kind ?? "—", width: widths[ResourceTableFields.kind], help: unavailableHelp(process.kind))
+                value(pidString(process.pid), width: widths[ResourceTableFields.pid]).copyPID(process.pid)
+                value(process.user, width: widths[ResourceTableFields.user], alignment: .leading)
             case .memory:
-                value(formatBytes(process.memoryBytes), width: 100, color: Theme.memory)
+                value(formatBytes(process.memoryBytes), width: widths[ResourceTableFields.memory], color: Theme.memory)
                 value(
                     process.threads.map(String.init) ?? "—",
-                    width: 76,
+                    width: widths[ResourceTableFields.threads],
                     help: unavailableHelp(process.threads)
                 )
                 value(
                     process.openFileCount.map(String.init) ?? "—",
-                    width: 86,
+                    width: widths[ResourceTableFields.openFiles],
                     help: unavailableHelp(process.openFileCount)
                 )
-                value(pidString(process.pid), width: 72).copyPID(process.pid)
-                value(process.user, width: 140, alignment: .leading)
+                value(pidString(process.pid), width: widths[ResourceTableFields.pid]).copyPID(process.pid)
+                value(process.user, width: widths[ResourceTableFields.user], alignment: .leading)
             case .energy:
-                value(process.power.map { String(format: "%.1f", $0) } ?? "N/A", width: 110, color: Theme.energy)
+                value(process.power.map { String(format: "%.1f", $0) } ?? "N/A", width: widths[ResourceTableFields.energy], color: Theme.energy)
                 value(
                     process.power12Hour.map { String(format: "%.2f", $0) } ?? "—",
-                    width: 100
+                    width: widths[ResourceTableFields.power12Hour]
                 )
-                value(boolean(process.appNap), width: 82, help: appNapHelp)
+                value(boolean(process.appNap), width: widths[ResourceTableFields.appNap], help: appNapHelp)
                 value(
-                    boolean(process.preventsSleep), width: 120,
+                    boolean(process.preventsSleep), width: widths[ResourceTableFields.preventsSleep],
                     help: process.preventsSleep == nil ? "Sleep assertion state has not been read successfully for this process." : nil
                 )
-                value(pidString(process.pid), width: 72).copyPID(process.pid)
-                value(process.user, width: 140, alignment: .leading)
+                value(pidString(process.pid), width: widths[ResourceTableFields.pid]).copyPID(process.pid)
+                value(process.user, width: widths[ResourceTableFields.user], alignment: .leading)
             case .disk:
                 value(
                     process.diskWrittenBytes.map(formatBytes) ?? "—",
-                    width: 118,
+                    width: widths[ResourceTableFields.diskWritten],
                     color: Theme.outbound,
                     help: unavailableHelp(process.diskWrittenBytes)
                 )
                 value(
                     process.diskReadBytes.map(formatBytes) ?? "—",
-                    width: 118,
+                    width: widths[ResourceTableFields.diskRead],
                     color: Theme.inbound,
                     help: unavailableHelp(process.diskReadBytes)
                 )
-                value(pidString(process.pid), width: 72).copyPID(process.pid)
-                value(process.user, width: 140, alignment: .leading)
+                value(pidString(process.pid), width: widths[ResourceTableFields.pid]).copyPID(process.pid)
+                value(process.user, width: widths[ResourceTableFields.user], alignment: .leading)
             case .network:
-                value(process.sentBytes.map(formatBytes) ?? "N/A", width: 110, color: Theme.outbound)
-                value(process.receivedBytes.map(formatBytes) ?? "N/A", width: 110, color: Theme.inbound)
-                value(process.sentPackets.map(formatNumber) ?? "N/A", width: 110)
-                value(process.receivedPackets.map(formatNumber) ?? "N/A", width: 110)
-                value(pidString(process.pid), width: 72).copyPID(process.pid)
-                value(process.user, width: 140, alignment: .leading)
+                value(process.sentBytes.map(formatBytes) ?? "N/A", width: widths[ResourceTableFields.networkSent], color: Theme.outbound)
+                value(process.receivedBytes.map(formatBytes) ?? "N/A", width: widths[ResourceTableFields.networkReceived], color: Theme.inbound)
+                value(process.sentPackets.map(formatNumber) ?? "N/A", width: widths[ResourceTableFields.sentPackets])
+                value(process.receivedPackets.map(formatNumber) ?? "N/A", width: widths[ResourceTableFields.receivedPackets])
+                value(pidString(process.pid), width: widths[ResourceTableFields.pid]).copyPID(process.pid)
+                value(process.user, width: widths[ResourceTableFields.user], alignment: .leading)
             }
 
             InspectProcessButton(process: process.identity.map {
@@ -464,7 +503,7 @@ private struct ResourceProcessRow: View {
             Spacer(minLength: 4)
         }
         .padding(.horizontal, 10)
-        .frame(width: 250, alignment: .leading)
+        .frame(width: widths[ResourceTableFields.name], alignment: .leading)
     }
 
     private var rowBackground: Color {

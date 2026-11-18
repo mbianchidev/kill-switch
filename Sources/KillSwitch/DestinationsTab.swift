@@ -87,8 +87,23 @@ private enum DestinationTableFields {
     static let ports = TableField<DestinationRow>.text("ports", title: "Remote ports", aliases: ["port"]) {
         $0.destination.ports.map(String.init).joined(separator: ", ")
     }
-    static let columns = [address, host, scope, connections, processes]
-    static let all = columns + [ports]
+    static let columns = [address, host, scope, ports, connections, processes]
+    static let all = columns
+}
+
+private enum InterfaceTableFields {
+    static let interface = TableField<NetworkInterfaceAddress>.text("interface", title: "Interface", aliases: ["name"]) { $0.interface }
+    static let family = TableField<NetworkInterfaceAddress>.text(
+        "family", title: "Family", values: ["IPv4", "IPv6"], searchable: false
+    ) { $0.family }
+    static let address = TableField<NetworkInterfaceAddress>.text("address", title: "Address", aliases: ["ip"]) { row in
+        row.prefixLength.map { "\(row.address)/\($0)" } ?? row.address
+    }
+    static let scope = TableField<NetworkInterfaceAddress>.text(
+        "scope", title: "Scope", values: NetworkAddressScope.allCases.map(\.rawValue), searchable: false
+    ) { $0.scope.rawValue }
+    static let up = TableField<NetworkInterfaceAddress>.boolean("up", title: "Up", aliases: ["status"]) { $0.isUp }
+    static let all = [interface, family, address, scope, up]
 }
 
 struct DestinationsTab: View {
@@ -102,6 +117,9 @@ struct DestinationsTab: View {
     @State private var selection: DestinationRow.ID?
     @State private var interfaces: [NetworkInterfaceAddress] = []
     @State private var interfaceError: String?
+    @State private var interfaceSearch = ""
+    @State private var interfaceSorting = TableComparator(field: InterfaceTableFields.interface)
+    @State private var interfaceSelection: NetworkInterfaceAddress.ID?
     @Environment(\.isKillSwitchPageVisible) private var pageVisible
     @Environment(\.allowsLiveOperations) private var allowsOperations
 
@@ -141,25 +159,27 @@ struct DestinationsTab: View {
             InspectionStatus(monitor: monitor, count: rows.count, noun: "destinations")
             Table(rows, selection: $selection, sortOrder: tableSortOrder($sorting)) {
                 TableColumn("Address", sortUsing: TableComparator(field: DestinationTableFields.address)) {
-                    Text($0.destination.address).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+                    Text($0.destination.address).font(.system(size: 11, design: .monospaced))
+                        .copyOnClick($0.destination.address, label: "address")
                 }
                 .width(min: 120, ideal: 170)
                 TableColumn("Hostname", sortUsing: TableComparator(field: DestinationTableFields.host)) { row in
                     Text(hostnameText(row)).foregroundColor(row.hostname == nil ? .secondary : .primary).lineLimit(1)
+                        .copyOnClick(row.hostname ?? "", label: "hostname")
                 }
                 .width(min: 120, ideal: 220)
                 TableColumn("Scope", sortUsing: TableComparator(field: DestinationTableFields.scope)) {
                     Text($0.destination.scope.rawValue)
                 }
                 .width(min: 70, ideal: 90)
-                TableColumn("Ports") {
+                TableColumn("Ports", sortUsing: TableComparator(field: DestinationTableFields.ports)) {
                     Text($0.destination.ports.map(String.init).joined(separator: ", ")).font(.system(size: 11, design: .monospaced))
                 }
                 .width(min: 60, ideal: 90)
                 TableColumn("Connections", sortUsing: TableComparator(field: DestinationTableFields.connections)) {
                     Text("\($0.destination.connectionCount)")
                 }
-                .width(80)
+                .width(min: 48, ideal: 80)
                 TableColumn("Processes", sortUsing: TableComparator(field: DestinationTableFields.processes)) { row in
                     Text(row.processNames).lineLimit(1).copyOnClick(row.processNames, label: "process names and PIDs")
                 }
@@ -192,30 +212,50 @@ struct DestinationsTab: View {
     }
 
     private var interfaceSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("This Mac's IP addresses")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.75))
+        let rows = TableQuery(search: interfaceSearch, fields: InterfaceTableFields.all)
+            .apply(to: interfaces, sorting: interfaceSorting, identity: \.id)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("This Mac's IP addresses")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.75))
+                TableSortControls(fields: InterfaceTableFields.all, sorting: $interfaceSorting)
+                Spacer()
+                Text("\(rows.count) of \(interfaces.count)")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            TableSearchControls(search: $interfaceSearch, fields: InterfaceTableFields.all,
+                                prompt: "Search interfaces or addresses, or family = IPv6")
             if let interfaceError {
                 NoticeBanner(message: interfaceError)
             }
-            Table(interfaces) {
-                TableColumn("Interface") { Text($0.interface).font(.system(size: 11, design: .monospaced)) }
-                    .width(min: 60, ideal: 80)
-                TableColumn("Family") { Text($0.family) }
-                    .width(50)
-                TableColumn("Address") { address in
+            Table(rows, selection: $interfaceSelection, sortOrder: tableSortOrder($interfaceSorting)) {
+                TableColumn("Interface", sortUsing: TableComparator(field: InterfaceTableFields.interface)) {
+                    Text($0.interface).font(.system(size: 11, design: .monospaced)).copyOnClick($0.interface, label: "interface")
+                }
+                .width(min: 60, ideal: 80)
+                TableColumn("Family", sortUsing: TableComparator(field: InterfaceTableFields.family)) { Text($0.family) }
+                    .width(min: 36, ideal: 50)
+                TableColumn("Address", sortUsing: TableComparator(field: InterfaceTableFields.address)) { address in
                     Text(address.prefixLength.map { "\(address.address)/\($0)" } ?? address.address)
                         .font(.system(size: 11, design: .monospaced))
-                        .textSelection(.enabled)
+                        .copyOnClick(address.address, label: "address")
                 }
                 .width(min: 160, ideal: 280)
-                TableColumn("Scope") { Text($0.scope.rawValue) }
+                TableColumn("Scope", sortUsing: TableComparator(field: InterfaceTableFields.scope)) { Text($0.scope.rawValue) }
                     .width(min: 80, ideal: 110)
-                TableColumn("Status") { Text($0.isUp ? "Up" : "Down").foregroundColor($0.isUp ? .green : .secondary) }
-                    .width(60)
+                TableColumn("Status", sortUsing: TableComparator(field: InterfaceTableFields.up)) {
+                    Text($0.isUp ? "Up" : "Down").foregroundColor($0.isUp ? .green : .secondary)
+                }
+                .width(min: 36, ideal: 60)
             }
             .frame(minHeight: 140, idealHeight: 180)
+            .overlay {
+                if rows.isEmpty && !interfaces.isEmpty {
+                    Text("No matching addresses. Change or reset the filters.").foregroundColor(.secondary)
+                }
+            }
         }
     }
 

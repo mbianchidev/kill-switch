@@ -129,10 +129,13 @@ struct ApplicationsTab: View {
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(row.app.name).font(.system(size: 12, weight: .medium))
+                                .copyOnClick(row.app.name, label: "application name")
                             Text(row.app.bundleIdentifier ?? row.app.path)
                                 .font(.system(size: 10))
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
+                                .copyOnClick(row.app.bundleIdentifier ?? row.app.path,
+                                             label: row.app.bundleIdentifier == nil ? "path" : "bundle identifier")
                         }
                     }
                     .help(row.app.path)
@@ -141,27 +144,28 @@ struct ApplicationsTab: View {
                 .width(min: 150)
                 TableColumn("Version", sortUsing: TableComparator(field: ApplicationTableFields.version)) {
                     Text($0.app.version ?? "—").font(.system(size: 11, design: .monospaced)).lineLimit(1)
+                        .copyOnClick($0.app.version ?? "", label: "version")
                 }
-                .width(56)
+                .width(min: 36, ideal: 56)
                 TableColumn("Signature", sortUsing: TableComparator(field: ApplicationTableFields.source)) { row in
                     trustBadge(row.trust).help(row.trust?.detail ?? "Gatekeeper assessment is in progress.")
                 }
-                .width(100)
+                .width(min: 60, ideal: 100)
                 TableColumn("Homebrew", sortUsing: TableComparator(field: ApplicationTableFields.cask)) { row in
                     if let cask = row.cask {
                         StatusBadge(title: cask.name, color: Theme.energy, systemImage: "mug.fill")
-                            .help("Installed by the Homebrew cask \(cask.fullName)")
+                            .copyOnClick(cask.fullName, label: "Homebrew cask")
                     } else {
                         Text("—").foregroundColor(.secondary)
                     }
                 }
-                .width(104)
+                .width(min: 62, ideal: 104)
                 TableColumn("Modified", sortUsing: TableComparator(field: ApplicationTableFields.modified)) {
                     Text($0.app.modificationDate?.formatted(date: .abbreviated, time: .omitted) ?? "—")
                         .font(.system(size: 11))
                         .lineLimit(1)
                 }
-                .width(78)
+                .width(min: 47, ideal: 78)
                 TableColumn("") { row in
                     Button { reveal(row.app.path) } label: { Image(systemName: "magnifyingglass") }
                         .buttonStyle(.borderless)

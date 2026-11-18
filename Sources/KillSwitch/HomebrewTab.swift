@@ -2,22 +2,44 @@ import SoftwareInventoryCore
 import SwiftUI
 import TableQueryCore
 
+/// A package with whether its app is running, read when the table is built, so the Status
+/// badge, its filter, and its sort all use one value.
+private struct HomebrewRow: Identifiable {
+    let package: HomebrewPackage
+    let isRunning: Bool
+    var id: HomebrewPackage.ID { package.id }
+
+    /// Most important state first, matching the Status badge.
+    var status: String {
+        if package.isDisabled { return "Disabled" }
+        if package.isDeprecated { return "Deprecated" }
+        if package.autoUpdates { return "Updates itself" }
+        if package.isPinned { return "Pinned" }
+        if package.isOutdated { return isRunning ? "Running" : "Outdated" }
+        return "Up to date"
+    }
+}
+
 private enum HomebrewTableFields {
-    static let name = TableField<HomebrewPackage>.text("name", title: "Package", aliases: ["token", "formula", "cask"]) { $0.displayName }
-    static let fullName = TableField<HomebrewPackage>.text("fullName", title: "Homebrew name") { $0.fullName }
-    static let summary = TableField<HomebrewPackage>.text("description", title: "Description") { $0.summary }
-    static let kind = TableField<HomebrewPackage>.text("type", title: "Type", aliases: ["kind"], values: ["Formula", "Cask"], searchable: false) {
-        $0.kind.title
+    static let name = TableField<HomebrewRow>.text("name", title: "Package", aliases: ["token", "formula", "cask"]) { $0.package.displayName }
+    static let fullName = TableField<HomebrewRow>.text("fullName", title: "Homebrew name") { $0.package.fullName }
+    static let summary = TableField<HomebrewRow>.text("description", title: "Description") { $0.package.summary }
+    static let kind = TableField<HomebrewRow>.text("type", title: "Type", aliases: ["kind"], values: ["Formula", "Cask"], searchable: false) {
+        $0.package.kind.title
     }
-    static let installed = TableField<HomebrewPackage>.text("installed", title: "Installed", searchable: false) { $0.installedVersion }
-    static let latest = TableField<HomebrewPackage>.text("latest", title: "Latest", searchable: false) { $0.latestVersion }
-    static let outdated = TableField<HomebrewPackage>.boolean("outdated", title: "Outdated") { $0.isOutdated }
-    static let selfUpdating = TableField<HomebrewPackage>.boolean("selfUpdating", title: "Updates itself", aliases: ["autoUpdates"]) {
-        $0.autoUpdates
+    static let installed = TableField<HomebrewRow>.text("installed", title: "Installed", searchable: false) { $0.package.installedVersion }
+    static let latest = TableField<HomebrewRow>.text("latest", title: "Latest", searchable: false) { $0.package.latestVersion }
+    static let outdated = TableField<HomebrewRow>.boolean("outdated", title: "Outdated") { $0.package.isOutdated }
+    static let selfUpdating = TableField<HomebrewRow>.boolean("selfUpdating", title: "Updates itself", aliases: ["autoUpdates"]) {
+        $0.package.autoUpdates
     }
-    static let pinned = TableField<HomebrewPackage>.boolean("pinned", title: "Pinned") { $0.isPinned }
-    static let requested = TableField<HomebrewPackage>.boolean("requested", title: "Installed on request") { $0.installedOnRequest }
-    static let columns = [name, kind, installed, latest]
+    static let pinned = TableField<HomebrewRow>.boolean("pinned", title: "Pinned") { $0.package.isPinned }
+    static let requested = TableField<HomebrewRow>.boolean("requested", title: "Installed on request") { $0.package.installedOnRequest }
+    static let status = TableField<HomebrewRow>.text(
+        "status", title: "Status", aliases: ["state"],
+        values: ["Disabled", "Deprecated", "Updates itself", "Pinned", "Running", "Outdated", "Up to date"], searchable: false
+    ) { $0.status }
+    static let columns = [name, kind, installed, latest, status]
     static let all = columns + [fullName, summary, outdated, selfUpdating, pinned, requested]
 }
 
@@ -138,8 +160,11 @@ struct HomebrewTab: View {
     }
 
     private var packageList: some View {
-        let rows = TableQuery(search: search, fields: HomebrewTableFields.all)
-            .apply(to: monitor.packages.filter(scope.includes), sorting: sorting, identity: \.id)
+        let running = monitor.runningCasks ?? []
+        let all = monitor.packages.filter(scope.includes).map {
+            HomebrewRow(package: $0, isRunning: $0.kind == .cask && running.contains($0.fullName))
+        }
+        let rows = TableQuery(search: search, fields: HomebrewTableFields.all).apply(to: all, sorting: sorting, identity: \.id)
         return VStack(alignment: .leading, spacing: 10) {
             if let operation = monitor.activeOperation {
                 NoticeBanner(message: "\(operation)… Homebrew is running in the background.", systemImage: "hourglass", color: Theme.accent)
@@ -165,9 +190,11 @@ struct HomebrewTab: View {
                     .foregroundColor(.secondary)
             }
             Table(rows, selection: $selection, sortOrder: tableSortOrder($sorting)) {
-                TableColumn("Package", sortUsing: TableComparator(field: HomebrewTableFields.name)) { package in
+                TableColumn("Package", sortUsing: TableComparator(field: HomebrewTableFields.name)) { row in
+                    let package = row.package
                     VStack(alignment: .leading, spacing: 2) {
                         Text(package.displayName).font(.system(size: 12, weight: .medium))
+                            .copyOnClick(package.fullName, label: "Homebrew name")
                         Text(package.summary ?? package.fullName)
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
@@ -177,16 +204,17 @@ struct HomebrewTab: View {
                 }
                 // The name column takes the remaining width, so every column fits the smallest window.
                 .width(min: 150)
-                TableColumn("Type", sortUsing: TableComparator(field: HomebrewTableFields.kind)) { Text($0.kind.title) }
-                    .width(56)
-                TableColumn("Version", sortUsing: TableComparator(field: HomebrewTableFields.installed)) { package in
-                    versionText(package)
+                TableColumn("Type", sortUsing: TableComparator(field: HomebrewTableFields.kind)) { Text($0.package.kind.title) }
+                    .width(min: 36, ideal: 56)
+                TableColumn("Version", sortUsing: TableComparator(field: HomebrewTableFields.installed)) { row in
+                    versionText(row.package)
                 }
-                .width(100)
-                TableColumn("Status") { status(for: $0) }
-                    .width(120)
-                TableColumn("Actions") { actions(for: $0) }
-                    .width(140)
+                // Wide enough for `installed → latest`, including long cask versions; drag to resize.
+                .width(min: 120, ideal: 210)
+                TableColumn("Status", sortUsing: TableComparator(field: HomebrewTableFields.status)) { status(for: $0) }
+                    .width(min: 72, ideal: 115)
+                TableColumn("Actions") { actions(for: $0.package) }
+                    .width(min: 140, ideal: 140)
             }
             .overlay {
                 if rows.isEmpty && !monitor.isLoading {
@@ -206,24 +234,26 @@ struct HomebrewTab: View {
     /// One badge per row, most important state first; the Version column already shows whether
     /// an upgrade exists, so pinned or deprecated packages do not need a second Outdated badge.
     @ViewBuilder
-    private func status(for package: HomebrewPackage) -> some View {
+    private func status(for row: HomebrewRow) -> some View {
+        let package = row.package
         let upgrade = package.isOutdated ? " An upgrade to \(package.latestVersion ?? "a newer version") is available." : ""
-        if package.isDeprecated || package.isDisabled {
-            StatusBadge(title: package.isDisabled ? "Disabled" : "Deprecated", color: .red)
-                .help("Homebrew marks \(package.displayName) as \(package.isDisabled ? "disabled" : "deprecated").\(upgrade)")
-        } else if package.autoUpdates {
-            StatusBadge(title: "Updates itself", color: Theme.diskCleanupAccent, systemImage: "arrow.triangle.2.circlepath")
+        switch row.status {
+        case "Disabled", "Deprecated":
+            StatusBadge(title: row.status, color: .red)
+                .help("Homebrew marks \(package.displayName) as \(row.status.lowercased()).\(upgrade)")
+        case "Updates itself":
+            StatusBadge(title: row.status, color: Theme.diskCleanupAccent, systemImage: "arrow.triangle.2.circlepath")
                 .help("This app updates itself, so KillSwitch never upgrades it.")
-        } else if package.isPinned {
-            StatusBadge(title: "Pinned", color: .white.opacity(0.6), systemImage: "pin.fill")
+        case "Pinned":
+            StatusBadge(title: row.status, color: .white.opacity(0.6), systemImage: "pin.fill")
                 .help("Pinned in Homebrew, so it is not upgraded.\(upgrade)")
-        } else if package.isOutdated, monitor.runningCasks?.contains(package.fullName) == true {
-            StatusBadge(title: "Running", color: .orange, systemImage: "play.circle.fill")
+        case "Running":
+            StatusBadge(title: row.status, color: .orange, systemImage: "play.circle.fill")
                 .help("Quit \(package.displayName) to upgrade it; Homebrew replaces the app bundle while it runs.")
-        } else if package.isOutdated {
-            StatusBadge(title: "Outdated", color: .orange, systemImage: "arrow.up.circle.fill")
-        } else {
-            StatusBadge(title: "Up to date", color: .green)
+        case "Outdated":
+            StatusBadge(title: row.status, color: .orange, systemImage: "arrow.up.circle.fill")
+        default:
+            StatusBadge(title: row.status, color: .green)
         }
     }
 
@@ -251,7 +281,7 @@ struct HomebrewTab: View {
             .font(.system(size: 11, design: .monospaced))
             .lineLimit(1)
             .truncationMode(.middle)
-            .help("Installed \(installed), latest \(package.latestVersion ?? "unknown")")
+            .copyOnClick(text, label: "version")
     }
 
     private func transcriptView(_ transcript: HomebrewTranscript) -> some View {

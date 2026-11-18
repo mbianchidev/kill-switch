@@ -8,6 +8,8 @@ struct SystemHealthTab: View {
     @Environment(\.allowsLiveOperations) private var allowsOperations
     @Environment(\.isKillSwitchWindowVisible) private var visible
     @Environment(\.isKillSwitchPageVisible) private var pageVisible
+    // Retained above the visibility boundary without observing; only the tables observe it.
+    @State private var tableStates = TableStateStore()
 
 #if KILLSWITCH_PERFORMANCE_PROBE
     var performanceObserveThermalState: ((SystemThermalState?) -> Void)?
@@ -51,7 +53,7 @@ struct SystemHealthTab: View {
                 case .thermal: thermalCard
                 default:
                     hardwareCard
-                    SystemDetailsCard(monitor: SystemDetailsMonitor.shared)
+                    SystemDetailsCard(monitor: SystemDetailsMonitor.shared, tableStates: tableStates)
                     runtimeCard
                     thermalCard
                 }

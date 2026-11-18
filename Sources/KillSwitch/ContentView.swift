@@ -38,6 +38,7 @@ struct ContentView: View {
         let cancel: (CleanupVisitValue<Bool>) -> Void
         let dismissPresentation: () -> Void
         let visibility: (Bool) -> Void
+        let turnOff: (UUID) -> Void
     }
     var performanceObserveCleanupEntry: ((CleanupEntryProbeControls) -> Void)?
     var performanceStartsCleanupTasks = false
@@ -68,6 +69,7 @@ struct ContentView: View {
             entryPending: cleanupEntryPending,
             requestConfirmation: { requestCleanupEntry(visit: visit) },
             showDevServers: { navigationSelection.wrappedValue = .devServers },
+            turnOffAutoKill: { turnOffAutoKillFromEntry(visit: visit) },
             preferences: cleanupPreferences, monitor: cleanupMonitor
         )
 #if KILLSWITCH_PERFORMANCE_PROBE
@@ -116,7 +118,7 @@ struct ContentView: View {
             Button("Cancel", role: .cancel) { cancelCleanupEntry(request) }
             Button("Open Dev cleanup", role: .destructive) { authorizeCleanupEntry(request) }
         } message: { _ in
-            Text("Automatic termination is enabled. Opening this page can terminate qualifying development servers older than your saved age threshold. It continues while Dev cleanup is selected, including hidden or minimized windows. Leaving the page stops future passes. Age is not inactivity. Protected processes remain protected.")
+            Text("Automatic termination is enabled. Opening this page immediately runs a pass that can terminate qualifying development servers older than your saved age threshold. Background cleanup also runs at the saved interval while KillSwitch is running, on any page. Age is not inactivity. Protected processes remain protected.")
         }
         .sheet(item: $inspectedProcess) { process in
             ProcessDetailSheet(process: process, resourceMonitor: resourceMonitor)
@@ -145,7 +147,8 @@ struct ContentView: View {
                 navigation: navigationSelection, visit: $cleanupVisitID, authorized: $cleanupAuthorized,
                 pending: $cleanupEntryPending, open: requestCleanupEntry,
                 request: { cleanupConfirmationRequest }, approve: authorizeCleanupEntry, cancel: cancelCleanupEntry,
-                dismissPresentation: { confirmCleanup = false }, visibility: setWindowVisibility
+                dismissPresentation: { confirmCleanup = false }, visibility: setWindowVisibility,
+                turnOff: turnOffAutoKillFromEntry
             ))
         }
         .onReceive(PerformanceProbeNavigation.shared.$page) { page in
@@ -197,6 +200,18 @@ struct ContentView: View {
         confirmCleanup = false
         cleanupAuthorized = true
         cleanupMonitor.start(allowAutomaticTermination: true)
+        cleanupEntryPending = false
+    }
+
+    /// Disables auto-kill, including background cleanup, without running a pass first.
+    /// Disabling is always saved; only the current visit switches to the read-only page.
+    private func turnOffAutoKillFromEntry(visit: UUID) {
+        cleanupPreferences.setAutoKillEnabled(false)
+        guard cleanupEntryPending, cleanupVisitIsCurrent(visit) else { return }
+        cleanupConfirmationRequest = nil
+        confirmCleanup = false
+        cleanupAuthorized = false
+        cleanupMonitor.prepareForEntry(allowAutomaticTermination: false)
         cleanupEntryPending = false
     }
 

@@ -119,20 +119,20 @@ struct ActivityDashboard: View {
                         TableColumn("Process", sortUsing: TableComparator(field: ActivityTableFields.name)) { Text($0.process.name).copyProcessName($0.process.name) }
                             .width(min: 140, ideal: 180)
                         TableColumn("PID", sortUsing: TableComparator(field: ActivityTableFields.pid)) { Text(pidString($0.process.identity.pid)).copyPID($0.process.identity.pid) }
-                            .width(55)
+                            .width(min: 36, ideal: 55)
                         TableColumn("CPU", sortUsing: TableComparator(field: ActivityTableFields.cpu)) { Text(formatActivityValue($0.values.cpu, metric: .cpu)) }
-                            .width(75)
+                            .width(min: 45, ideal: 75)
                         TableColumn("Memory", sortUsing: TableComparator(field: ActivityTableFields.memory)) { Text(formatActivityValue($0.values.memory, metric: .memory)) }
-                            .width(90)
+                            .width(min: 54, ideal: 90)
                         TableColumn("Received/s", sortUsing: TableComparator(field: ActivityTableFields.received)) { Text(formatByteRate($0.values.received)) }
-                            .width(100)
+                            .width(min: 60, ideal: 100)
                         TableColumn("Sent/s", sortUsing: TableComparator(field: ActivityTableFields.sent)) { Text(formatByteRate($0.values.sent)) }
-                            .width(100)
+                            .width(min: 60, ideal: 100)
                         TableColumn("Read/s", sortUsing: TableComparator(field: ActivityTableFields.read)) { Text(formatByteRate($0.values.diskRead)) }
-                            .width(100)
+                            .width(min: 60, ideal: 100)
                         TableColumn("Written/s", sortUsing: TableComparator(field: ActivityTableFields.written)) { Text(formatByteRate($0.values.diskWritten)) }
-                            .width(100)
-                        TableColumn("Inspect") { InspectProcessButton(process: $0.process) }.width(65)
+                            .width(min: 60, ideal: 100)
+                        TableColumn("Inspect") { InspectProcessButton(process: $0.process) }.width(min: 39, ideal: 65)
                     }
                     .font(.system(size: 11, design: .monospaced))
                     .frame(height: 230)

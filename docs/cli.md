@@ -53,7 +53,8 @@ and merged effective ports. With an illustrative customized single user port:
 ```
 
 `autoKillEnabled` is the saved mode, allowing integrations to show whether a
-subsequent cleanup call can terminate candidates.
+subsequent cleanup call can terminate candidates. The running app's background
+Dev cleanup also follows it.
 
 ## Sync an integration's ports
 

@@ -19,15 +19,19 @@ swift build -c release --product KillSwitch
 .build/release/KillSwitch
 ```
 
-The last command launches the GUI without creating a login item. Expect the
+The last command launches the GUI without creating a login item. Like an
+installed app, it runs background Dev cleanup while saved auto-kill is enabled
+(the default). Expect the
 activity dashboard and menu-bar icon. Local builds report `dev`, so the updater
 considers any published release newer. Do not enable automatic updates if you
 want to keep running your local development build.
 
 Headless calls require a `killswitchctl` symlink; arguments passed directly to
 a binary named `KillSwitch` do not select CLI mode. See [CLI setup](cli.md#setup).
-Do not open Dev cleanup or invoke `cleanup` as a build smoke test: it can
-terminate real processes.
+Do not launch the GUI, open Dev cleanup, or invoke `cleanup` as a build smoke
+test: with saved auto-kill enabled, the running app's background cleanup can
+terminate real processes without opening the page. Validate with the core checks
+and the synthetic probe build's `--interface-checks` instead.
 
 ## Tech stack
 
@@ -70,9 +74,23 @@ SwiftUI formats integers interpolated into a localized `Text` literal with the
 locale's grouping separator, so `Text("PID \(pid)")` can show `65.134`. Render
 PIDs with `pidString(_:)` or `Text(verbatim:)`, never by interpolating the
 integer into a localized string. Apply `.copyProcessName(_:)` and `.copyPID(_:)`
-from `PageComponents.swift` wherever a process name or PID is shown: clicking
-copies the value through a simultaneous gesture, so selection and row actions
-keep working, and no extra control is added.
+from `PageComponents.swift` wherever a process name or PID is shown, and
+`.copyOnClick(_:label:)` for other identifying values such as names, paths,
+commands, endpoints, and versions; an empty value adds no copy action and can
+keep placeholder help through `emptyHelp`. Clicking copies the value through a
+simultaneous gesture, so selection and row actions keep working, and no extra
+control is added. Copy the full value, not an abbreviated display.
+
+Every table gets search, the Filter builder, sorting by header and picker, and
+resizable columns. Give `TableColumn`s a `min`/`ideal` width rather than a fixed
+width, except checkbox or icon columns. Pages that scroll as a whole embed
+tables with `EmbeddedDataTable` from `TableControls.swift`, which shows up to
+twelve rows before scrolling itself. Its search and sort live in a keyed
+`TableStateStore` that the page retains with `@State` above its visibility
+boundary (Security, System, and Disk cleanup's Maintenance view), so filters
+survive navigation while only the tables observe changes. The
+custom CPU, Memory, Disk, Network, and Energy process table keeps its widths in
+`ResourceColumnWidths`, resized by header drag handles.
 
 ## Shared core targets
 
@@ -349,6 +367,19 @@ plus health visibility, operation permissions, and continued automatic polling.
 Native window visibility includes occlusion: minimizing or fully covering the
 window pauses optional health/inspection work, just like hiding. Confirmed Dev
 cleanup follows its selected-page execution lease instead of window visibility.
+Separately, the app-lifetime `DevCleanupScheduler` runs background Dev cleanup
+regardless of page or visibility: `AppDelegate` starts it at launch and stops it
+at quit (never in probe builds, where it requires an injected service). A
+one-minute check runs a pass on its own serial queue once the saved interval has
+elapsed and saved auto-kill is enabled. `DevCleanupService.cleanup` takes a
+`shouldTerminate` gate that the scheduler binds to its session and the current
+saved auto-kill, rechecked before every termination. The live terminator
+(`ProcessTerminationPolicy.terminate`) receives the same gate and rechecks it
+after its blocking command-line read, immediately before each signal, so
+stopping or disabling halts a pass mid-way. Kills are logged and announced with a native notification;
+`BackgroundCleanupStatus` is the only view observing it. The preview's
+**Turn off auto-kill** always saves the safer setting and, for the current visit
+only, opens read-only cleanup without a pass.
 Metric leases and window visibility are updated synchronously in one locked
 selection, rather than waiting behind already-queued samples. The native reader
 rechecks that selection before starting Energy or memory-pressure phases;

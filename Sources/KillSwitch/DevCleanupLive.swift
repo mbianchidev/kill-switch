@@ -19,8 +19,8 @@ extension DevCleanupService {
                 try ProcessSampler.listeningPortsThrowing()
             },
             argumentsProvider: ProcessArguments.read(pid:),
-            terminator: {
-                ProcessSampler.terminate(pid: $0)
+            gatedTerminator: { pid, shouldContinue in
+                ProcessSampler.terminate(pid: pid, shouldContinue: shouldContinue)
             }
         )
     }

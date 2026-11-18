@@ -3,11 +3,15 @@
 [Documentation index](README.md) | [Installation](installation.md) |
 [CLI reference](cli.md)
 
-Click any process name or PID to copy it to the clipboard; a brief **Copied**
-badge confirms it, and clicking still selects the row. PIDs are always shown as
-plain identifiers, without thousands separators.
+Click an identifying value to copy it to the clipboard: process names, PIDs,
+package and app names, bundle identifiers, versions, paths, commands, endpoints,
+addresses, hostnames, users, branches, and update labels. A brief **Copied**
+badge confirms it, and clicking still selects the row. Hovering shows what will
+be copied, such as the full path behind an abbreviated one. PIDs are always shown
+as plain identifiers, without thousands separators.
 
-All data tables and record lists support two-way sorting and resettable filters.
+All data tables and record lists support search, filters, and two-way sorting.
+Drag a column header's edge to resize it.
 Search accepts text and comparisons such as `CPU% > 40` or `size >= 1GB`.
 See [sorting and filtering](table-controls.md) for field examples, units, and
 the **Filter**, **Apply**, and **Reset filters** controls.
@@ -36,9 +40,11 @@ The watchdog, folder size alerts, screen-time monitor, and CPU/memory/disk/netwo
 sampling continue with the window hidden and while using other tabs. Quitting flushes the current
 history bucket. Energy details run only while their resource view is selected;
 connection/open-file inspection runs only while its panel is visible.
-Confirmed Dev cleanup runs immediately and keeps its cleanup timer active while
-that page is selected, including hidden or minimized windows. Leaving the page
-stops future passes. Its safe entry preview never starts cleanup or its timers.
+Background Dev cleanup runs at the saved cleanup interval while KillSwitch runs
+and saved auto-kill is enabled, on any page and with the window hidden.
+Confirmed entry to the Dev cleanup page also runs a pass immediately and keeps
+the page's own timers while it is selected. Its safe entry preview starts no
+pass of its own.
 
 ## Navigation
 
@@ -434,8 +440,20 @@ folders can take a while. Monitoring stops when KillSwitch quits.
 
 ## Dev cleanup
 
-**Auto-kill is enabled by default.** Selecting the sidebar page first shows a
-safe preview while automatic termination is enabled. **Open Dev cleanup**
+**Auto-kill is enabled by default, and runs in the background.** While
+KillSwitch runs, a background pass at the saved cleanup interval (default 10
+minutes) terminates qualifying servers older than the saved age, on any page and
+with the window hidden or minimized. No page visit or confirmation is needed. The
+first pass runs one interval after launch. It rereads saved settings before every
+pass and every termination, so turning auto-kill off stops further kills, even
+mid-pass. When a background pass terminates servers, KillSwitch posts a macOS
+notification and logs them; the page summary shows the last background pass.
+Sleep and quitting stop it.
+
+Selecting the sidebar page first shows a safe preview while automatic
+termination is enabled. **Turn off auto-kill** there saves the setting, stopping
+background cleanup, and opens the page read-only without running a pass.
+**Open Dev cleanup**
 explicitly asks for confirmation; confirming immediately runs a cleanup,
 which can terminate qualifying servers older than the saved age. Age is total
 process lifetime, not inactivity; a busy server can qualify.
@@ -453,8 +471,9 @@ is selected**, including hidden, minimized, or fully covered windows. Showing th
 window again does not require another confirmation or restart the cleanup
 deadline. Foreground port polling pauses while hidden and refreshes on return.
 
-Leaving this page revokes execution authorization and cancels not-yet-started
-passes; returning then requires fresh confirmation while auto-kill is enabled.
+Leaving this page revokes the page's own execution authorization and cancels its
+not-yet-started passes; background cleanup continues. Returning then requires
+fresh confirmation while auto-kill is enabled.
 Disabling auto-kill revokes termination permission immediately. Hidden read-only
 cleanup stops its timers and resumes on return, including rapid visibility and
 navigation changes. Sleep and quitting stop execution; this feature does not
@@ -693,7 +712,8 @@ These preferences persist. See [update controls](auto-update.md#using-updates),
 ## Safety and limitations
 
 - Automatic cleanup is age-based, not idle detection, and is not limited to
-  watched ports.
+  watched ports. With auto-kill enabled it runs in the background while
+  KillSwitch runs, without opening Dev cleanup.
 - Manual kill buttons remain available when auto-kill is disabled or an
   exclusion matches. They send SIGTERM, with SIGKILL as a fallback if sending
   SIGTERM fails, and can lose unsaved work. Uninspectable processes and

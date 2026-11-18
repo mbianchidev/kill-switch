@@ -225,3 +225,92 @@ func tableSortOrder<Row>(_ sorting: Binding<TableComparator<Row>>) -> Binding<[T
         set: { if let first = $0.first { sorting.wrappedValue = first } }
     )
 }
+
+/// Keeps embedded tables' search and sort, by key, for pages whose content is removed while
+/// hidden. Own it above the page's visibility boundary so filters survive navigation.
+final class TableStateStore: ObservableObject {
+    private var searches: [String: String] = [:]
+    private var sortings: [String: Any] = [:]
+
+    func search(_ key: String) -> Binding<String> {
+        Binding(
+            get: { self.searches[key] ?? "" },
+            set: { value in
+                self.objectWillChange.send()
+                self.searches[key] = value
+            }
+        )
+    }
+
+    func sorting<Row>(_ key: String, default initial: TableComparator<Row>) -> Binding<TableComparator<Row>> {
+        Binding(
+            get: { self.sortings[key] as? TableComparator<Row> ?? initial },
+            set: { value in
+                self.objectWillChange.send()
+                self.sortings[key] = value
+            }
+        )
+    }
+}
+
+/// A table with search, filter, sort, and row count, for pages that scroll as a whole.
+/// It shows up to `maximumRows` rows before scrolling itself; columns sort by header and resize.
+/// Search and sort live in `state` under `key`, so they survive the page being hidden.
+struct EmbeddedDataTable<Row: Identifiable, Columns: TableColumnContent>: View
+where Columns.TableRowValue == Row, Columns.TableColumnSortComparator == TableComparator<Row> {
+    private let rows: [Row]
+    private let fields: [TableField<Row>]
+    private let initialSorting: TableComparator<Row>
+    private let key: String
+    private let identity: (Row) -> String
+    private let prompt: String
+    private let rowHeight: CGFloat
+    private let maximumRows: Int
+    private let columns: Columns
+    @ObservedObject private var state: TableStateStore
+    @State private var selection: Row.ID?
+
+    init(
+        _ rows: [Row], fields: [TableField<Row>], sortedBy initialSorting: TableComparator<Row>,
+        state: TableStateStore, key: String,
+        identity: @escaping (Row) -> String, prompt: String = "Search text or field > value",
+        rowHeight: CGFloat = 26, maximumRows: Int = 12,
+        @TableColumnBuilder<Row, TableComparator<Row>> columns: () -> Columns
+    ) {
+        self.rows = rows
+        self.fields = fields
+        self.initialSorting = initialSorting
+        self.key = key
+        self.identity = identity
+        self.prompt = prompt
+        self.rowHeight = rowHeight
+        self.maximumRows = maximumRows
+        self.columns = columns()
+        self.state = state
+    }
+
+    var body: some View {
+        let search = state.search(key)
+        let sorting = state.sorting(key, default: initialSorting)
+        let shown = TableQuery(search: search.wrappedValue, fields: fields)
+            .apply(to: rows, sorting: sorting.wrappedValue, identity: identity)
+        return VStack(alignment: .leading, spacing: 6) {
+            TableSearchControls(search: search, fields: fields, prompt: prompt)
+            HStack {
+                TableSortControls(fields: fields, sorting: sorting)
+                Spacer()
+                Text(verbatim: "\(shown.count) of \(rows.count)")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            Table(shown, selection: $selection, sortOrder: tableSortOrder(sorting)) { columns }
+                // Rows plus the header and the table's top and bottom insets.
+                .frame(height: CGFloat(min(max(shown.count, 1), maximumRows)) * rowHeight + 40)
+                .overlay {
+                    if shown.isEmpty && !rows.isEmpty {
+                        Text("No matching rows. Change or reset the filters.").foregroundColor(.secondary)
+                    }
+                }
+        }
+    }
+}

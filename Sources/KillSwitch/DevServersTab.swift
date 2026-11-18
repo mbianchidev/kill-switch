@@ -120,16 +120,18 @@ struct DevServersTab: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(group.project?.name ?? "Working directory unavailable")
                                         .font(.system(size: 14, weight: .semibold))
+                                        .copyOnClick(group.project?.name ?? "", label: "project name")
                                     if let project = group.project {
                                         Text(project.directory.path)
                                             .font(.system(size: 10, design: .monospaced))
                                             .foregroundColor(.secondary)
                                             .lineLimit(1)
                                             .truncationMode(.middle)
-                                            .help(project.directory.path)
+                                            .copyOnClick(project.directory.path, label: "project path")
                                         Text(project.branch ?? "No Git branch available")
                                             .font(.system(size: 10))
                                             .foregroundColor(.secondary)
+                                            .copyOnClick(project.branch ?? "", label: "branch")
                                     }
                                 }
                                 Spacer()
@@ -193,7 +195,8 @@ struct DevServersTab: View {
                     .foregroundColor(.secondary)
                 }
                 Spacer()
-                Text(connection.local).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                Text(connection.local).font(.system(size: 12, design: .monospaced))
+                    .copyOnClick(connection.local, label: "local endpoint")
                 OpenListenerButton(connection: connection)
                 CopyInspectionTextButton(title: "Copy address", value: connection.local)
                 InspectProcessButton(process: monitor.descriptor(pid: connection.pid, name: connection.process, user: connection.user))

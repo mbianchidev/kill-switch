@@ -132,6 +132,12 @@ public final class DevCleanupPreferences {
         return integrationPorts()
     }
 
+    /// Lightweight read of only the saved auto-kill switch, for status text and termination gates.
+    public func loadAutoKillEnabled() -> Bool {
+        defaults.synchronize()
+        return bool(.autoKill, default: true)
+    }
+
     public func load() -> DevCleanupSettings {
         defaults.synchronize()
         return DevCleanupSettings(

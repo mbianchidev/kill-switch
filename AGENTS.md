@@ -48,8 +48,11 @@ workaround are covered in [troubleshooting](docs/troubleshooting.md#source-build
   corresponding core target and test them with synthetic data.
 - Never weaken Porto-managed Lima hostagent protection, ownership checks,
   protected-file rules, or installer symlink/directory safety.
-- Never invoke `killswitchctl dev-cleanup cleanup --json` as a smoke test.
-  Opening Dev cleanup can immediately terminate qualifying processes.
+- Never invoke `killswitchctl dev-cleanup cleanup --json` or launch the GUI as
+  a smoke test. With saved auto-kill enabled, the running app's background
+  cleanup can terminate qualifying processes without opening Dev cleanup, and
+  opening it runs a pass immediately. Use core checks and the synthetic probe
+  build's `--interface-checks`.
 - Software inventory checks use mock command runners. Never run the Homebrew
   page's upgrade or uninstall actions, `brew upgrade`, or `softwareupdate
   --install` on a workstation as validation.

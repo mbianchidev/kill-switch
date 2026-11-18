@@ -192,6 +192,8 @@ public final class DevCleanupService {
     public typealias ProcessProvider = () throws -> [DevCleanupProcess]
     public typealias ListeningPortsProvider = () throws -> [Int32: Set<Int>]
     public typealias Terminator = (Int32) -> Bool
+    /// Terminates a PID if the supplied gate still allows it immediately before signaling.
+    public typealias GatedTerminator = (Int32, () -> Bool) -> Bool
     /// Returns a process's argv, or nil when it is unavailable.
     public typealias ArgumentsProvider = (Int32) -> [String]?
 
@@ -199,20 +201,34 @@ public final class DevCleanupService {
     private let processProvider: ProcessProvider
     private let listeningPortsProvider: ListeningPortsProvider
     private let argumentsProvider: ArgumentsProvider
-    private let terminator: Terminator
+    private let terminator: GatedTerminator
 
     public init(
         username: String,
         processProvider: @escaping ProcessProvider,
         listeningPortsProvider: @escaping ListeningPortsProvider,
         argumentsProvider: @escaping ArgumentsProvider = { _ in nil },
-        terminator: @escaping Terminator
+        gatedTerminator: @escaping GatedTerminator
     ) {
         self.username = username
         self.processProvider = processProvider
         self.listeningPortsProvider = listeningPortsProvider
         self.argumentsProvider = argumentsProvider
-        self.terminator = terminator
+        self.terminator = gatedTerminator
+    }
+
+    /// For terminators without a slow inspection step; the gate is checked just before calling them.
+    public convenience init(
+        username: String,
+        processProvider: @escaping ProcessProvider,
+        listeningPortsProvider: @escaping ListeningPortsProvider,
+        argumentsProvider: @escaping ArgumentsProvider = { _ in nil },
+        terminator: @escaping Terminator
+    ) {
+        self.init(
+            username: username, processProvider: processProvider, listeningPortsProvider: listeningPortsProvider,
+            argumentsProvider: argumentsProvider, gatedTerminator: { pid, _ in terminator(pid) }
+        )
     }
 
     public func scan(configuration: DevCleanupConfiguration) throws -> DevCleanupScanResult {
@@ -225,11 +241,18 @@ public final class DevCleanupService {
         )
     }
 
-    public func cleanup(configuration: DevCleanupConfiguration) throws -> DevCleanupResult {
+    /// Runs one pass. `shouldTerminate` is rechecked before every termination, so a revoked
+    /// background session or later saved disablement stops further kills mid-pass.
+    /// Without `includingPorts`, the listening-port inventory is neither read nor returned;
+    /// termination never depends on it.
+    public func cleanup(
+        configuration: DevCleanupConfiguration, includingPorts: Bool = true, shouldTerminate: () -> Bool = { true }
+    ) throws -> DevCleanupResult {
         let processes = try processProvider()
-        let ports = try listeningPortsProvider()
         let classifier = DevServerClassifier(configuration: configuration)
-        let portProcesses = portRows(processes: processes, ports: ports, classifier: classifier)
+        let portProcesses = includingPorts
+            ? portRows(processes: processes, ports: try listeningPortsProvider(), classifier: classifier)
+            : []
 
         var candidateCount = 0
         var killed: [CleanedProcess] = []
@@ -244,7 +267,8 @@ public final class DevCleanupService {
             candidateCount += 1
             if configuration.autoKillEnabled,
                process.elapsedSeconds > configuration.ageThresholdSeconds,
-               terminator(process.pid) {
+               shouldTerminate(),
+               terminator(process.pid, shouldTerminate) {
                 killed.append(
                     CleanedProcess(
                         pid: process.pid,

@@ -68,6 +68,8 @@ final class DevCleanupMonitor: ObservableObject {
     }
 
     var ageThresholdSeconds: Int { ageThresholdHours * 3600 }
+    /// The saved switch that background cleanup follows; `autoKillEnabled` is this page visit's authorization.
+    var savedAutoKillEnabled: Bool { preferences.loadAutoKillEnabled() }
 
     /// Picker options shared with the UI.
     static let intervalOptions = SamplingIntervals.standard
@@ -429,6 +431,25 @@ final class DevCleanupMonitor: ObservableObject {
 
 // MARK: - View
 
+/// The last background pass; the only view observing the app-lifetime scheduler.
+private struct BackgroundCleanupStatus: View {
+    @ObservedObject private var scheduler = DevCleanupScheduler.shared
+
+    var body: some View {
+        Group {
+            if let error = scheduler.lastError {
+                Text("Last background cleanup failed: \(error)")
+                    .foregroundColor(.orange)
+            } else if let last = scheduler.lastRun {
+                Text("Last background cleanup: \(last.formatted(date: .omitted, time: .standard)) · \(scheduler.lastKilled.count) killed")
+                    .foregroundColor(.white.opacity(0.4))
+            }
+        }
+        .font(.system(size: 11))
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
 struct CleanupVisitValue<Value> {
     let id = UUID()
     let visit: UUID
@@ -444,6 +465,7 @@ struct DevCleanupTab: View {
     let entryPending: Bool
     let requestConfirmation: () -> Void
     let showDevServers: () -> Void
+    let turnOffAutoKill: () -> Void
     @Environment(\.allowsLiveOperations) private var allowsOperations
     @Environment(\.isKillSwitchPageVisible) private var pageVisible
     @Environment(\.isKillSwitchWindowVisible) private var windowVisible
@@ -501,6 +523,7 @@ struct DevCleanupTab: View {
     init(
         allowAutomaticTermination: Binding<Bool>, visitID: Binding<UUID>, entryPending: Bool,
         requestConfirmation: @escaping () -> Void, showDevServers: @escaping () -> Void,
+        turnOffAutoKill: @escaping () -> Void = {},
         preferences: DevCleanupPreferences = DevCleanupPreferences(),
         monitor: DevCleanupMonitor? = nil
     ) {
@@ -509,6 +532,7 @@ struct DevCleanupTab: View {
         self.entryPending = entryPending
         self.requestConfirmation = requestConfirmation
         self.showDevServers = showDevServers
+        self.turnOffAutoKill = turnOffAutoKill
         _monitor = StateObject(wrappedValue: monitor ?? DevCleanupMonitor(preferences: preferences))
     }
 
@@ -581,8 +605,8 @@ struct DevCleanupTab: View {
             }
         } message: { request in
             Text(request.value == .resetDefaults
-                ? "Resetting restores automatic termination and immediately runs cleanup using the default age threshold. Cleanup continues while this page is selected, even hidden or minimized. Qualifying development servers can be terminated. Age is not inactivity. Protected processes remain protected."
-                : "Automatic cleanup can terminate qualifying development servers older than the saved age threshold. It continues while this page is selected, even hidden or minimized. Age is not inactivity. Protected processes remain protected.")
+                ? "Resetting restores automatic termination and immediately runs cleanup using the default age threshold. Cleanup then also runs in the background at the saved interval while KillSwitch is running, on any page. Qualifying development servers can be terminated. Age is not inactivity. Protected processes remain protected."
+                : "Automatic cleanup can terminate qualifying development servers older than the saved age threshold. It also runs in the background at the saved interval while KillSwitch is running, on any page. Age is not inactivity. Protected processes remain protected.")
         }
         .task(id: copyFeedbackRevision) {
             guard copiedProcessID != nil else { return }
@@ -648,13 +672,15 @@ struct DevCleanupTab: View {
                 .font(.system(size: 20, weight: .semibold, design: .rounded))
             Label("Automatic termination is enabled", systemImage: "exclamationmark.triangle")
                 .foregroundColor(.orange)
-            Text("Opening cleanup can terminate qualifying development servers older than the saved age threshold. Age is not inactivity. No cleanup is started from this preview.")
+            Text("Opening cleanup immediately runs a pass that can terminate qualifying development servers older than the saved age threshold. Age is not inactivity. This preview starts no cleanup of its own.")
                 .font(.system(size: 13))
-            Text("After confirmation, auto-kill continues while this page is selected, including hidden or minimized windows. Leaving this page stops future cleanup passes.")
+            Text("Background cleanup already runs every \(monitor.cleanupIntervalLabel) while KillSwitch is running, on any page and with the window hidden. Turn off auto-kill to stop it.")
                 .font(.system(size: 13))
+            BackgroundCleanupStatus()
             HStack {
                 Button("Open Dev cleanup", action: requestConfirmation)
                 Button("Show read-only Dev servers", action: showDevServers)
+                Button("Turn off auto-kill", action: turnOffAutoKill)
             }
             Text("Use the sidebar to keep navigating, or explicitly open cleanup and confirm. Canceling confirmation leaves this safe preview open.")
                 .font(.system(size: 11))
@@ -703,6 +729,7 @@ struct DevCleanupTab: View {
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.4))
             }
+            BackgroundCleanupStatus()
             Text("Protected: Porto Lima hostagents, other users, system, Copilot, MCP servers, IDEs and non-dev apps.")
                 .font(.system(size: 11))
                 .foregroundColor(.white.opacity(0.4))
@@ -763,16 +790,19 @@ struct DevCleanupTab: View {
                 Spacer()
             }
 
+            let backgroundEnabled = monitor.savedAutoKillEnabled
             Label(
-                monitor.autoKillEnabled
-                    ? "Auto-kill continues while Dev cleanup is selected, even when the window is hidden or minimized."
-                    : "Auto-kill is off. Hidden windows pause read-only cleanup.",
-                systemImage: monitor.autoKillEnabled ? "clock.arrow.circlepath" : "pause.circle"
+                backgroundEnabled
+                    ? "Background cleanup runs every \(monitor.cleanupIntervalLabel) while KillSwitch is running, on any page, even with the window hidden."
+                    : "Saved auto-kill is off, so background cleanup is off.",
+                systemImage: backgroundEnabled ? "clock.arrow.circlepath" : "pause.circle"
             )
             .font(.system(size: 12))
             .foregroundColor(.white.opacity(0.7))
             .fixedSize(horizontal: false, vertical: true)
-            Text("Leaving this page stops cleanup. Port scans pause while hidden; cleanup keeps its saved interval. Sleep and quitting stop execution.")
+            Text(monitor.autoKillEnabled
+                ? "This page's own passes continue while it is selected, even hidden. Leaving stops them and its port scans\(backgroundEnabled ? "; background cleanup continues" : ""). Sleep and quitting stop execution."
+                : "This visit is read-only: it terminates nothing, and hidden windows pause its scans. Sleep and quitting stop execution.")
                 .font(.system(size: 11))
                 .foregroundColor(.white.opacity(0.6))
                 .fixedSize(horizontal: false, vertical: true)
@@ -949,7 +979,7 @@ struct DevCleanupTab: View {
                                 .foregroundColor(.white)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
-                                .textSelection(.enabled)
+                                .copyOnClick(proc.command, label: "command")
                             Text(verbatim: "PID: \(pidString(proc.pid))")
                                 .font(.system(size: 11))
                                 .foregroundColor(.white.opacity(0.4))
@@ -1037,7 +1067,7 @@ struct DevCleanupTab: View {
                             .foregroundColor(.white.opacity(0.8))
                             .lineLimit(1)
                             .truncationMode(.middle)
-                            .textSelection(.enabled)
+                            .copyOnClick(proc.command, label: "command")
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12)

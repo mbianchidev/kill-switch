@@ -242,22 +242,13 @@ enum ProcessSampler {
 
     // MARK: - Process termination
 
-    /// Terminate a process with SIGTERM, falling back to SIGKILL.
+    /// Terminate a process with SIGTERM, falling back to SIGKILL. `shouldContinue` is rechecked
+    /// after the command-line read, immediately before signaling.
     @discardableResult
-    static func terminate(pid: Int32) -> Bool {
-        guard let command = commandLine(pid: pid) else {
-            fputs(
-                "KillSwitch refused to terminate PID \(pid): its command line could not be inspected.\n",
-                stderr
-            )
-            return false
-        }
-        if let reason = ProcessTerminationPolicy.protectionReason(for: command) {
-            fputs("KillSwitch refused to terminate PID \(pid): \(reason)\n", stderr)
-            return false
-        }
-        if kill(pid, SIGTERM) == 0 { return true }
-        return kill(pid, SIGKILL) == 0
+    static func terminate(pid: Int32, shouldContinue: () -> Bool = { true }) -> Bool {
+        ProcessTerminationPolicy.terminate(
+            pid: pid, commandLine: commandLine(pid:), shouldContinue: shouldContinue, signal: { kill($0, $1) }
+        )
     }
 
     private static func commandLine(pid: Int32) -> String? {
